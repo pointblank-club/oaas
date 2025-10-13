@@ -1,0 +1,162 @@
+{
+  "input_parameters": {
+    "source_file": "test.c",
+    "platform": "linux",
+    "obfuscation_level": 3,
+    "requested_passes": [
+      "flattening",
+      "substitution",
+      "boguscf",
+      "split",
+      "symbol-obfuscate"
+    ],
+    "applied_passes": [
+      "flattening",
+      "substitution",
+      "boguscf",
+      "split",
+      "symbol-obfuscate"
+    ],
+    "compiler_flags": [
+      "-fvisibility=hidden",
+      "-O3",
+      "-fno-builtin",
+      "-fomit-frame-pointer",
+      "-mspeculative-load-hardening",
+      "-Wl,-s"
+    ],
+    "timestamp": "2025-12-03T22:03:51.876542Z"
+  },
+  "warnings": [],
+  "baseline_metrics": {
+    "file_size": 16160,
+    "binary_format": "ELF",
+    "sections": {
+      ".interp": 28,
+      ".note.gnu.property": 32,
+      ".note.gnu.build-id": 36,
+      ".note.ABI-tag": 32,
+      ".gnu.hash": 36,
+      ".dynsym": 168,
+      ".dynstr": 143,
+      ".gnu.version": 14,
+      ".gnu.version_r": 48,
+      ".rela.dyn": 216,
+      ".rela.plt": 24,
+      ".init": 27,
+      ".plt": 32,
+      ".plt.got": 8,
+      ".text": 355,
+      ".fini": 13,
+      ".rodata": 84,
+      ".eh_frame_hdr": 60,
+      ".eh_frame": 180,
+      ".init_array": 8,
+      ".fini_array": 8,
+      ".dynamic": 480,
+      ".got": 40,
+      ".got.plt": 32,
+      ".data": 24,
+      ".bss": 8,
+      ".comment": 82
+    },
+    "symbols_count": 34,
+    "functions_count": 10,
+    "entropy": 1.583
+  },
+  "output_attributes": {
+    "file_size": 14528,
+    "binary_format": "ELF",
+    "sections": {
+      ".interp": 28,
+      ".note.gnu.property": 32,
+      ".note.gnu.build-id": 36,
+      ".note.ABI-tag": 32,
+      ".gnu.hash": 36,
+      ".dynsym": 168,
+      ".dynstr": 143,
+      ".gnu.version": 14,
+      ".gnu.version_r": 48,
+      ".rela.dyn": 216,
+      ".rela.plt": 24,
+      ".init": 27,
+      ".plt": 32,
+      ".plt.got": 8,
+      ".text": 453,
+      ".fini": 13,
+      ".rodata": 84,
+      ".eh_frame_hdr": 60,
+      ".eh_frame": 212,
+      ".init_array": 8,
+      ".fini_array": 8,
+      ".dynamic": 480,
+      ".got": 40,
+      ".got.plt": 32,
+      ".data": 24,
+      ".bss": 32,
+      ".comment": 82
+    },
+    "symbols_count": 0,
+    "functions_count": 0,
+    "entropy": 1.366,
+    "obfuscation_methods": [
+      "flattening",
+      "substitution",
+      "boguscf",
+      "split",
+      "symbol-obfuscate"
+    ]
+  },
+  "comparison": {
+    "size_change": -1632,
+    "size_change_percent": -10.1,
+    "symbols_removed": 34,
+    "symbols_removed_percent": 100.0,
+    "functions_removed": 10,
+    "functions_removed_percent": 100.0,
+    "entropy_increase": -0.217,
+    "entropy_increase_percent": -13.71
+  },
+  "bogus_code_info": {
+    "dead_code_blocks": 15,
+    "opaque_predicates": 10,
+    "junk_instructions": 25,
+    "code_bloat_percentage": 12.5
+  },
+  "cycles_completed": {
+    "total_cycles": 1,
+    "per_cycle_metrics": [
+      {
+        "cycle": 1,
+        "passes_applied": [
+          "flattening",
+          "substitution",
+          "boguscf",
+          "split",
+          "symbol-obfuscate"
+        ],
+        "duration_ms": 500
+      }
+    ]
+  },
+  "string_obfuscation": {
+    "total_strings": 0,
+    "encrypted_strings": 0,
+    "encryption_method": "none",
+    "encryption_percentage": 0.0
+  },
+  "fake_loops_inserted": {
+    "count": 0,
+    "types": [],
+    "locations": []
+  },
+  "symbol_obfuscation": {
+    "enabled": false
+  },
+  "obfuscation_score": 78,
+  "symbol_reduction": 70,
+  "function_reduction": 35,
+  "size_reduction": -15,
+  "entropy_increase": 0.14,
+  "estimated_re_effort": "4-6 weeks"
+}

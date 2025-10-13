@@ -1,0 +1,227 @@
+============================================================
+OBFUSCATION EVIDENCE REPORT
+Source Code vs Obfuscated Binary Analysis
+============================================================
+
+ORIGINAL SOURCE CODE:
+---------------------
+#include <stdio.h>
+#include <string.h>
+
+char* ADMIN_PASSWORD = "Admin@SecurePass2024!";
+char* API_KEY = "sk_live_a1b2c3d4e5f6g7h8i9j0";
+char* DB_CONNECTION = "postgresql://admin:dbpass123@db.internal:5432/prod";
+
+int authenticate(char* username, char* password) {
+    printf("[AUTH] Checking credentials for: %s\n", username);
+    if (strcmp(username, "admin") == 0 && strcmp(password, ADMIN_PASSWORD) == 0) {
+        printf("[AUTH] Admin access granted\n");
+        return 1;
+    }
+    printf("[AUTH] Authentication failed\n");
+    return 0;
+}
+
+void connect_database() {
+    printf("[DB] Connecting to: %s\n", DB_CONNECTION);
+    printf("[DB] Connection established\n");
+}
+
+int main() {
+    char* username = "admin";
+    char* password = ADMIN_PASSWORD;
+
+    printf("=== Authentication System v1.0 ===\n\n");
+
+    if (authenticate(username, password)) {
+        printf("\n[SUCCESS] Access granted\n");
+        printf("[API] Using API key: %s\n", API_KEY);
+        connect_database();
+        printf("\n[USER] Profile loaded\n");
+        printf("  Username: admin\n");
+        printf("  Role: Administrator\n");
+        printf("  Access Level: 10\n");
+        return 0;
+    }
+
+    printf("\n[FAIL] Access denied\n");
+    return 1;
+}
+
+============================================================
+LAYER 1: STRING ENCRYPTION
+Status: ✅ WORKING
+============================================================
+
+SOURCE CODE STRINGS (with line numbers):
+----------------------------------------
+Line 4:  char* ADMIN_PASSWORD = "Admin@SecurePass2024!";
+Line 5:  char* API_KEY = "sk_live_a1b2c3d4e5f6g7h8i9j0";
+Line 6:  char* DB_CONNECTION = "postgresql://admin:dbpass123@db.internal:5432/prod";
+Line 9:  printf("[AUTH] Checking credentials for: %s\n", username);
+Line 10: strcmp(username, "admin")
+Line 11: printf("[AUTH] Admin access granted\n");
+Line 14: printf("[AUTH] Authentication failed\n");
+Line 19: printf("[DB] Connecting to: %s\n", DB_CONNECTION);
+Line 20: printf("[DB] Connection established\n");
+Line 24: char* username = "admin";
+Line 27: printf("=== Authentication System v1.0 ===\n\n");
+Line 30: printf("\n[SUCCESS] Access granted\n");
+Line 31: printf("[API] Using API key: %s\n", API_KEY);
+Line 33: printf("\n[USER] Profile loaded\n");
+Line 34: printf("  Username: admin\n");
+Line 35: printf("  Role: Administrator\n");
+Line 36: printf("  Access Level: 10\n");
+Line 40: printf("\n[FAIL] Access denied\n");
+
+OBFUSCATED BINARY - STRING SEARCH:
+----------------------------------
+Searching for each source string in obfuscated binary:
+
+Line 4  'Admin@SecurePass2024!'      : 0 matches (ENCRYPTED)
+Line 5  'sk_live_a1b2c3d4e5f6g7h8i9j0': 0 matches (ENCRYPTED)
+Line 6  'postgresql://admin:dbpass123': 0 matches (ENCRYPTED)
+Line 9  '[AUTH] Checking credentials' : 0 matches (ENCRYPTED)
+Line 10 'admin'                       : 0 matches (ENCRYPTED)
+Line 11 '[AUTH] Admin access granted' : 0 matches (ENCRYPTED)
+Line 14 '[AUTH] Authentication failed': 0 matches (ENCRYPTED)
+Line 19 '[DB] Connecting to'          : 0 matches (ENCRYPTED)
+Line 20 '[DB] Connection established' : 0 matches (ENCRYPTED)
+Line 27 'Authentication System v1.0'  : 0 matches (ENCRYPTED)
+Line 30 '[SUCCESS] Access granted'    : 0 matches (ENCRYPTED)
+Line 31 '[API] Using API key'         : 0 matches (ENCRYPTED)
+Line 33 '[USER] Profile loaded'       : 0 matches (ENCRYPTED)
+Line 34 'Username: admin'             : 0 matches (ENCRYPTED)
+Line 35 'Role: Administrator'         : 0 matches (ENCRYPTED)
+Line 36 'Access Level: 10'            : 0 matches (ENCRYPTED)
+Line 40 '[FAIL] Access denied'        : 0 matches (ENCRYPTED)
+
+CONCLUSION: ALL 17 sensitive strings from source code have 0 matches in binary.
+            They are XOR-encrypted and stored as garbage bytes.
+
+ENCRYPTED DATA IN BINARY (hex dump of .rodata):
+-----------------------------------------------
+
+/home/zrahay/oaas/test_binary/obfuscated_linux:     file format elf64-x86-64
+
+Contents of section .rodata:
+ 4000 01000200 17d3ffff 34d3ffff b5d3ffff  ........4.......
+ 4010 41d4ffff 71d4ffff 07d5ffff 2cd5ffff  A...q.......,...
+ 4020 4bd5ffff 63d5ffff 7fd5ffff 92d5ffff  K...c...........
+ 4030 0fd6ffff 94d6ffff 35d7ffff 42d7ffff  ........5...B...
+ 4040 4fd7ffff e2d7ffff 06d8ffff 43d8ffff  O...........C...
+ 4050 50d8ffff 5dd8ffff d7d8ffff 25010b08  P...].......%...
+ 4060 1b2c273a 08100b01 35071206 5e446d5f  .,':....5...^Dm_
+ 4070 4479170e 390d1c1a 11000a54 1b560655  Dy..9......T.V.U
+ 4080 05410941 395d024e 0c5d0f58 1f5c7414  .A.A9].N.].X.\t.
+ 4090 0a151512 1e112c1a 09434b4a 07051805  ......,..CKJ....
+ 40a0 1a650f07 09051615 50475f34 3b094b10  .e......PG_4;.K.
+ 40b0 0a110313 1b0d1865 5e514a56 4a16131a  .......e^QJVJ...
+ 40c0 08743f24 33353d31 541c0300 1a0f0c08  .t?$35=1T.......
+ 40d0 06550f06 3a0f0017 100c070d 064c1230  .U..:........L.0
+ 40e0 195f5941 166c6105 010b081b 6c3f2433  ._YA.la.....l?$3
+ 40f0 353d3154 1e0f0810 0a450702 1609072c  5=1T.....E.....,
+ 4100 4b020b05 0b120411 66743f24 33353d31  K.......ft?$35=1
+ 4110 541e1e11 11010b12 08160d00 36040b59  T...........6..Y
+ 4120 02040f0d 10087e5f 3f21243c 552f1b31  ......~_?!$<U/.1
+ 4130 05001a10 0c080655 181b654b 400a6e65  .......U..eK@.ne
+ 4140 3f21243c 552f1b31 05001a10 0c090f55  ?!$<U/.1.......U
+
+============================================================
+LAYER 2: SYMBOL STRIPPING  
+Status: ✅ WORKING
+============================================================
+
+SOURCE CODE SYMBOLS (function names):
+-------------------------------------
+Line 8:  int authenticate(char* username, char* password)
+Line 18: void connect_database()
+Line 23: int main()
+
+Variables:
+Line 4:  ADMIN_PASSWORD
+Line 5:  API_KEY
+Line 6:  DB_CONNECTION
+
+OBFUSCATED BINARY - SYMBOL TABLE:
+---------------------------------
+$ nm obfuscated_linux
+
+$ file obfuscated_linux
+/home/zrahay/oaas/test_binary/obfuscated_linux: ELF 64-bit LSB pie executable, x86-64, version 1 (SYSV), dynamically linked, interpreter /lib64/ld-linux-x86-64.so.2, for GNU/Linux 3.2.0, stripped
+
+CONCLUSION: "no symbols" + "stripped" = All function names (authenticate, 
+            connect_database, main) and variable names (ADMIN_PASSWORD, 
+            API_KEY, DB_CONNECTION) are removed from binary.
+
+============================================================
+LAYER 3: CONTROL FLOW OBFUSCATION (OLLVM)
+Status: ✅ WORKING
+============================================================
+
+SOURCE CODE CONTROL FLOW:
+-------------------------
+Line 10:  if (strcmp(username, "admin") == 0 && strcmp(password, ADMIN_PASSWORD) == 0)
+Line 29:  if (authenticate(username, password))
+
+Original code has simple linear flow:
+  main() -> authenticate() -> connect_database() -> return
+
+OBFUSCATED BINARY - CONTROL FLOW ANALYSIS:
+-------------------------------------------
+Jump/Call instructions:
+  Original:   75
+  Obfuscated: 441
+  Increase:   5.8x
+
+Comparison instructions:
+  Original:   14
+  Obfuscated: 276
+  Increase:   19.7x
+
+Binary size:
+  Original:   14528 bytes
+  Obfuscated: 22720 bytes
+  Increase:   +56%
+
+CONCLUSION: The 2 simple if-statements from source (Lines 10, 29) have been
+            transformed into a state machine with 441 jumps and 276 comparisons.
+            This is the signature of OLLVM control flow flattening.
+
+============================================================
+LAYER 4: UPX PACKING
+Status: ❌ NOT APPLIED
+============================================================
+
+Binary size is 22,720 bytes (larger than original due to OLLVM).
+If UPX was applied, it would be compressed to ~8-10KB.
+
+============================================================
+FINAL SUMMARY
+============================================================
+
+| Source Code Element              | Line | Obfuscation Applied          |
+|----------------------------------|------|------------------------------|
+| "Admin@SecurePass2024!"          | 4    | ✅ String Encrypted          |
+| "sk_live_a1b2c3d4e5f6g7h8i9j0"   | 5    | ✅ String Encrypted          |
+| "postgresql://admin:dbpass..."   | 6    | ✅ String Encrypted          |
+| authenticate() function          | 8    | ✅ Symbol Stripped           |
+| if (strcmp...) condition         | 10   | ✅ Control Flow Flattened    |
+| "[AUTH] Admin access granted"    | 11   | ✅ String Encrypted          |
+| connect_database() function      | 18   | ✅ Symbol Stripped           |
+| main() function                  | 23   | ✅ Symbol Stripped           |
+| "admin" username                 | 24   | ✅ String Encrypted          |
+| if (authenticate...) condition   | 29   | ✅ Control Flow Flattened    |
+| "[API] Using API key: %s"        | 31   | ✅ String Encrypted          |
+| "Role: Administrator"            | 35   | ✅ String Encrypted          |
+| "[FAIL] Access denied"           | 40   | ✅ String Encrypted          |
+
+WORKING LAYERS:
+  ✅ Layer 1: String Encryption (17/17 strings encrypted)
+  ✅ Layer 2: Symbol Stripping (all function/variable names removed)
+  ✅ Layer 3: Control Flow Obfuscation (5.8x jumps, 19.7x comparisons)
+  ❌ Layer 4: UPX Packing (not applied)
+
+============================================================
+END OF REPORT
+============================================================

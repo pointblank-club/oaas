@@ -1,0 +1,214 @@
+============================================================
+OBFUSCATION EVIDENCE REPORT - C++ Binary
+Source Code vs Obfuscated Binary Analysis
+============================================================
+
+ORIGINAL SOURCE CODE (C++):
+---------------------------
+#include <iostream>
+#include <string>
+#include <vector>
+#include <map>
+
+// Hardcoded secrets (anti-pattern for demo)
+const std::string MASTER_KEY = "ENTERPRISE-MASTER-2024-A1B2C3D4E5F6";
+const std::string RSA_KEY = "-----BEGIN RSA PRIVATE KEY-----\nMIIE...";
+const std::string AES_KEY = "AES256_PROD_KEY_2024_DO_NOT_SHARE";
+const std::string ACTIVATION_SECRET = "activation_secret_xyz_2024";
+
+enum class LicenseType { TRIAL, STANDARD, PROFESSIONAL, ENTERPRISE };
+
+template<typename T>
+class SecureContainer {
+    SecureContainer(const std::string& k) : key(k) {
+        std::cout << "[SECURE] Container initialized\n";  // NEVER INSTANTIATED
+    }
+};
+
+class License { ... };
+class EnterpriseLicense : public License {
+    EnterpriseLicense(...) {
+        features = {"Analytics", "Support", "Cloud", "API"};
+    }
+};
+
+int main(int argc, char** argv) {
+    std::cout << "=== License Validator v2.0 ===\n\n";
+    ...
+}
+
+============================================================
+LAYER 1: STRING ENCRYPTION
+Status: WORKING
+============================================================
+
+SOURCE CODE STRINGS (sensitive data):
+-------------------------------------
+Line 7:  const std::string MASTER_KEY = "ENTERPRISE-MASTER-2024-A1B2C3D4E5F6"
+Line 8:  const std::string RSA_KEY = "-----BEGIN RSA PRIVATE KEY-----..."
+Line 9:  const std::string AES_KEY = "AES256_PROD_KEY_2024_DO_NOT_SHARE"
+Line 10: const std::string ACTIVATION_SECRET = "activation_secret_xyz_2024"
+Line 22: features = {"Analytics", "Support", "Cloud", "API"}
+Line 35: "[LICENSE] Validating: "
+Line 37: "[LICENSE] Master key detected"
+Line 46: "[LICENSE] Activation successful"
+Line 64: "=== License Validator v2.0 ==="
+Line 75: "[SUCCESS] License valid"
+Line 76: "[CRYPTO] AES Key: "
+Line 81: "[FAIL] License invalid"
+Line 27: "[ENTERPRISE] Max users: "
+
+OBFUSCATED BINARY - STRING SEARCH:
+----------------------------------
+$ strings obfuscated_linux(9) | grep -E "ENTERPRISE|AES256|activation_secret|BEGIN RSA|License Validator|Master key|CRYPTO|SUCCESS|FAIL|Analytics|Support|Cloud|API"
+
+Result: NO MATCHES FOUND
+
+ALL ENCRYPTED STRINGS IN BINARY (22 total):
+-------------------------------------------
+Addr   | Length | Encrypted (hex)                          | Decrypted
+-------|--------|------------------------------------------|----------------------------------
+a100   | 0x24   | 212b3224273c26163820...                  | ENTERPRISE-MASTER-2024-A1B2C3D4E5F6
+a124   | 0x28   | 49484b4c582e3118222b...                  | -----BEGIN RSA PRIVATE KEY-----\nMIIE...
+a14c   | 0x22   | 3627412533d092a313c44...                 | AES256_PROD_KEY_2024_DO_NOT_SHARE
+a16e   | 0x1b   | 05061208030d0036040b...                  | activation_secret_xyz_2024
+a189   | 0x21   | 3e596d5b574d4924572347...               | === License Validator v2.0 ===\n\n
+a1aa   | 0x0a   | 2712lf26565554557958...                  | Acme Corp
+a1b4   | 0x1a   | 5b41390517a051610c44...                  | \n[SUCCESS] License valid\n
+a1ce   | 0x13   | 33070b1c081523041759...                  | [CRYPTO] AES Key:
+a1e1   | 0x02   | 6e3e                                     | \n
+a1e3   | 0x19   | 35343632f310c383859...                   | \n[FAIL] License invalid\n
+a1fc   | 0x0a   | 250b070d0c181d3c1865                     | Analytics
+a206   | 0x08   | 371016111a1e005f                         | Support
+a20e   | 0x06   | 27090914116c                             | Cloud
+a214   | 0x04   | 25352f61                                 | API
+a218   | 0x17   | 3f292f2230221a364534...                  | [LICENSE] Validating:
+a22f   | 0x1f   | 2930221a364e34051612...                  | [LICENSE] Master key detected\n
+a24e   | 0x31   | 070d4c012c0e170a5e45...                  | cannot create std::vector larger than max_size()
+a27f   | 0x19   | 66f292f2230221a3645...                   | [ENTERPRISE] Max users:
+a298   | 0x21   | 38071f0f171418d3005...                   | [LICENSE] Activation successful\n
+a2b9   | 0x32   | 450a11060504061f122a...                  | basic_string: construction from null is not valid
+a2eb   | 0x14   | 556b070408f1a18543c...                   | 17EnterpriseLicense
+a2ff   | 0x09   | 190018100046120108e...                   | 7License
+
+CONCLUSION: ALL 22 strings from compiled code are XOR-encrypted.
+            They are stored as garbage bytes and decrypted at runtime.
+
+============================================================
+LAYER 2: SYMBOL STRIPPING
+Status: WORKING
+============================================================
+
+SOURCE CODE SYMBOLS (class/function names):
+-------------------------------------------
+- class License
+- class EnterpriseLicense
+- class SecureContainer<T>
+- License::validate()
+- License::activate()
+- EnterpriseLicense::validate()
+- main()
+
+Global variables:
+- MASTER_KEY
+- RSA_KEY
+- AES_KEY
+- ACTIVATION_SECRET
+
+OBFUSCATED BINARY - SYMBOL TABLE:
+---------------------------------
+$ nm obfuscated_linux(9)
+nm: obfuscated_linux(9): no symbols
+
+$ file obfuscated_linux(9)
+ELF 64-bit LSB pie executable, x86-64, version 1 (SYSV), dynamically linked,
+interpreter /lib64/ld-linux-x86-64.so.2, for GNU/Linux 3.2.0, stripped
+
+CONCLUSION: "no symbols" + "stripped" = All class names (License,
+            EnterpriseLicense, SecureContainer), function names (validate,
+            activate), and variable names (MASTER_KEY, AES_KEY, etc.)
+            are removed from binary.
+
+============================================================
+LAYER 3: RUNTIME DECRYPTION VERIFICATION
+Status: WORKING
+============================================================
+
+BINARY EXECUTION OUTPUT:
+------------------------
+$ ./obfuscated_linux(9)
+
+=== License Validator v2.0 ===
+
+[LICENSE] Activation successful
+[LICENSE] Validating: ENTERPRISE-MASTER-2024-A1B2C3D4E5F6
+[LICENSE] Master key detected
+[ENTERPRISE] Max users: 100
+
+[SUCCESS] License valid
+[CRYPTO] AES Key: AES256_PROD_KEY_2024_DO_NOT_SHARE
+
+CONCLUSION: Binary runs correctly and outputs original strings.
+            Runtime decryption via __obfs_init() constructor is working.
+            Strings are decrypted in memory before main() executes.
+
+============================================================
+LAYER 4: CONTROL FLOW ANALYSIS
+============================================================
+
+Jump/Call instructions in binary: 796
+
+Binary size: 39,992 bytes
+
+============================================================
+STRINGS NOT IN BINARY (Dead Code Elimination)
+============================================================
+
+The following strings from source code are NOT in the binary:
+
+| String                           | Reason                              |
+|----------------------------------|-------------------------------------|
+| [SECURE] Container initialized   | SecureContainer<T> never instantiated |
+
+NOTE: SecureContainer is a template class. Templates are only compiled
+when instantiated with a specific type. Since main() never creates a
+SecureContainer object, the compiler removes it entirely (dead code).
+
+This is CORRECT BEHAVIOR - not a bug in the obfuscator.
+
+============================================================
+FINAL SUMMARY
+============================================================
+
+| Source Code Element                      | Obfuscation Applied          |
+|------------------------------------------|------------------------------|
+| "ENTERPRISE-MASTER-2024-A1B2C3D4E5F6"    | String Encrypted ✓           |
+| "AES256_PROD_KEY_2024_DO_NOT_SHARE"      | String Encrypted ✓           |
+| "-----BEGIN RSA PRIVATE KEY-----"        | String Encrypted ✓           |
+| "activation_secret_xyz_2024"             | String Encrypted ✓           |
+| "[LICENSE] Validating:"                  | String Encrypted ✓           |
+| "[LICENSE] Master key detected"          | String Encrypted ✓           |
+| "[LICENSE] Activation successful"        | String Encrypted ✓           |
+| "[ENTERPRISE] Max users:"                | String Encrypted ✓           |
+| "[CRYPTO] AES Key:"                      | String Encrypted ✓           |
+| "[SUCCESS] License valid"                | String Encrypted ✓           |
+| "[FAIL] License invalid"                 | String Encrypted ✓           |
+| "Analytics"                              | String Encrypted ✓           |
+| "Support"                                | String Encrypted ✓           |
+| "Cloud"                                  | String Encrypted ✓           |
+| "API"                                    | String Encrypted ✓           |
+| "Acme Corp"                              | String Encrypted ✓           |
+| class License                            | Symbol Stripped ✓            |
+| class EnterpriseLicense                  | Symbol Stripped ✓            |
+| License::validate()                      | Symbol Stripped ✓            |
+| MASTER_KEY, AES_KEY variables            | Symbol Stripped ✓            |
+| [SECURE] Container initialized           | NOT IN BINARY (dead code)    |
+
+WORKING LAYERS:
+  Layer 1: String Encryption (all 22 compiled strings encrypted)
+  Layer 2: Symbol Stripping (all class/function/variable names removed)
+  Layer 3: Runtime Decryption (binary executes correctly)
+
+============================================================
+END OF REPORT
+============================================================

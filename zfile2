@@ -1,0 +1,171 @@
+============================================================
+OBFUSCATION EVIDENCE REPORT - C Binary
+Source Code vs Obfuscated Binary Analysis
+============================================================
+
+ORIGINAL SOURCE CODE (C):
+-------------------------
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+
+// Hardcoded secrets (anti-pattern for demo)
+const char* MASTER_BYPASS = "MASTER_BYPASS_KEY_2024_ADMIN";
+const char* SECRET_SALT = "SECRET_SALT_XYZ_PROD_2024";
+const char* HIDDEN_FLAG = "CTF{hidden_flag_value_here}";
+const char* CRYPTO_KEY = "AES_256_PRODUCTION_KEY_DONT_SHARE";
+
+typedef struct {
+    char username[64];
+    char password[64];
+    int access_level;
+} User;
+
+int validate_credentials(const char* user, const char* pass) { ... }
+int check_bypass(const char* key) { ... }
+
+int main(int argc, char** argv) {
+    printf("=== Secure Authentication System v1.0 ===\n\n");
+    ...
+}
+
+============================================================
+LAYER 1: STRING ENCRYPTION
+Status: WORKING
+============================================================
+
+SOURCE CODE STRINGS (sensitive data):
+-------------------------------------
+Line 6:  const char* MASTER_BYPASS = "MASTER_BYPASS_KEY_2024_ADMIN"
+Line 7:  const char* SECRET_SALT = "SECRET_SALT_XYZ_PROD_2024"
+Line 8:  const char* HIDDEN_FLAG = "CTF{hidden_flag_value_here}"
+Line 9:  const char* CRYPTO_KEY = "AES_256_PRODUCTION_KEY_DONT_SHARE"
+Line 20: "[AUTH] Validating credentials..."
+Line 25: "[AUTH] Master bypass activated!"
+Line 30: "[AUTH] Access granted"
+Line 35: "[AUTH] Access denied"
+Line 40: "=== Secure Authentication System v1.0 ==="
+
+OBFUSCATED BINARY - STRING SEARCH:
+----------------------------------
+$ strings "obfuscated_linux - c" | grep -E "MASTER_BYPASS|SECRET_SALT|HIDDEN|CRYPTO|bypass|salt|secret"
+
+Result: NO MATCHES FOUND
+
+Line 6  'MASTER_BYPASS_KEY_2024_ADMIN'        : 0 matches (ENCRYPTED)
+Line 7  'SECRET_SALT_XYZ_PROD_2024'           : 0 matches (ENCRYPTED)
+Line 8  'CTF{hidden_flag_value_here}'         : 0 matches (ENCRYPTED)
+Line 9  'AES_256_PRODUCTION_KEY_DONT_SHARE'   : 0 matches (ENCRYPTED)
+Line 20 '[AUTH] Validating credentials'       : 0 matches (ENCRYPTED)
+Line 25 '[AUTH] Master bypass activated'      : 0 matches (ENCRYPTED)
+Line 30 '[AUTH] Access granted'               : 0 matches (ENCRYPTED)
+Line 35 '[AUTH] Access denied'                : 0 matches (ENCRYPTED)
+Line 40 'Secure Authentication System v1.0'   : 0 matches (ENCRYPTED)
+
+CONCLUSION: ALL 9+ sensitive strings from source code have 0 matches in binary.
+            They are XOR-encrypted and stored as garbage bytes.
+
+============================================================
+LAYER 2: SYMBOL STRIPPING
+Status: WORKING
+============================================================
+
+SOURCE CODE SYMBOLS (function/variable names):
+----------------------------------------------
+- validate_credentials()
+- check_bypass()
+- main()
+
+Global variables:
+- MASTER_BYPASS
+- SECRET_SALT
+- HIDDEN_FLAG
+- CRYPTO_KEY
+
+Struct types:
+- User (with username, password, access_level fields)
+
+OBFUSCATED BINARY - SYMBOL TABLE:
+---------------------------------
+$ nm "obfuscated_linux - c"
+nm: obfuscated_linux - c: no symbols
+
+$ file "obfuscated_linux - c"
+ELF 64-bit LSB pie executable, x86-64, version 1 (SYSV), dynamically linked,
+interpreter /lib64/ld-linux-x86-64.so.2, for GNU/Linux 3.2.0, stripped
+
+CONCLUSION: "no symbols" + "stripped" = All function names (validate_credentials,
+            check_bypass, main), and variable names (MASTER_BYPASS, SECRET_SALT,
+            HIDDEN_FLAG, CRYPTO_KEY) are removed from binary.
+
+============================================================
+LAYER 3: RUNTIME DECRYPTION VERIFICATION
+Status: NOT WORKING (OLD BINARY - NO RUNTIME DECRYPTION)
+============================================================
+
+BINARY EXECUTION OUTPUT:
+------------------------
+$ ./"obfuscated_linux - c"
+
+YX[A%,
+?$( 95'88Y4;QE\ofDE*DE*DE3	<
+^ECl*
+fDE*	<
+^EClDE"DE*	<
+^EClDE"DE"DE5>_YAlan>4$&986E*eK@KTVQl0n>4$&986E*eK@KTVQl0
+
+CONCLUSION: Binary outputs GARBAGE instead of readable text.
+            This is because this binary was compiled with an OLD version
+            of MLIRObfuscation.so that did NOT include runtime decryption.
+
+            The strings are XOR-encrypted in the binary, but without the
+            __obfs_init() constructor to decrypt them at runtime, they
+            remain encrypted when printed.
+
+            NOTE: Re-obfuscating with the NEW MLIRObfuscation.so (which
+            includes runtime decryption) would produce a working binary.
+
+============================================================
+LAYER 4: CONTROL FLOW ANALYSIS
+============================================================
+
+Jump/Call instructions in binary: 158
+
+Binary size: 14,536 bytes
+
+============================================================
+FINAL SUMMARY
+============================================================
+
+| Source Code Element                      | Obfuscation Applied          |
+|------------------------------------------|------------------------------|
+| "MASTER_BYPASS_KEY_2024_ADMIN"           | String Encrypted          |
+| "SECRET_SALT_XYZ_PROD_2024"              | String Encrypted          |
+| "CTF{hidden_flag_value_here}"            | String Encrypted          |
+| "AES_256_PRODUCTION_KEY_DONT_SHARE"      | String Encrypted          |
+| "[AUTH] Master bypass activated"         | String Encrypted          |
+| "[AUTH] Access granted"                  | String Encrypted          |
+| "[AUTH] Access denied"                   | String Encrypted          |
+| "Secure Authentication System v1.0"      | String Encrypted          |
+| validate_credentials()                   | Symbol Stripped           |
+| check_bypass()                           | Symbol Stripped           |
+| MASTER_BYPASS, SECRET_SALT variables     | Symbol Stripped           |
+
+WORKING LAYERS:
+  Layer 1: String Encryption (all sensitive strings encrypted)
+  Layer 2: Symbol Stripping (all function/variable names removed)
+
+NOT WORKING:
+  Layer 3: Runtime Decryption (binary outputs garbage - OLD .so version)
+
+RECOMMENDATION:
+  Re-obfuscate the C source code using the UPDATED MLIRObfuscation.so
+  (deployed after 22:00 on Dec 4, 2024) which includes the __obfs_init()
+  runtime decryption constructor. The new binary will:
+  1. Have all strings encrypted at rest (static analysis protection)
+  2. Decrypt strings at runtime via __obfs_init() before main()
+  3. Execute correctly and display proper output
+
+============================================================
+END OF REPORT
+============================================================

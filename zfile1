@@ -1,0 +1,164 @@
+============================================================
+OBFUSCATION EVIDENCE REPORT - C++ Binary
+Source Code vs Obfuscated Binary Analysis
+============================================================
+
+ORIGINAL SOURCE CODE (C++):
+---------------------------
+#include <iostream>
+#include <string>
+#include <vector>
+#include <map>
+
+// Hardcoded secrets (anti-pattern for demo)
+const std::string MASTER_KEY = "ENTERPRISE-MASTER-2024-A1B2C3D4E5F6";
+const std::string RSA_KEY = "-----BEGIN RSA PRIVATE KEY-----\nMIIE...";
+const std::string AES_KEY = "AES256_PROD_KEY_2024_DO_NOT_SHARE";
+const std::string ACTIVATION_SECRET = "activation_secret_xyz_2024";
+
+enum class LicenseType { TRIAL, STANDARD, PROFESSIONAL, ENTERPRISE };
+
+template<typename T>
+class SecureContainer { ... };
+
+class License { ... };
+class EnterpriseLicense : public License { ... };
+
+int main(int argc, char** argv) {
+    std::cout << "=== License Validator v2.0 ===\n\n";
+    ...
+}
+
+============================================================
+LAYER 1: STRING ENCRYPTION
+Status: WORKING
+============================================================
+
+SOURCE CODE STRINGS (sensitive data):
+-------------------------------------
+Line 7:  const std::string MASTER_KEY = "ENTERPRISE-MASTER-2024-A1B2C3D4E5F6"
+Line 8:  const std::string RSA_KEY = "-----BEGIN RSA PRIVATE KEY-----..."
+Line 9:  const std::string AES_KEY = "AES256_PROD_KEY_2024_DO_NOT_SHARE"
+Line 10: const std::string ACTIVATION_SECRET = "activation_secret_xyz_2024"
+Line 35: "[LICENSE] Validating: "
+Line 37: "[LICENSE] Master key detected"
+Line 46: "[LICENSE] Activation successful"
+Line 64: "=== License Validator v2.0 ==="
+Line 75: "[SUCCESS] License valid"
+Line 76: "[CRYPTO] AES Key: "
+Line 81: "[FAIL] License invalid"
+
+OBFUSCATED BINARY - STRING SEARCH:
+----------------------------------
+$ strings obfuscated_linux(1) | grep -E "ENTERPRISE|AES256|activation_secret|BEGIN RSA|License Validator|Master key|CRYPTO|SUCCESS|FAIL"
+
+Result: NO MATCHES FOUND
+
+Line 7  'ENTERPRISE-MASTER-2024-A1B2C3D4E5F6' : 0 matches (ENCRYPTED)
+Line 8  '-----BEGIN RSA PRIVATE KEY-----'     : 0 matches (ENCRYPTED)
+Line 9  'AES256_PROD_KEY_2024_DO_NOT_SHARE'    : 0 matches (ENCRYPTED)
+Line 10 'activation_secret_xyz_2024'          : 0 matches (ENCRYPTED)
+Line 35 '[LICENSE] Validating'                : 0 matches (ENCRYPTED)
+Line 37 '[LICENSE] Master key detected'       : 0 matches (ENCRYPTED)
+Line 46 '[LICENSE] Activation successful'     : 0 matches (ENCRYPTED)
+Line 64 'License Validator v2.0'              : 0 matches (ENCRYPTED)
+Line 75 '[SUCCESS] License valid'             : 0 matches (ENCRYPTED)
+Line 76 '[CRYPTO] AES Key'                    : 0 matches (ENCRYPTED)
+Line 81 '[FAIL] License invalid'              : 0 matches (ENCRYPTED)
+
+CONCLUSION: ALL 11+ sensitive strings from source code have 0 matches in binary.
+            They are XOR-encrypted and stored as garbage bytes.
+
+============================================================
+LAYER 2: SYMBOL STRIPPING
+Status: WORKING
+============================================================
+
+SOURCE CODE SYMBOLS (class/function names):
+-------------------------------------------
+- class License
+- class EnterpriseLicense
+- class SecureContainer<T>
+- License::validate()
+- License::activate()
+- EnterpriseLicense::validate()
+- main()
+
+Global variables:
+- MASTER_KEY
+- RSA_KEY
+- AES_KEY
+- ACTIVATION_SECRET
+
+OBFUSCATED BINARY - SYMBOL TABLE:
+---------------------------------
+$ nm obfuscated_linux(1)
+nm: obfuscated_linux(1): no symbols
+
+$ file obfuscated_linux(1)
+ELF 64-bit LSB pie executable, x86-64, version 1 (SYSV), dynamically linked,
+interpreter /lib64/ld-linux-x86-64.so.2, for GNU/Linux 3.2.0, stripped
+
+CONCLUSION: "no symbols" + "stripped" = All class names (License,
+            EnterpriseLicense, SecureContainer), function names (validate,
+            activate), and variable names (MASTER_KEY, AES_KEY, etc.)
+            are removed from binary.
+
+============================================================
+LAYER 3: RUNTIME DECRYPTION VERIFICATION
+Status: WORKING
+============================================================
+
+BINARY EXECUTION OUTPUT:
+------------------------
+$ ./obfuscated_linux(1)
+
+=== License Validator v2.0 ===
+
+[LICENSE] Activation successful
+[LICENSE] Validating: ENTERPRISE-MASTER-2024-A1B2C3D4E5F6
+[LICENSE] Master key detected
+[ENTERPRISE] Max users: 100
+
+[SUCCESS] License valid
+[CRYPTO] AES Key: AES256_PROD_KEY_2024_DO_NOT_SHARE
+
+CONCLUSION: Binary runs correctly and outputs original strings.
+            Runtime decryption via __obfs_init() constructor is working.
+            Strings are decrypted in memory before main() executes.
+
+============================================================
+LAYER 4: CONTROL FLOW ANALYSIS
+============================================================
+
+Jump/Call instructions in binary: 484
+
+Binary size: 39,984 bytes
+
+============================================================
+FINAL SUMMARY
+============================================================
+
+| Source Code Element                      | Obfuscation Applied          |
+|------------------------------------------|------------------------------|
+| "ENTERPRISE-MASTER-2024-A1B2C3D4E5F6"    | String Encrypted          |
+| "AES256_PROD_KEY_2024_DO_NOT_SHARE"      | String Encrypted          |
+| "-----BEGIN RSA PRIVATE KEY-----"        | String Encrypted          |
+| "activation_secret_xyz_2024"             | String Encrypted          |
+| "[LICENSE] Master key detected"          | String Encrypted          |
+| "[CRYPTO] AES Key:"                      | String Encrypted          |
+| "[SUCCESS] License valid"                | String Encrypted          |
+| "[FAIL] License invalid"                 | String Encrypted          |
+| class License                            | Symbol Stripped           |
+| class EnterpriseLicense                  | Symbol Stripped           |
+| License::validate()                      | Symbol Stripped           |
+| MASTER_KEY, AES_KEY variables            | Symbol Stripped           |
+
+WORKING LAYERS:
+  Layer 1: String Encryption (all sensitive strings encrypted)
+  Layer 2: Symbol Stripping (all class/function/variable names removed)
+  Layer 3: Runtime Decryption (binary executes correctly)
+
+============================================================
+END OF REPORT
+============================================================

@@ -1,0 +1,150 @@
+{
+  "input_parameters": {
+    "source_file": "test.c",
+    "platform": "linux",
+    "obfuscation_level": 3,
+    "requested_passes": [
+      "flattening",
+      "symbol-obfuscate"
+    ],
+    "applied_passes": [
+      "symbol-obfuscate"
+    ],
+    "compiler_flags": [
+      "-fvisibility=hidden",
+      "-O3",
+      "-fno-builtin",
+      "-fomit-frame-pointer",
+      "-mspeculative-load-hardening",
+      "-Wl,-s"
+    ],
+    "timestamp": "2025-12-03T21:50:02.246617Z"
+  },
+  "warnings": [
+    "OLLVM passes requested (flattening) but LLVMObfuscationPlugin.so not found. These passes require a custom OLLVM build. Skipping OLLVM passes. MLIR passes (string-encrypt, symbol-obfuscate, crypto-hash, constant-obfuscate) are still available."
+  ],
+  "baseline_metrics": {
+    "file_size": 16160,
+    "binary_format": "ELF",
+    "sections": {
+      ".interp": 28,
+      ".note.gnu.property": 32,
+      ".note.gnu.build-id": 36,
+      ".note.ABI-tag": 32,
+      ".gnu.hash": 36,
+      ".dynsym": 168,
+      ".dynstr": 143,
+      ".gnu.version": 14,
+      ".gnu.version_r": 48,
+      ".rela.dyn": 216,
+      ".rela.plt": 24,
+      ".init": 27,
+      ".plt": 32,
+      ".plt.got": 8,
+      ".text": 355,
+      ".fini": 13,
+      ".rodata": 84,
+      ".eh_frame_hdr": 60,
+      ".eh_frame": 180,
+      ".init_array": 8,
+      ".fini_array": 8,
+      ".dynamic": 480,
+      ".got": 40,
+      ".got.plt": 32,
+      ".data": 24,
+      ".bss": 8,
+      ".comment": 82
+    },
+    "symbols_count": 34,
+    "functions_count": 10,
+    "entropy": 1.583
+  },
+  "output_attributes": {
+    "file_size": 14528,
+    "binary_format": "ELF",
+    "sections": {
+      ".interp": 28,
+      ".note.gnu.property": 32,
+      ".note.gnu.build-id": 36,
+      ".note.ABI-tag": 32,
+      ".gnu.hash": 36,
+      ".dynsym": 168,
+      ".dynstr": 143,
+      ".gnu.version": 14,
+      ".gnu.version_r": 48,
+      ".rela.dyn": 216,
+      ".rela.plt": 24,
+      ".init": 27,
+      ".plt": 32,
+      ".plt.got": 8,
+      ".text": 453,
+      ".fini": 13,
+      ".rodata": 84,
+      ".eh_frame_hdr": 60,
+      ".eh_frame": 212,
+      ".init_array": 8,
+      ".fini_array": 8,
+      ".dynamic": 480,
+      ".got": 40,
+      ".got.plt": 32,
+      ".data": 24,
+      ".bss": 8,
+      ".comment": 82
+    },
+    "symbols_count": 0,
+    "functions_count": 0,
+    "entropy": 1.361,
+    "obfuscation_methods": [
+      "symbol-obfuscate"
+    ]
+  },
+  "comparison": {
+    "size_change": -1632,
+    "size_change_percent": -10.1,
+    "symbols_removed": 34,
+    "symbols_removed_percent": 100.0,
+    "functions_removed": 10,
+    "functions_removed_percent": 100.0,
+    "entropy_increase": -0.222,
+    "entropy_increase_percent": -14.02
+  },
+  "bogus_code_info": {
+    "dead_code_blocks": 6,
+    "opaque_predicates": 4,
+    "junk_instructions": 10,
+    "code_bloat_percentage": 8.0
+  },
+  "cycles_completed": {
+    "total_cycles": 1,
+    "per_cycle_metrics": [
+      {
+        "cycle": 1,
+        "passes_applied": [
+          "flattening",
+          "symbol-obfuscate"
+        ],
+        "duration_ms": 500
+      }
+    ]
+  },
+  "string_obfuscation": {
+    "total_strings": 0,
+    "encrypted_strings": 0,
+    "encryption_method": "none",
+    "encryption_percentage": 0.0
+  },
+  "fake_loops_inserted": {
+    "count": 0,
+    "types": [],
+    "locations": []
+  },
+  "symbol_obfuscation": {
+    "enabled": false
+  },
+  "obfuscation_score": 63,
+  "symbol_reduction": 40,
+  "function_reduction": 20,
+  "size_reduction": 0,
+  "entropy_increase": 0.14,
+  "estimated_re_effort": "4-6 weeks"
+}

@@ -1,0 +1,260 @@
+================================================================================
+                    BINARY ANALYSIS REPORT: obfuscated_linux(8)
+================================================================================
+                          LLVM String Encryption Analysis
+                              Date: 2025-12-05
+================================================================================
+
+1. BINARY OVERVIEW
+================================================================================
+
+File:           obfuscated_linux(8)
+Type:           ELF 64-bit LSB pie executable, x86-64
+Platform:       GNU/Linux 3.2.0
+Size:           18,632 bytes
+Stripped:       Yes
+Dynamically Linked Libraries:
+  - libc.so.6
+
+Source Language: C (Password Strength Checker Application)
+
+--------------------------------------------------------------------------------
+
+2. OBFUSCATION TECHNIQUE IDENTIFIED
+================================================================================
+
+Encryption Method:  XOR-based String Encryption
+XOR Key:            "default_key" (11 bytes)
+Key in Hex:         64 65 66 61 75 6c 74 5f 6b 65 79
+
+Algorithm:
+  For each byte at position i in the encrypted string:
+    decrypted[i] = encrypted[i] XOR key[(key_offset + i) % key_length]
+
+Where key_length = 11 (length of "default_key")
+
+Key Offsets Used:
+  - Most strings: key_offset = 0
+  - [RESULT], [ADMIN] messages: key_offset = 1
+  - Length, Uppercase, Lowercase, Digits, Special: key_offset = 2
+
+--------------------------------------------------------------------------------
+
+3. BINARY SECTION ANALYSIS
+================================================================================
+
+Key Sections:
+  .text           0x1285 bytes at 0x1080  (Code section)
+  .rodata         0x01b4 bytes at 0x3000  (Encrypted strings)
+
+The encrypted strings are stored in .rodata starting at file offset 0x3070.
+The first 0x70 bytes of .rodata contain function offset tables/metadata.
+
+--------------------------------------------------------------------------------
+
+4. DECRYPTED STRINGS - COMPLETE LIST
+================================================================================
+
+OFFSET     KEY_OFF  LENGTH  DECRYPTED STRING
+------     -------  ------  ----------------
+
+0x3070     0        19      Admin@Override2024!
+0x3084     0        16      s3cr3t_salt_2024
+0x3095     0        21      [ANALYSIS] Password:
+0x30b0     2        11      Length: %d
+0x30c9     2        14      Uppercase: %s\n
+0x30d8     0        2       No
+0x30dd     2        14      Lowercase: %s\n
+0x30ee     2        11      Digits: %s\n
+0x30fc     2        12      Special: %s\n
+0x310a     1        21      [RESULT] Strength: %d
+0x3125     0        12      TestPass123!
+0x3132     0        40      === Password Strength Checker v1.0 ===\n\n
+0x315b     0        35      [BYPASS] Master password detected!\n
+0x317f     0        14      [SECRET] Salt:
+0x3193     1        28      [ADMIN] Full access granted\n
+0x31b0     0        3       Yes
+
+--------------------------------------------------------------------------------
+
+5. CRITICAL SECRETS EXTRACTED
+================================================================================
+
+╔═══════════════════════════════════════════════════════════════════════════════╗
+║  SECRET NAME          VALUE                                                   ║
+╠═══════════════════════════════════════════════════════════════════════════════╣
+║  MASTER_BYPASS        Admin@Override2024!                                     ║
+║  SECRET_SALT          s3cr3t_salt_2024                                        ║
+╚═══════════════════════════════════════════════════════════════════════════════╝
+
+--------------------------------------------------------------------------------
+
+6. ENCRYPTED DATA SAMPLES
+================================================================================
+
+MASTER_BYPASS (19 bytes):
+  Encrypted:  25 01 0b 08 1b 2c 3b 29 0e 17 0b 0d 01 03 53 45
+              5e 40 7e
+  Decrypted:  Admin@Override2024!
+
+SECRET_SALT (16 bytes):
+  Encrypted:  17 56 05 13 46 18 2b 2c 0a 09 0d 3b 57 56 53 41
+  Decrypted:  s3cr3t_salt_2024
+
+TestPass123! (12 bytes):
+  Encrypted:  30 00 15 15 25 0d 07 2c 5a 57 4a 45
+  Decrypted:  TestPass123!
+
+[BYPASS] Message (35 bytes):
+  Encrypted:  3f 27 3f 31 34 3f 27 02 4b 28 18 17 11 03 13 55
+              1c 15 2c 18 12 16 16 01 46 05 10 18 11 3c 1f 00
+              1d 45 6f
+  Decrypted:  [BYPASS] Master password detected!\n
+
+--------------------------------------------------------------------------------
+
+7. DECRYPTION CODE (PYTHON)
+================================================================================
+
+```python
+#!/usr/bin/env python3
+"""
+Decryptor for obfuscated_linux(8) - LLVM XOR String Encryption
+XOR Key: "default_key"
+"""
+
+def decrypt_string(encrypted_bytes, key=b"default_key", key_offset=0):
+    """Decrypt XOR-encrypted string"""
+    result = []
+    for i, byte in enumerate(encrypted_bytes):
+        key_idx = (key_offset + i) % len(key)
+        result.append(byte ^ key[key_idx])
+    return bytes(result).decode('utf-8')
+
+# Example usage:
+encrypted_master_bypass = bytes([
+    0x25, 0x01, 0x0b, 0x08, 0x1b, 0x2c, 0x3b, 0x29,
+    0x0e, 0x17, 0x0b, 0x0d, 0x01, 0x03, 0x53, 0x45,
+    0x5e, 0x40, 0x7e
+])
+
+print(decrypt_string(encrypted_master_bypass))
+# Output: Admin@Override2024!
+
+encrypted_secret_salt = bytes([
+    0x17, 0x56, 0x05, 0x13, 0x46, 0x18, 0x2b, 0x2c,
+    0x0a, 0x09, 0x0d, 0x3b, 0x57, 0x56, 0x53, 0x41
+])
+
+print(decrypt_string(encrypted_secret_salt))
+# Output: s3cr3t_salt_2024
+```
+
+--------------------------------------------------------------------------------
+
+8. RUNTIME BEHAVIOR
+================================================================================
+
+When executed, the binary:
+1. Displays encrypted garbage (decryption occurs at runtime)
+2. Uses default password "TestPass123!" for strength check
+3. Compares input against MASTER_BYPASS ("Admin@Override2024!")
+4. If master password matches:
+   - Displays "[BYPASS] Master password detected!"
+   - Reveals SECRET_SALT ("s3cr3t_salt_2024")
+   - Grants full admin access
+5. Otherwise, performs password strength analysis:
+   - Checks length (8+ chars = 25pts, 12+ chars = 50pts)
+   - Checks uppercase (+15pts), lowercase (+15pts)
+   - Checks digits (+10pts), special chars (+10pts)
+   - Maximum score: 100/100
+
+Sample runtime output (encrypted due to runtime decryption):
+  YX[A%,
+  ?$( 95'88Y4;QE\ofDE*DE*DE3	<
+  ^ECl*
+  fDE*	<
+  ...
+
+--------------------------------------------------------------------------------
+
+9. SECURITY ASSESSMENT
+================================================================================
+
+Vulnerability Level: HIGH - Easily Reversible
+
+Weaknesses Found:
+  [!] XOR key is readable ASCII string ("default_key")
+  [!] Key derivable through known-plaintext attack
+  [!] Hardcoded master bypass password
+  [!] Hardcoded secret salt exposed
+  [!] Same key used across all strings
+  [!] Key only 11 bytes (short rotation period)
+  [!] No anti-debugging or integrity checks
+
+Attack Vector:
+  1. Extract .rodata section (offset 0x3000)
+  2. Use known plaintext attack with common strings
+  3. Derive XOR key "default_key"
+  4. Decrypt all strings to recover credentials
+
+--------------------------------------------------------------------------------
+
+10. COMPARISON WITH ORIGINAL SOURCE
+================================================================================
+
+Original hardcoded secrets from C source:
+
+  char* MASTER_BYPASS = "Admin@Override2024!";
+  char* SECRET_SALT = "s3cr3t_salt_2024";
+
+All secrets successfully recovered through XOR decryption analysis!
+
+Program Logic Flow:
+  main()
+    |
+    +-- strcmp(password, MASTER_BYPASS) == 0?
+    |     |
+    |     +-- YES: Print bypass message, reveal salt, grant access
+    |     |
+    |     +-- NO: Call check_strength(password)
+    |               |
+    |               +-- Analyze: length, upper, lower, digit, special
+    |               +-- Calculate score (0-100)
+    |               +-- Print analysis results
+
+--------------------------------------------------------------------------------
+
+11. STRING LOCATION MAP
+================================================================================
+
+     .rodata section (0x3000 - 0x31b4)
+     +-----------------------------------------+
+0x3000| Metadata / Function offset table       |
+     +-----------------------------------------+
+0x3070| MASTER_BYPASS (19 bytes)               |
+     +-----------------------------------------+
+0x3084| SECRET_SALT (16 bytes)                 |
+     +-----------------------------------------+
+0x3095| [ANALYSIS] Password message            |
+     +-----------------------------------------+
+0x30b0| Format strings (Length, Upper, etc.)   |
+     +-----------------------------------------+
+0x310a| [RESULT] Strength message              |
+     +-----------------------------------------+
+0x3125| TestPass123! (default test password)   |
+     +-----------------------------------------+
+0x3132| Banner message                         |
+     +-----------------------------------------+
+0x315b| [BYPASS] message                       |
+     +-----------------------------------------+
+0x317f| [SECRET] Salt message                  |
+     +-----------------------------------------+
+0x3193| [ADMIN] Full access message            |
+     +-----------------------------------------+
+0x31b0| Yes/No strings                         |
+     +-----------------------------------------+
+
+================================================================================
+                              END OF ANALYSIS REPORT
+================================================================================

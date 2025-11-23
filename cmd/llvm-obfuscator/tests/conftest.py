@@ -1,62 +1,85 @@
-import base64
-from pathlib import Path
-from typing import Callable
+"""Pytest configuration and fixtures."""
 
 import pytest
+import sys
+from pathlib import Path
 
-from core import LLVMObfuscator, ObfuscationConfig, ObfuscationLevel, OutputConfiguration, PassConfiguration, Platform
-from core.config import AdvancedConfiguration
-from core.reporter import ObfuscationReport
+# Add parent directory to path so we can import core modules
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+
+@pytest.fixture(scope="session")
+def project_root():
+    """Get project root directory."""
+    return Path(__file__).parent.parent
+
+
+@pytest.fixture(scope="session")
+def examples_dir(project_root):
+    """Get examples directory."""
+    return project_root / "examples"
+
+
+@pytest.fixture(scope="session")
+def test_data_dir(project_root):
+    """Get test data directory."""
+    test_dir = project_root / "tests" / "test_data"
+    test_dir.mkdir(exist_ok=True)
+    return test_dir
 
 
 @pytest.fixture
-def sample_source(tmp_path: Path) -> Path:
+def sample_c_file(tmp_path):
+    """Create a simple C file for testing."""
     source = tmp_path / "sample.c"
     source.write_text("""
-    #include <stdio.h>
-    int secret() { return 42; }
-    int main() { printf("%s", "secret"); return 0; }
-    """, encoding="utf-8")
+#include <stdio.h>
+
+int add(int a, int b) {
+    return a + b;
+}
+
+int main() {
+    int result = add(5, 3);
+    printf("Result: %d\\n", result);
+    return 0;
+}
+""")
     return source
 
 
 @pytest.fixture
-def obfuscation_config(tmp_path: Path) -> ObfuscationConfig:
-    return ObfuscationConfig(
-        level=ObfuscationLevel.MEDIUM,
-        platform=Platform.LINUX,
-        compiler_flags=["-g"],
-        passes=PassConfiguration(flattening=True, substitution=True, bogus_control_flow=True, split=True),
-        advanced=AdvancedConfiguration(cycles=1, string_encryption=True, fake_loops=2),
-        output=OutputConfiguration(directory=tmp_path / "out", report_formats=["json"]),
+def sample_cpp_file(tmp_path):
+    """Create a simple C++ file for testing."""
+    source = tmp_path / "sample.cpp"
+    source.write_text("""
+#include <iostream>
+
+class Calculator {
+public:
+    int add(int a, int b) {
+        return a + b;
+    }
+};
+
+int main() {
+    Calculator calc;
+    int result = calc.add(5, 3);
+    std::cout << "Result: " << result << std::endl;
+    return 0;
+}
+""")
+    return source
+
+
+def pytest_configure(config):
+    """Pytest configuration."""
+    config.addinivalue_line(
+        "markers", "slow: marks tests as slow (deselect with '-m \"not slow\"')"
     )
-
-
-@pytest.fixture
-def obfuscator(tmp_path: Path) -> LLVMObfuscator:
-    reporter = ObfuscationReport(tmp_path / "reports")
-    return LLVMObfuscator(reporter=reporter)
-
-
-@pytest.fixture(autouse=True)
-def patch_compile(monkeypatch: pytest.MonkeyPatch) -> None:
-    from core.obfuscator import LLVMObfuscator
-
-    def fake_compile(self: LLVMObfuscator, source, destination, *_, **__):
-        destination.write_bytes(b"\x7fELFfakebinary")
-
-    monkeypatch.setattr(LLVMObfuscator, "_compile", fake_compile)
-
-    from core.obfuscator import require_tool
-
-    monkeypatch.setattr("core.obfuscator.require_tool", lambda *args, **kwargs: None)
-
-
-@pytest.fixture
-def base64_source(sample_source: Path) -> str:
-    return base64.b64encode(sample_source.read_bytes()).decode("ascii")
-
-
-@pytest.fixture(autouse=True)
-def set_api_key_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("OBFUSCATOR_API_KEY", "test-key")
+    config.addinivalue_line(
+        "markers", "requires_upx: marks tests that require UPX to be installed"
+    )
+    config.addinivalue_line(
+        "markers", "requires_ollvm: marks tests that require OLLVM plugin"
+    )

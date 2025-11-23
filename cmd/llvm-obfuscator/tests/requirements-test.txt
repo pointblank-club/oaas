@@ -1,0 +1,25 @@
+# Testing dependencies for LLVM Obfuscator
+
+# Core testing framework
+pytest>=7.4.0
+pytest-cov>=4.1.0
+pytest-timeout>=2.1.0
+pytest-xdist>=3.3.1  # For parallel test execution
+
+# Code quality
+pytest-flake8>=1.1.1
+pytest-mypy>=0.10.3
+black>=23.7.0
+flake8>=6.1.0
+mypy>=1.5.0
+
+# Test utilities
+pytest-mock>=3.11.1
+pytest-benchmark>=4.0.0  # For performance benchmarking
+
+# HTML reports
+pytest-html>=3.2.0
+
+# Coverage
+coverage>=7.3.0
+

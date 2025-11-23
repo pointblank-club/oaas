@@ -15,6 +15,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     llvm \
     lld \
     libc6-dev \
+    upx-ucl \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -38,6 +39,12 @@ COPY plugins/linux-x86_64/LLVMObfuscationPlugin.so /usr/local/llvm-obfuscator/li
 # Make binaries executable
 RUN chmod +x /usr/local/llvm-obfuscator/bin/clang
 RUN chmod +x /usr/local/llvm-obfuscator/bin/opt
+
+# Apply UPX compression to reduce binary size and add additional obfuscation layer
+# Using --best for maximum compression (can take longer but provides better results)
+# Note: UPX may fail on some binaries (statically linked, etc) - using || true to continue
+RUN upx --best --lzma /usr/local/llvm-obfuscator/bin/clang 2>/dev/null || echo "UPX compression skipped for clang"
+RUN upx --best --lzma /usr/local/llvm-obfuscator/bin/opt 2>/dev/null || echo "UPX compression skipped for opt"
 
 # Add custom LLVM toolchain to PATH
 ENV PATH="/usr/local/llvm-obfuscator/bin:${PATH}"

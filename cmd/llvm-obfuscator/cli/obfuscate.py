@@ -21,6 +21,7 @@ from core import (
 )
 from core.batch import load_batch_config
 from core.config import AdvancedConfiguration, IndirectCallConfiguration, OutputConfiguration, SymbolObfuscationConfiguration
+from core.config import AdvancedConfiguration, OutputConfiguration, SymbolObfuscationConfiguration, UPXConfiguration
 from core.exceptions import ObfuscationError
 from core.utils import create_logger, load_yaml, normalize_flags_and_passes
 
@@ -49,6 +50,10 @@ def _build_config(
     enable_indirect_calls: bool,
     indirect_stdlib: bool,
     indirect_custom: bool,
+    enable_upx: bool,
+    upx_compression: str,
+    upx_lzma: bool,
+    upx_preserve_original: bool,
     report_formats: str,
     custom_flags: Optional[str],
     config_file: Optional[Path],
@@ -82,6 +87,11 @@ def _build_config(
         enabled=enable_indirect_calls,
         obfuscate_stdlib=indirect_stdlib,
         obfuscate_custom=indirect_custom,
+    upx_config = UPXConfiguration(
+        enabled=enable_upx,
+        compression_level=upx_compression,
+        use_lzma=upx_lzma,
+        preserve_original=upx_preserve_original,
     )
     advanced = AdvancedConfiguration(
         cycles=cycles,
@@ -89,6 +99,7 @@ def _build_config(
         fake_loops=fake_loops,
         symbol_obfuscation=symbol_obf_config,
         indirect_calls=indirect_call_config,
+        upx_packing=upx_config,
     )
     output_config = OutputConfiguration(directory=output, report_formats=report_formats.split(","))
     return ObfuscationConfig(
@@ -124,6 +135,10 @@ def compile(
     enable_indirect_calls: bool = typer.Option(False, "--enable-indirect-calls", help="Enable indirect call obfuscation"),
     indirect_stdlib: bool = typer.Option(True, "--indirect-stdlib/--no-indirect-stdlib", help="Obfuscate stdlib function calls"),
     indirect_custom: bool = typer.Option(True, "--indirect-custom/--no-indirect-custom", help="Obfuscate custom function calls"),
+    enable_upx: bool = typer.Option(False, "--enable-upx", help="Enable UPX binary packing (compression + obfuscation)"),
+    upx_compression: str = typer.Option("best", help="UPX compression level (fast, default, best, brute)"),
+    upx_lzma: bool = typer.Option(True, "--upx-lzma/--no-upx-lzma", help="Use LZMA compression for UPX"),
+    upx_preserve_original: bool = typer.Option(False, "--upx-preserve-original", help="Keep backup of pre-UPX binary"),
     report_formats: str = typer.Option("json", help="Report formats (comma separated)"),
     custom_flags: Optional[str] = typer.Option(None, help="Additional compiler flags"),
     config_file: Optional[Path] = typer.Option(None, help="Load configuration from YAML/JSON file"),
@@ -152,6 +167,10 @@ def compile(
             enable_indirect_calls=enable_indirect_calls,
             indirect_stdlib=indirect_stdlib,
             indirect_custom=indirect_custom,
+            enable_upx=enable_upx,
+            upx_compression=upx_compression,
+            upx_lzma=upx_lzma,
+            upx_preserve_original=upx_preserve_original,
             report_formats=report_formats,
             custom_flags=custom_flags,
             config_file=config_file,

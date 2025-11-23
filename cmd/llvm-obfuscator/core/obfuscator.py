@@ -10,6 +10,7 @@ from .fake_loop_inserter import FakeLoopGenerator
 from .reporter import ObfuscationReport
 from .string_encryptor import StringEncryptionResult, XORStringEncryptor
 from .symbol_obfuscator import SymbolObfuscator
+from .upx_packer import UPXPacker
 from .utils import (
     compute_entropy,
     create_logger,
@@ -52,6 +53,7 @@ class LLVMObfuscator:
         self.encryptor = XORStringEncryptor()
         self.fake_loop_generator = FakeLoopGenerator()
         self.symbol_obfuscator = SymbolObfuscator()
+        self.upx_packer = UPXPacker()
 
     def _get_bundled_plugin_path(self, target_platform: Optional[Platform] = None) -> Optional[Path]:
         """Auto-detect bundled OLLVM plugin for current or target platform."""
@@ -253,6 +255,32 @@ class LLVMObfuscator:
 
             intermediate_source = intermediate_binary
 
+        # UPX packing (if enabled) - applied as FINAL step after all obfuscation
+        upx_result = None
+        if config.advanced.upx_packing.enabled:
+            try:
+                self.logger.info("Applying UPX compression to final binary...")
+                upx_result = self.upx_packer.pack(
+                    binary_path=output_binary,
+                    compression_level=config.advanced.upx_packing.compression_level,
+                    use_lzma=config.advanced.upx_packing.use_lzma,
+                    force=True,
+                    preserve_original=config.advanced.upx_packing.preserve_original,
+                )
+                if upx_result and upx_result.get("status") == "success":
+                    self.logger.info(
+                        f"UPX packing successful: {upx_result['compression_ratio']:.1f}% size reduction "
+                        f"({upx_result['original_size']} → {upx_result['packed_size']} bytes)"
+                    )
+                elif upx_result and upx_result.get("status") == "failed":
+                    self.logger.warning(f"UPX packing failed: {upx_result.get('error', 'Unknown error')}")
+                    warnings_log.append(f"UPX packing failed: {upx_result.get('error', 'Unknown error')}")
+                else:
+                    self.logger.warning("UPX packing skipped (not installed or incompatible binary)")
+            except Exception as e:
+                self.logger.warning(f"UPX packing failed with exception: {e}")
+                warnings_log.append(f"UPX packing error: {str(e)}")
+
         binary_format = detect_binary_format(output_binary)
         file_size = get_file_size(output_binary)
         sections = list_sections(output_binary)
@@ -305,6 +333,7 @@ class LLVMObfuscator:
             "fake_loops_inserted": base_metrics["fake_loops_inserted"],
             "symbol_obfuscation": symbol_result or {"enabled": False},
             "indirect_calls": indirect_call_result or {"enabled": False},
+            "upx_packing": upx_result or {"enabled": False},
             "obfuscation_score": base_metrics["obfuscation_score"],
             "symbol_reduction": base_metrics["symbol_reduction"],
             "function_reduction": base_metrics["function_reduction"],

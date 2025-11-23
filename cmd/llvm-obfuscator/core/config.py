@@ -67,6 +67,11 @@ class IndirectCallConfiguration:
     enabled: bool = False
     obfuscate_stdlib: bool = True
     obfuscate_custom: bool = True
+class UPXConfiguration:
+    enabled: bool = False
+    compression_level: str = "best"  # fast, default, best, brute
+    use_lzma: bool = True
+    preserve_original: bool = False
 
 
 @dataclass
@@ -76,6 +81,7 @@ class AdvancedConfiguration:
     fake_loops: int = 0
     symbol_obfuscation: SymbolObfuscationConfiguration = field(default_factory=SymbolObfuscationConfiguration)
     indirect_calls: IndirectCallConfiguration = field(default_factory=IndirectCallConfiguration)
+    upx_packing: UPXConfiguration = field(default_factory=UPXConfiguration)
 
 
 @dataclass
@@ -117,11 +123,19 @@ class ObfuscationConfig:
             obfuscate_custom=indirect_data.get("obfuscate_custom", True),
         )
 
+        upx_data = adv_data.get("upx_packing", {})
+        upx_config = UPXConfiguration(
+            enabled=upx_data.get("enabled", False),
+            compression_level=upx_data.get("compression_level", "best"),
+            use_lzma=upx_data.get("use_lzma", True),
+            preserve_original=upx_data.get("preserve_original", False),
+        )
         advanced = AdvancedConfiguration(
             cycles=adv_data.get("cycles", 1),
             string_encryption=adv_data.get("string_encryption", False),
             fake_loops=adv_data.get("fake_loops", 0),
             indirect_calls=indirect_calls,
+            upx_packing=upx_config,
         )
         output_data = data.get("output", {})
         output = OutputConfiguration(

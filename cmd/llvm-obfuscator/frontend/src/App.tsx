@@ -323,18 +323,31 @@ function App() {
   const [layer3, setLayer3] = useState(false); // OLLVM passes (COMPILE, THIRD - optional)
   const [layer4, setLayer4] = useState(false); // Compiler flags (COMPILE, FINAL)
 
-  // Configuration states
-  const [obfuscationLevel, setObfuscationLevel] = useState(5);
-  const [cycles, setCycles] = useState(1);
-  const [targetPlatform, setTargetPlatform] = useState<Platform>('linux');
-  const [fakeLoops, setFakeLoops] = useState(0);
-  const [selectedFlags, setSelectedFlags] = useState<string[]>([]);
-
-  // Symbol obfuscation config
+  // Layer 1: Symbol Obfuscation sub-options
   const [symbolAlgorithm, setSymbolAlgorithm] = useState('sha256');
   const [symbolHashLength, setSymbolHashLength] = useState(12);
   const [symbolPrefix, setSymbolPrefix] = useState('typed');
   const [symbolSalt, setSymbolSalt] = useState('');
+
+  // Layer 2: String Encryption sub-options
+  const [fakeLoops, setFakeLoops] = useState(0);
+
+  // Layer 3: OLLVM Passes sub-options
+  const [passFlattening, setPassFlattening] = useState(false);
+  const [passSubstitution, setPassSubstitution] = useState(false);
+  const [passBogusControlFlow, setPassBogusControlFlow] = useState(false);
+  const [passSplitBasicBlocks, setPassSplitBasicBlocks] = useState(false);
+  const [cycles, setCycles] = useState(1);
+
+  // Layer 4: Compiler Flags sub-options
+  const [flagLTO, setFlagLTO] = useState(false);
+  const [flagSymbolHiding, setFlagSymbolHiding] = useState(false);
+  const [flagOmitFramePointer, setFlagOmitFramePointer] = useState(false);
+  const [flagSpeculativeLoadHardening, setFlagSpeculativeLoadHardening] = useState(false);
+
+  // Configuration states
+  const [obfuscationLevel, setObfuscationLevel] = useState(5);
+  const [targetPlatform, setTargetPlatform] = useState<Platform>('linux');
 
   useEffect(() => {
     document.body.className = darkMode ? 'dark' : 'light';
@@ -395,10 +408,10 @@ function App() {
     let count = 0;
     if (layer1) count++; // Symbol obfuscation
     if (layer2) count++; // String encryption
-    if (layer3) count++; // OLLVM passes
-    if (layer4) count++; // Compiler flags
+    if (layer3 && (passFlattening || passSubstitution || passBogusControlFlow || passSplitBasicBlocks)) count++; // OLLVM passes
+    if (layer4 && (flagLTO || flagSymbolHiding || flagOmitFramePointer || flagSpeculativeLoadHardening)) count++; // Compiler flags
     return count;
-  }, [layer1, layer2, layer3, layer4]);
+  }, [layer1, layer2, layer3, layer4, passFlattening, passSubstitution, passBogusControlFlow, passSplitBasicBlocks, flagLTO, flagSymbolHiding, flagOmitFramePointer, flagSpeculativeLoadHardening]);
 
   // Validate source code syntax
   const validateCode = (code: string, language: 'c' | 'cpp'): { valid: boolean; error?: string } => {
@@ -462,19 +475,10 @@ function App() {
 
   // Handle cascading layer selection
   const handleLayerChange = (layer: number, value: boolean) => {
-    if (value) {
-      // Enable this layer and all previous layers
-      if (layer >= 1) setLayer1(true);
-      if (layer >= 2) setLayer2(true);
-      if (layer >= 3) setLayer3(true);
-      if (layer >= 4) setLayer4(true);
-    } else {
-      // Disable this layer and all subsequent layers
-      if (layer <= 1) setLayer1(false);
-      if (layer <= 2) setLayer2(false);
-      if (layer <= 3) setLayer3(false);
-      if (layer <= 4) setLayer4(false);
-    }
+    if (layer === 1) setLayer1(value);
+    if (layer === 2) setLayer2(value);
+    if (layer === 3) setLayer3(value);
+    if (layer === 4) setLayer4(value);
   };
 
   const onSubmit = useCallback(async () => {
@@ -560,14 +564,25 @@ function App() {
       setProgress({ message: inputMode === 'file' ? 'Uploading file...' : 'Encoding source...', percent: 10 });
       const source_b64 = inputMode === 'file' ? await fileToBase64(file as File) : stringToBase64(pastedSource);
 
-      // Build compiler flags based on Layer 4 (Compiler Flags)
-      const flags: string[] = [...selectedFlags];
+      // Build compiler flags based on Layer 4 (Compiler Flags) - only selected flags
+      const flags: string[] = [];
       if (layer4) {
-        flags.push('-flto', '-fvisibility=hidden', '-O3', '-fno-builtin',
-                   '-flto=thin', '-fomit-frame-pointer', '-mspeculative-load-hardening', '-O1');
+        if (flagLTO) flags.push('-flto', '-flto=thin');
+        if (flagSymbolHiding) flags.push('-fvisibility=hidden');
+        if (flagOmitFramePointer) flags.push('-fomit-frame-pointer');
+        if (flagSpeculativeLoadHardening) flags.push('-mspeculative-load-hardening');
+        // Add optimization flags if any Layer 4 flag is selected
+        if (flagLTO || flagSymbolHiding || flagOmitFramePointer || flagSpeculativeLoadHardening) {
+          flags.push('-O3', '-fno-builtin', '-O1');
+        }
       }
+
+      // Build OLLVM pass flags based on Layer 3 - only selected passes
       if (layer3) {
-        flags.push('-mllvm', '-fla', '-mllvm', '-bcf', '-mllvm', '-sub', '-mllvm', '-split');
+        if (passFlattening) flags.push('-mllvm', '-fla');
+        if (passBogusControlFlow) flags.push('-mllvm', '-bcf');
+        if (passSubstitution) flags.push('-mllvm', '-sub');
+        if (passSplitBasicBlocks) flags.push('-mllvm', '-split');
       }
 
       const payload = {
@@ -577,20 +592,20 @@ function App() {
         config: {
           level: obfuscationLevel,
           passes: {
-            flattening: layer3,
-            substitution: layer3,
-            bogus_control_flow: layer3,
-            split: layer3
+            flattening: layer3 && passFlattening,
+            substitution: layer3 && passSubstitution,
+            bogus_control_flow: layer3 && passBogusControlFlow,
+            split: layer3 && passSplitBasicBlocks
           },
-          cycles: cycles,
+          cycles: layer3 ? cycles : 1,
           string_encryption: layer2,
           fake_loops: layer2 ? fakeLoops : 0,
           symbol_obfuscation: {
             enabled: layer1,
-            algorithm: symbolAlgorithm,
-            hash_length: symbolHashLength,
-            prefix_style: symbolPrefix,
-            salt: symbolSalt || null
+            algorithm: layer1 ? symbolAlgorithm : 'sha256',
+            hash_length: layer1 ? symbolHashLength : 12,
+            prefix_style: layer1 ? symbolPrefix : 'typed',
+            salt: layer1 && symbolSalt ? symbolSalt : null
           }
         },
         report_formats: ['json', 'markdown'],
@@ -680,9 +695,13 @@ function App() {
       setTimeout(() => setProgress(null), 2000);
     }
   }, [
-    file, inputMode, pastedSource, selectedFlags, obfuscationLevel, cycles, targetPlatform,
-    layer1, layer2, layer3, layer4, fakeLoops,
-    symbolAlgorithm, symbolHashLength, symbolPrefix, symbolSalt, detectLanguage, countLayers
+    file, inputMode, pastedSource, obfuscationLevel, cycles, targetPlatform,
+    layer1, layer2, layer3, layer4,
+    symbolAlgorithm, symbolHashLength, symbolPrefix, symbolSalt,
+    fakeLoops,
+    passFlattening, passSubstitution, passBogusControlFlow, passSplitBasicBlocks,
+    flagLTO, flagSymbolHiding, flagOmitFramePointer, flagSpeculativeLoadHardening,
+    detectLanguage, countLayers
   ]);
 
   const onDownloadBinary = useCallback((platform: Platform) => {
@@ -790,9 +809,39 @@ function App() {
         <section className="section">
           <h2 className="section-title">[2] OBFUSCATION LAYERS</h2>
           <div className="layer-description">
-            Layers execute in order (1→2→3→4): selecting Layer N enables all layers 1 to N
+            Select any combination of layers and their individual options
+          </div>
+          <div style={{ display: 'flex', gap: '10px', marginBottom: '15px' }}>
+            <button
+              className="select-all-btn"
+              onClick={() => {
+                const allSelected = layer1 && layer2 && layer3 && layer4 &&
+                  passFlattening && passSubstitution && passBogusControlFlow && passSplitBasicBlocks &&
+                  flagLTO && flagSymbolHiding && flagOmitFramePointer && flagSpeculativeLoadHardening;
+
+                const newValue = !allSelected;
+                setLayer1(newValue);
+                setLayer2(newValue);
+                setLayer3(newValue);
+                setLayer4(newValue);
+                setPassFlattening(newValue);
+                setPassSubstitution(newValue);
+                setPassBogusControlFlow(newValue);
+                setPassSplitBasicBlocks(newValue);
+                setFlagLTO(newValue);
+                setFlagSymbolHiding(newValue);
+                setFlagOmitFramePointer(newValue);
+                setFlagSpeculativeLoadHardening(newValue);
+              }}
+            >
+              {layer1 && layer2 && layer3 && layer4 &&
+                passFlattening && passSubstitution && passBogusControlFlow && passSplitBasicBlocks &&
+                flagLTO && flagSymbolHiding && flagOmitFramePointer && flagSpeculativeLoadHardening
+                ? 'Deselect All' : 'Select All'}
+            </button>
           </div>
           <div className="layers-grid">
+            {/* Layer 1: Symbol Obfuscation */}
             <label className="layer-checkbox">
               <input
                 type="checkbox"
@@ -805,6 +854,38 @@ function App() {
               </span>
             </label>
 
+            {layer1 && (
+              <div className="layer-config">
+                <label>
+                  Symbol Hash Algorithm:
+                  <select value={symbolAlgorithm} onChange={(e) => setSymbolAlgorithm(e.target.value)}>
+                    <option value="sha256">SHA256</option>
+                    <option value="blake2b">BLAKE2B</option>
+                    <option value="siphash">SipHash</option>
+                  </select>
+                </label>
+                <label>
+                  Hash Length (8-32):
+                  <input
+                    type="number"
+                    min="8"
+                    max="32"
+                    value={symbolHashLength}
+                    onChange={(e) => setSymbolHashLength(parseInt(e.target.value) || 12)}
+                  />
+                </label>
+                <label>
+                  Prefix Style:
+                  <select value={symbolPrefix} onChange={(e) => setSymbolPrefix(e.target.value)}>
+                    <option value="none">none</option>
+                    <option value="typed">typed (f_, v_)</option>
+                    <option value="underscore">underscore (_)</option>
+                  </select>
+                </label>
+              </div>
+            )}
+
+            {/* Layer 2: String Encryption */}
             <label className="layer-checkbox">
               <input
                 type="checkbox"
@@ -817,6 +898,22 @@ function App() {
               </span>
             </label>
 
+            {layer2 && (
+              <div className="layer-config">
+                <label>
+                  Fake Loops (0-50):
+                  <input
+                    type="number"
+                    min="0"
+                    max="50"
+                    value={fakeLoops}
+                    onChange={(e) => setFakeLoops(parseInt(e.target.value) || 0)}
+                  />
+                </label>
+              </div>
+            )}
+
+            {/* Layer 3: OLLVM Passes */}
             <label className="layer-checkbox">
               <input
                 type="checkbox"
@@ -825,10 +922,74 @@ function App() {
               />
               <span className="layer-label">
                 [LAYER 3] OLLVM Passes (COMPILE, 3rd - Optional)
-                <small>Control flow flattening, substitution, bogus CF, split</small>
+                <small>Select individual control flow obfuscation passes</small>
               </span>
             </label>
 
+            {layer3 && (
+              <div className="layer-config">
+                <button
+                  className="select-all-btn"
+                  style={{ marginBottom: '10px', fontSize: '0.9em' }}
+                  onClick={() => {
+                    const allPassesSelected = passFlattening && passSubstitution &&
+                      passBogusControlFlow && passSplitBasicBlocks;
+                    const newValue = !allPassesSelected;
+                    setPassFlattening(newValue);
+                    setPassSubstitution(newValue);
+                    setPassBogusControlFlow(newValue);
+                    setPassSplitBasicBlocks(newValue);
+                  }}
+                >
+                  {passFlattening && passSubstitution && passBogusControlFlow && passSplitBasicBlocks
+                    ? 'Deselect All' : 'Select All'}
+                </button>
+                <label className="sub-option">
+                  <input
+                    type="checkbox"
+                    checked={passFlattening}
+                    onChange={(e) => setPassFlattening(e.target.checked)}
+                  />
+                  Control Flow Flattening
+                </label>
+                <label className="sub-option">
+                  <input
+                    type="checkbox"
+                    checked={passSubstitution}
+                    onChange={(e) => setPassSubstitution(e.target.checked)}
+                  />
+                  Instruction Substitution
+                </label>
+                <label className="sub-option">
+                  <input
+                    type="checkbox"
+                    checked={passBogusControlFlow}
+                    onChange={(e) => setPassBogusControlFlow(e.target.checked)}
+                  />
+                  Bogus Control Flow
+                </label>
+                <label className="sub-option">
+                  <input
+                    type="checkbox"
+                    checked={passSplitBasicBlocks}
+                    onChange={(e) => setPassSplitBasicBlocks(e.target.checked)}
+                  />
+                  Split Basic Blocks
+                </label>
+                <label>
+                  Cycle Count (1-5):
+                  <input
+                    type="number"
+                    min="1"
+                    max="5"
+                    value={cycles}
+                    onChange={(e) => setCycles(parseInt(e.target.value) || 1)}
+                  />
+                </label>
+              </div>
+            )}
+
+            {/* Layer 4: Compiler Flags */}
             <label className="layer-checkbox">
               <input
                 type="checkbox"
@@ -837,56 +998,63 @@ function App() {
               />
               <span className="layer-label">
                 [LAYER 4] Compiler Flags (COMPILE, FINAL)
-                <small>9 optimal LLVM flags: -flto, -fvisibility=hidden, etc.</small>
+                <small>Select individual LLVM optimization and hardening flags</small>
               </span>
             </label>
+
+            {layer4 && (
+              <div className="layer-config">
+                <button
+                  className="select-all-btn"
+                  style={{ marginBottom: '10px', fontSize: '0.9em' }}
+                  onClick={() => {
+                    const allFlagsSelected = flagLTO && flagSymbolHiding &&
+                      flagOmitFramePointer && flagSpeculativeLoadHardening;
+                    const newValue = !allFlagsSelected;
+                    setFlagLTO(newValue);
+                    setFlagSymbolHiding(newValue);
+                    setFlagOmitFramePointer(newValue);
+                    setFlagSpeculativeLoadHardening(newValue);
+                  }}
+                >
+                  {flagLTO && flagSymbolHiding && flagOmitFramePointer && flagSpeculativeLoadHardening
+                    ? 'Deselect All' : 'Select All'}
+                </button>
+                <label className="sub-option">
+                  <input
+                    type="checkbox"
+                    checked={flagLTO}
+                    onChange={(e) => setFlagLTO(e.target.checked)}
+                  />
+                  Link-Time Optimization (-flto)
+                </label>
+                <label className="sub-option">
+                  <input
+                    type="checkbox"
+                    checked={flagSymbolHiding}
+                    onChange={(e) => setFlagSymbolHiding(e.target.checked)}
+                  />
+                  Symbol Hiding (-fvisibility=hidden)
+                </label>
+                <label className="sub-option">
+                  <input
+                    type="checkbox"
+                    checked={flagOmitFramePointer}
+                    onChange={(e) => setFlagOmitFramePointer(e.target.checked)}
+                  />
+                  Remove Frame Pointer (-fomit-frame-pointer)
+                </label>
+                <label className="sub-option">
+                  <input
+                    type="checkbox"
+                    checked={flagSpeculativeLoadHardening}
+                    onChange={(e) => setFlagSpeculativeLoadHardening(e.target.checked)}
+                  />
+                  Speculative Load Hardening
+                </label>
+              </div>
+            )}
           </div>
-
-          {layer2 && (
-            <div className="layer-config">
-              <label>
-                Fake Loops:
-                <input
-                  type="number"
-                  min="0"
-                  max="50"
-                  value={fakeLoops}
-                  onChange={(e) => setFakeLoops(parseInt(e.target.value) || 0)}
-                />
-              </label>
-            </div>
-          )}
-
-          {layer1 && (
-            <div className="layer-config">
-              <label>
-                Algorithm:
-                <select value={symbolAlgorithm} onChange={(e) => setSymbolAlgorithm(e.target.value)}>
-                  <option value="sha256">SHA256</option>
-                  <option value="blake2b">BLAKE2B</option>
-                  <option value="siphash">SipHash</option>
-                </select>
-              </label>
-              <label>
-                Hash Length:
-                <input
-                  type="number"
-                  min="8"
-                  max="32"
-                  value={symbolHashLength}
-                  onChange={(e) => setSymbolHashLength(parseInt(e.target.value) || 12)}
-                />
-              </label>
-              <label>
-                Prefix:
-                <select value={symbolPrefix} onChange={(e) => setSymbolPrefix(e.target.value)}>
-                  <option value="none">none</option>
-                  <option value="typed">typed (f_, v_)</option>
-                  <option value="underscore">underscore (_)</option>
-                </select>
-              </label>
-            </div>
-          )}
         </section>
 
         {/* Configuration */}
@@ -894,7 +1062,7 @@ function App() {
           <h2 className="section-title">[3] CONFIGURATION</h2>
           <div className="config-grid">
             <label>
-              Level:
+              Obfuscation Level:
               <select
                 value={obfuscationLevel}
                 onChange={(e) => setObfuscationLevel(parseInt(e.target.value))}
@@ -908,18 +1076,7 @@ function App() {
             </label>
 
             <label>
-              Cycles:
-              <input
-                type="number"
-                min="1"
-                max="5"
-                value={cycles}
-                onChange={(e) => setCycles(parseInt(e.target.value) || 1)}
-              />
-            </label>
-
-            <label>
-              Platform:
+              Target Platform:
               <select
                 value={targetPlatform}
                 onChange={(e) => setTargetPlatform(e.target.value as Platform)}

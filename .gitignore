@@ -24,3 +24,4 @@ symbol_maps/
 cmd/llvm-obfuscator/test_*/simple_auth
 cmd/llvm-obfuscator/test_*/*_test
 cmd/llvm-obfuscator/obfuscated/
+*.bak

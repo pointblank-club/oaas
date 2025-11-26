@@ -39,6 +39,14 @@ class LLVMObfuscator:
         "-Wl,-s",
     ]
 
+    NO_EXC_FLAGS = [
+        "-fno-exceptions",
+        "-fno-rtti",
+        "-fno-unwind-tables",
+        "-fno-asynchronous-unwind-tables",
+        "-fno-use-cxa-atexit",
+    ]
+
     CUSTOM_PASSES = [
         "flattening",
         "substitution",
@@ -189,6 +197,11 @@ class LLVMObfuscator:
 
         enabled_passes = config.passes.enabled_passes()
         compiler_flags = merge_flags(self.BASE_FLAGS, config.compiler_flags)
+        is_cpp = source_file.suffix in ['.cpp', '.cxx', '.cc', '.c++']
+        if is_cpp:
+            # Merge no-exceptions/no-rtti flags after user flags to ensure they take effect
+            compiler_flags = merge_flags(compiler_flags, self.NO_EXC_FLAGS)
+            self.logger.debug("Applied no-exceptions/no-rtti flags for C++: %s", self.NO_EXC_FLAGS)
 
         # IMPORTANT: Cycles only make sense for source code recompilation
         # Once we have a binary, we can't feed it back through the compiler
@@ -769,6 +782,7 @@ class LLVMObfuscator:
             if source_file.suffix in ['.cpp', '.cxx', '.cc', '.c++']:
                 compiler = "clang++"
                 compile_flags = ["-lstdc++"]
+                compile_flags.extend(self.NO_EXC_FLAGS)
             else:
                 compiler = "clang"
                 compile_flags = []

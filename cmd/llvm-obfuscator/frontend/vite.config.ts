@@ -9,12 +9,12 @@ export default defineConfig({
     strictPort: true,
     proxy: {
       '/api': {
-        target: 'http://llvm-obfuscator-backend:8000',
+        target: 'http://backend:8000',
         changeOrigin: true,
         secure: false
       },
       '/ws': {
-        target: 'ws://llvm-obfuscator-backend:8000',
+        target: 'ws://backend:8000',
         ws: true,
         changeOrigin: true
       }
@@ -31,12 +31,12 @@ export default defineConfig({
     ],
     proxy: {
       '/api': {
-        target: 'http://llvm-obfuscator-backend:8000',
+        target: 'http://backend:8000',
         changeOrigin: true,
         secure: false
       },
       '/ws': {
-        target: 'ws://llvm-obfuscator-backend:8000',
+        target: 'ws://backend:8000',
         ws: true,
         changeOrigin: true
       }

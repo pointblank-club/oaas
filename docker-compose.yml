@@ -19,7 +19,7 @@ services:
       dockerfile: Dockerfile.frontend
     image: pb-obfuscator-frontend:latest
     ports:
-      - "8080:80"
+      - "8080:4666"
     depends_on:
       - backend
 

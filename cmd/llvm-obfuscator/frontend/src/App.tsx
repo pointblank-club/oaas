@@ -614,11 +614,18 @@ function App() {
 
       setProgress({ message: 'Processing obfuscation...', percent: 30 });
 
+      // Create abort controller for timeout
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 120000); // 2 minute timeout
+
       const res = await fetch('/api/obfuscate/sync', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
+        body: JSON.stringify(payload),
+        signal: controller.signal
       });
+
+      clearTimeout(timeoutId);
 
       if (!res.ok) {
         const errorText = await res.text();
@@ -675,15 +682,30 @@ function App() {
       setProgress(null);
       const errorMsg = err instanceof Error ? err.message : String(err);
 
-      // Parse error message for better user feedback
+      // Extract detailed error message
       let userFriendlyError = errorMsg;
-      if (errorMsg.includes('syntax error') || errorMsg.includes('error:')) {
-        userFriendlyError = 'Compilation failed. Please check your source code for syntax errors.';
-      } else if (errorMsg.includes('timeout')) {
-        userFriendlyError = 'Obfuscation timed out. Try reducing the obfuscation level or file size.';
-      } else if (errorMsg.includes('network') || errorMsg.includes('fetch')) {
-        userFriendlyError = 'Network error. Please check your internet connection and try again.';
+
+      // Handle abort/timeout errors
+      if (err instanceof Error && err.name === 'AbortError') {
+        userFriendlyError = 'Request timed out after 2 minutes. The backend may be unavailable or the obfuscation is taking too long. Try reducing complexity or check backend logs.';
       }
+      // Handle network errors (connection refused, DNS errors, etc.)
+      else if (errorMsg.includes('Failed to fetch') || errorMsg.includes('NetworkError') || errorMsg.includes('network')) {
+        userFriendlyError = 'Network error: Cannot connect to backend. Please ensure the backend service is running and accessible.';
+      }
+      // Try to parse JSON error from backend (FastAPI sends {detail: "..."})
+      else {
+        try {
+          const errorData = JSON.parse(errorMsg);
+          if (errorData.detail) {
+            userFriendlyError = errorData.detail;
+          }
+        } catch {
+          // Not JSON, use the raw error message (which already contains the backend error)
+        }
+      }
+
+      // For compilation errors, show the FULL compiler output with line numbers
 
       setModal({
         type: 'error',
@@ -692,7 +714,7 @@ function App() {
       });
     } finally {
       setLoading(false);
-      setTimeout(() => setProgress(null), 2000);
+      setProgress(null);  // Remove delay - clear progress immediately
     }
   }, [
     file, inputMode, pastedSource, obfuscationLevel, cycles, targetPlatform,
@@ -800,7 +822,8 @@ function App() {
               placeholder="// Paste your C/C++ source code here..."
               value={pastedSource}
               onChange={(e) => setPastedSource(e.target.value)}
-              rows={12}
+              rows={20}
+              style={{ minHeight: '400px', fontFamily: 'monospace', fontSize: '14px' }}
             />
           )}
         </section>

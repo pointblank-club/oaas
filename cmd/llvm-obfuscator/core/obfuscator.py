@@ -183,6 +183,36 @@ class LLVMObfuscator:
                 self.logger.error(f"String encryption failed: {e}")
                 string_result = None
 
+        # Indirect call obfuscation (if enabled) - applied after string encryption
+        indirect_call_result = None
+        if config.advanced.indirect_calls.enabled:
+            try:
+                from .indirect_call_obfuscator import obfuscate_indirect_calls
+
+                # Get the current working source
+                current_source_content = working_source.read_text(encoding="utf-8", errors="replace")
+
+                # Apply indirect call obfuscation
+                transformed_code, metadata = obfuscate_indirect_calls(
+                    source_code=current_source_content,
+                    source_file=working_source,
+                    obfuscate_stdlib=config.advanced.indirect_calls.obfuscate_stdlib,
+                    obfuscate_custom=config.advanced.indirect_calls.obfuscate_custom,
+                )
+
+                # Write the transformed source to a new file
+                indirect_call_file = output_directory / f"{source_file.stem}_indirect_calls{source_file.suffix}"
+                indirect_call_file.write_text(transformed_code, encoding="utf-8", errors="replace")
+                working_source = indirect_call_file
+                indirect_call_result = metadata
+                self.logger.info(
+                    f"Indirect call obfuscation complete: {metadata['total_obfuscated']} functions "
+                    f"({metadata['obfuscated_stdlib_functions']} stdlib, {metadata['obfuscated_custom_functions']} custom)"
+                )
+            except Exception as e:
+                self.logger.error(f"Indirect call obfuscation failed: {e}")
+                indirect_call_result = None
+
         fake_loops = []
         if config.advanced.fake_loops:
             fake_loops = self.fake_loop_generator.generate(config.advanced.fake_loops, source_file.name)
@@ -257,7 +287,7 @@ class LLVMObfuscator:
                 "symbols_count": symbols_count,
                 "functions_count": functions_count,
                 "entropy": entropy,
-                "obfuscation_methods": actually_applied_passes + (["symbol_obfuscation"] if symbol_result else []) + (["string_encryption"] if string_result else []),
+                "obfuscation_methods": actually_applied_passes + (["symbol_obfuscation"] if symbol_result else []) + (["string_encryption"] if string_result else []) + (["indirect_calls"] if indirect_call_result else []),
             },
             "comparison": {
                 "size_change": file_size - baseline_metrics.get("file_size", file_size) if baseline_metrics else 0,
@@ -274,6 +304,7 @@ class LLVMObfuscator:
             "string_obfuscation": base_metrics["string_obfuscation"],
             "fake_loops_inserted": base_metrics["fake_loops_inserted"],
             "symbol_obfuscation": symbol_result or {"enabled": False},
+            "indirect_calls": indirect_call_result or {"enabled": False},
             "obfuscation_score": base_metrics["obfuscation_score"],
             "symbol_reduction": base_metrics["symbol_reduction"],
             "function_reduction": base_metrics["function_reduction"],

@@ -26,3 +26,6 @@ cmd/llvm-obfuscator/test_*/*_test
 cmd/llvm-obfuscator/obfuscated/
 *.bak
 *.bak
+
+# Bundled compiler headers
+!cmd/llvm-obfuscator/plugins/*/lib/clang/*/include/

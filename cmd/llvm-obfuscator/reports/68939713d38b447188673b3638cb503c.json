@@ -1,0 +1,164 @@
+{
+  "input_parameters": {
+    "source_file": "pasted_source.c",
+    "platform": "linux",
+    "obfuscation_level": 5,
+    "requested_passes": [
+      "flattening",
+      "substitution",
+      "boguscf",
+      "split"
+    ],
+    "applied_passes": [
+      "flattening",
+      "substitution",
+      "boguscf",
+      "split"
+    ],
+    "compiler_flags": [
+      "-fvisibility=hidden",
+      "-O3",
+      "-fno-builtin",
+      "-fomit-frame-pointer",
+      "-mspeculative-load-hardening",
+      "-Wl,-s",
+      "-flto",
+      "-flto=thin",
+      "-O1"
+    ],
+    "timestamp": "2025-11-26T16:45:55.324059Z"
+  },
+  "warnings": [],
+  "baseline_metrics": {
+    "file_size": 25984,
+    "binary_format": "ELF",
+    "sections": {
+      ".interp": 28,
+      ".gnu.hash": 36,
+      ".dynsym": 168,
+      ".dynstr": 143,
+      ".gnu.version": 14,
+      ".gnu.version_r": 48,
+      ".rela.dyn": 192,
+      ".rela.plt": 24,
+      ".init": 23,
+      ".plt": 32,
+      ".plt.got": 8,
+      ".text": 3830,
+      ".fini": 9,
+      ".rodata": 62,
+      ".eh_frame_hdr": 1692,
+      ".eh_frame": 4328,
+      ".note.gnu.property": 32,
+      ".note.ABI-tag": 32,
+      ".init_array": 8,
+      ".fini_array": 8,
+      ".dynamic": 480,
+      ".got": 40,
+      ".got.plt": 32,
+      ".data": 16,
+      ".bss": 8,
+      ".comment": 141,
+      ".symtab": 5808,
+      ".strtab": 1440,
+      ".shstrtab": 263
+    },
+    "symbols_count": 236,
+    "functions_count": 214,
+    "entropy": 3.217
+  },
+  "output_attributes": {
+    "file_size": 14496,
+    "binary_format": "ELF",
+    "sections": {
+      ".note.gnu.property": 32,
+      ".note.gnu.build-id": 36,
+      ".interp": 28,
+      ".gnu.hash": 36,
+      ".dynsym": 144,
+      ".dynstr": 136,
+      ".gnu.version": 12,
+      ".gnu.version_r": 48,
+      ".rela.dyn": 192,
+      ".init": 23,
+      ".plt": 16,
+      ".plt.got": 8,
+      ".text": 1275,
+      ".fini": 9,
+      ".rodata": 62,
+      ".eh_frame_hdr": 100,
+      ".eh_frame": 420,
+      ".note.ABI-tag": 32,
+      ".init_array": 8,
+      ".fini_array": 8,
+      ".dynamic": 432,
+      ".got": 40,
+      ".got.plt": 24,
+      ".data": 16,
+      ".bss": 8,
+      ".comment": 141,
+      ".shstrtab": 256
+    },
+    "symbols_count": 0,
+    "functions_count": 0,
+    "entropy": 1.93,
+    "obfuscation_methods": [
+      "flattening",
+      "substitution",
+      "boguscf",
+      "split",
+      "string_encryption"
+    ]
+  },
+  "comparison": {
+    "size_change": -11488,
+    "size_change_percent": -44.21,
+    "symbols_removed": 236,
+    "symbols_removed_percent": 100.0,
+    "functions_removed": 214,
+    "functions_removed_percent": 100.0,
+    "entropy_increase": -1.287,
+    "entropy_increase_percent": -40.01
+  },
+  "bogus_code_info": {
+    "dead_code_blocks": 12,
+    "opaque_predicates": 8,
+    "junk_instructions": 20,
+    "code_bloat_percentage": 11.0
+  },
+  "cycles_completed": {
+    "total_cycles": 1,
+    "per_cycle_metrics": [
+      {
+        "cycle": 1,
+        "passes_applied": [
+          "flattening",
+          "substitution",
+          "boguscf",
+          "split"
+        ],
+        "duration_ms": 500
+      }
+    ]
+  },
+  "string_obfuscation": {
+    "total_strings": 0,
+    "encrypted_strings": 0,
+    "encryption_method": "xor-rolling-key",
+    "encryption_percentage": 0.0
+  },
+  "fake_loops_inserted": {
+    "count": 0,
+    "types": [],
+    "locations": []
+  },
+  "symbol_obfuscation": {
+    "enabled": false
+  },
+  "obfuscation_score": 73.0,
+  "symbol_reduction": 60,
+  "function_reduction": 30,
+  "size_reduction": -10,
+  "entropy_increase": 0.19,
+  "estimated_re_effort": "4-6 weeks"
+}

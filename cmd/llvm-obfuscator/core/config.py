@@ -63,11 +63,19 @@ class SymbolObfuscationConfiguration:
 
 
 @dataclass
+class IndirectCallConfiguration:
+    enabled: bool = False
+    obfuscate_stdlib: bool = True
+    obfuscate_custom: bool = True
+
+
+@dataclass
 class AdvancedConfiguration:
     cycles: int = 1
     string_encryption: bool = False
     fake_loops: int = 0
     symbol_obfuscation: SymbolObfuscationConfiguration = field(default_factory=SymbolObfuscationConfiguration)
+    indirect_calls: IndirectCallConfiguration = field(default_factory=IndirectCallConfiguration)
 
 
 @dataclass
@@ -100,10 +108,20 @@ class ObfuscationConfig:
             linear_mba=passes_data.get("linear_mba", False),
         )
         adv_data = data.get("advanced", {})
+
+        # Parse indirect calls configuration
+        indirect_data = adv_data.get("indirect_calls", {})
+        indirect_calls = IndirectCallConfiguration(
+            enabled=indirect_data.get("enabled", False),
+            obfuscate_stdlib=indirect_data.get("obfuscate_stdlib", True),
+            obfuscate_custom=indirect_data.get("obfuscate_custom", True),
+        )
+
         advanced = AdvancedConfiguration(
             cycles=adv_data.get("cycles", 1),
             string_encryption=adv_data.get("string_encryption", False),
             fake_loops=adv_data.get("fake_loops", 0),
+            indirect_calls=indirect_calls,
         )
         output_data = data.get("output", {})
         output = OutputConfiguration(

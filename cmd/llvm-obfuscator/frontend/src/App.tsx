@@ -320,6 +320,7 @@ function App() {
   // Layer states (execution order: 1→2→3→4)
   const [layer1, setLayer1] = useState(false); // Symbol obfuscation (PRE-COMPILE, FIRST)
   const [layer2, setLayer2] = useState(false); // String encryption (PRE-COMPILE, SECOND)
+  const [layer2_5, setLayer2_5] = useState(false); // Indirect calls (PRE-COMPILE, 2.5)
   const [layer3, setLayer3] = useState(false); // OLLVM passes (COMPILE, THIRD - optional)
   const [layer4, setLayer4] = useState(false); // Compiler flags (COMPILE, FINAL)
 
@@ -331,6 +332,10 @@ function App() {
 
   // Layer 2: String Encryption sub-options
   const [fakeLoops, setFakeLoops] = useState(0);
+
+  // Layer 2.5: Indirect Call Obfuscation sub-options
+  const [indirectStdlib, setIndirectStdlib] = useState(true);
+  const [indirectCustom, setIndirectCustom] = useState(true);
 
   // Layer 3: OLLVM Passes sub-options
   const [passFlattening, setPassFlattening] = useState(false);
@@ -408,10 +413,11 @@ function App() {
     let count = 0;
     if (layer1) count++; // Symbol obfuscation
     if (layer2) count++; // String encryption
+    if (layer2_5) count++; // Indirect calls
     if (layer3 && (passFlattening || passSubstitution || passBogusControlFlow || passSplitBasicBlocks)) count++; // OLLVM passes
     if (layer4 && (flagLTO || flagSymbolHiding || flagOmitFramePointer || flagSpeculativeLoadHardening)) count++; // Compiler flags
     return count;
-  }, [layer1, layer2, layer3, layer4, passFlattening, passSubstitution, passBogusControlFlow, passSplitBasicBlocks, flagLTO, flagSymbolHiding, flagOmitFramePointer, flagSpeculativeLoadHardening]);
+  }, [layer1, layer2, layer2_5, layer3, layer4, passFlattening, passSubstitution, passBogusControlFlow, passSplitBasicBlocks, flagLTO, flagSymbolHiding, flagOmitFramePointer, flagSpeculativeLoadHardening]);
 
   // Validate source code syntax
   const validateCode = (code: string, language: 'c' | 'cpp'): { valid: boolean; error?: string } => {
@@ -606,6 +612,11 @@ function App() {
             hash_length: layer1 ? symbolHashLength : 12,
             prefix_style: layer1 ? symbolPrefix : 'typed',
             salt: layer1 && symbolSalt ? symbolSalt : null
+          },
+          indirect_calls: {
+            enabled: layer2_5,
+            obfuscate_stdlib: layer2_5 ? indirectStdlib : true,
+            obfuscate_custom: layer2_5 ? indirectCustom : true
           }
         },
         report_formats: ['json', 'markdown'],
@@ -614,18 +625,11 @@ function App() {
 
       setProgress({ message: 'Processing obfuscation...', percent: 30 });
 
-      // Create abort controller for timeout
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 120000); // 2 minute timeout
-
       const res = await fetch('/api/obfuscate/sync', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-        signal: controller.signal
+        body: JSON.stringify(payload)
       });
-
-      clearTimeout(timeoutId);
 
       if (!res.ok) {
         const errorText = await res.text();
@@ -685,26 +689,22 @@ function App() {
       // Extract detailed error message
       let userFriendlyError = errorMsg;
 
-      // Handle abort/timeout errors
-      if (err instanceof Error && err.name === 'AbortError') {
-        userFriendlyError = 'Request timed out after 2 minutes. The backend may be unavailable or the obfuscation is taking too long. Try reducing complexity or check backend logs.';
-      }
-      // Handle network errors (connection refused, DNS errors, etc.)
-      else if (errorMsg.includes('Failed to fetch') || errorMsg.includes('NetworkError') || errorMsg.includes('network')) {
-        userFriendlyError = 'Network error: Cannot connect to backend. Please ensure the backend service is running and accessible.';
-      }
       // Try to parse JSON error from backend (FastAPI sends {detail: "..."})
-      else {
-        try {
-          const errorData = JSON.parse(errorMsg);
-          if (errorData.detail) {
-            userFriendlyError = errorData.detail;
-          }
-        } catch {
-          // Not JSON, use the raw error message (which already contains the backend error)
+      try {
+        const errorData = JSON.parse(errorMsg);
+        if (errorData.detail) {
+          userFriendlyError = errorData.detail;
         }
+      } catch {
+        // Not JSON, use the raw error message (which already contains the backend error)
       }
 
+      // Only apply generic messages for specific non-compilation errors
+      if (errorMsg.includes('timeout') || errorMsg.includes('timed out')) {
+        userFriendlyError = 'Obfuscation timed out. Try reducing obfuscation complexity or file size.';
+      } else if (errorMsg.includes('network') || errorMsg.includes('Failed to fetch')) {
+        userFriendlyError = 'Network error. Please check your connection and try again.';
+      }
       // For compilation errors, show the FULL compiler output with line numbers
 
       setModal({
@@ -714,7 +714,7 @@ function App() {
       });
     } finally {
       setLoading(false);
-      setProgress(null);  // Remove delay - clear progress immediately
+      setProgress(null); 
     }
   }, [
     file, inputMode, pastedSource, obfuscationLevel, cycles, targetPlatform,
@@ -838,13 +838,14 @@ function App() {
             <button
               className="select-all-btn"
               onClick={() => {
-                const allSelected = layer1 && layer2 && layer3 && layer4 &&
+                const allSelected = layer1 && layer2 && layer2_5 && layer3 && layer4 &&
                   passFlattening && passSubstitution && passBogusControlFlow && passSplitBasicBlocks &&
                   flagLTO && flagSymbolHiding && flagOmitFramePointer && flagSpeculativeLoadHardening;
 
                 const newValue = !allSelected;
                 setLayer1(newValue);
                 setLayer2(newValue);
+                setLayer2_5(newValue);
                 setLayer3(newValue);
                 setLayer4(newValue);
                 setPassFlattening(newValue);
@@ -857,7 +858,7 @@ function App() {
                 setFlagSpeculativeLoadHardening(newValue);
               }}
             >
-              {layer1 && layer2 && layer3 && layer4 &&
+              {layer1 && layer2 && layer2_5 && layer3 && layer4 &&
                 passFlattening && passSubstitution && passBogusControlFlow && passSplitBasicBlocks &&
                 flagLTO && flagSymbolHiding && flagOmitFramePointer && flagSpeculativeLoadHardening
                 ? 'Deselect All' : 'Select All'}
@@ -932,6 +933,40 @@ function App() {
                     value={fakeLoops}
                     onChange={(e) => setFakeLoops(parseInt(e.target.value) || 0)}
                   />
+                </label>
+              </div>
+            )}
+
+            {/* Layer 2.5: Indirect Call Obfuscation */}
+            <label className="layer-checkbox">
+              <input
+                type="checkbox"
+                checked={layer2_5}
+                onChange={(e) => setLayer2_5(e.target.checked)}
+              />
+              <span className="layer-label">
+                [LAYER 2.5] Indirect Call Obfuscation (PRE-COMPILE, 2.5)
+                <small>Convert direct function calls to indirect calls via function pointers</small>
+              </span>
+            </label>
+
+            {layer2_5 && (
+              <div className="layer-config">
+                <label className="sub-option">
+                  <input
+                    type="checkbox"
+                    checked={indirectStdlib}
+                    onChange={(e) => setIndirectStdlib(e.target.checked)}
+                  />
+                  Obfuscate stdlib functions (printf, malloc, etc.)
+                </label>
+                <label className="sub-option">
+                  <input
+                    type="checkbox"
+                    checked={indirectCustom}
+                    onChange={(e) => setIndirectCustom(e.target.checked)}
+                  />
+                  Obfuscate custom functions
                 </label>
               </div>
             )}

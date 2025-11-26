@@ -20,7 +20,7 @@ from core import (
     compare_binaries,
 )
 from core.batch import load_batch_config
-from core.config import AdvancedConfiguration, OutputConfiguration, SymbolObfuscationConfiguration
+from core.config import AdvancedConfiguration, IndirectCallConfiguration, OutputConfiguration, SymbolObfuscationConfiguration
 from core.exceptions import ObfuscationError
 from core.utils import create_logger, load_yaml, normalize_flags_and_passes
 
@@ -46,6 +46,9 @@ def _build_config(
     symbol_hash_length: int,
     symbol_prefix: str,
     symbol_salt: Optional[str],
+    enable_indirect_calls: bool,
+    indirect_stdlib: bool,
+    indirect_custom: bool,
     report_formats: str,
     custom_flags: Optional[str],
     config_file: Optional[Path],
@@ -75,11 +78,17 @@ def _build_config(
         prefix_style=symbol_prefix,
         salt=symbol_salt,
     )
+    indirect_call_config = IndirectCallConfiguration(
+        enabled=enable_indirect_calls,
+        obfuscate_stdlib=indirect_stdlib,
+        obfuscate_custom=indirect_custom,
+    )
     advanced = AdvancedConfiguration(
         cycles=cycles,
         string_encryption=string_encryption,
         fake_loops=fake_loops,
         symbol_obfuscation=symbol_obf_config,
+        indirect_calls=indirect_call_config,
     )
     output_config = OutputConfiguration(directory=output, report_formats=report_formats.split(","))
     return ObfuscationConfig(
@@ -112,6 +121,9 @@ def compile(
     symbol_hash_length: int = typer.Option(12, help="Symbol hash length"),
     symbol_prefix: str = typer.Option("typed", help="Symbol prefix style (none, typed, underscore)"),
     symbol_salt: Optional[str] = typer.Option(None, help="Custom salt for symbol hashing"),
+    enable_indirect_calls: bool = typer.Option(False, "--enable-indirect-calls", help="Enable indirect call obfuscation"),
+    indirect_stdlib: bool = typer.Option(True, "--indirect-stdlib/--no-indirect-stdlib", help="Obfuscate stdlib function calls"),
+    indirect_custom: bool = typer.Option(True, "--indirect-custom/--no-indirect-custom", help="Obfuscate custom function calls"),
     report_formats: str = typer.Option("json", help="Report formats (comma separated)"),
     custom_flags: Optional[str] = typer.Option(None, help="Additional compiler flags"),
     config_file: Optional[Path] = typer.Option(None, help="Load configuration from YAML/JSON file"),
@@ -137,6 +149,9 @@ def compile(
             symbol_hash_length=symbol_hash_length,
             symbol_prefix=symbol_prefix,
             symbol_salt=symbol_salt,
+            enable_indirect_calls=enable_indirect_calls,
+            indirect_stdlib=indirect_stdlib,
+            indirect_custom=indirect_custom,
             report_formats=report_formats,
             custom_flags=custom_flags,
             config_file=config_file,

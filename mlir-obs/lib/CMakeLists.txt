@@ -1,9 +1,11 @@
-add_mlir_library(MLIRObfuscation
+add_library(MLIRObfuscation SHARED
   Passes.cpp
   PassRegistrations.cpp
   SymbolPass.cpp
+)
 
-  LINK_LIBS PUBLIC
+target_link_libraries(MLIRObfuscation
+  PUBLIC
     MLIRIR
     MLIRPass
     MLIRTransforms

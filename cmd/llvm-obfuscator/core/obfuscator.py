@@ -622,17 +622,27 @@ class LLVMObfuscator:
             translate_cmd = ["mlir-translate", "--mlir-to-llvmir", str(obfuscated_mlir), "-o", str(llvm_ir_raw)]
             run_command(translate_cmd, cwd=source_abs.parent)
 
-            # Fix target triple (MLIR sometimes generates malformed triples)
+            # Fix target triple and data layout (MLIR sometimes generates malformed output)
             llvm_ir_file = destination_abs.parent / f"{destination_abs.stem}_from_mlir.ll"
             import subprocess
+
             target_triple = "x86_64-unknown-linux-gnu"
+            data_layout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128"
+
             if config.platform == Platform.WINDOWS:
                 target_triple = "x86_64-w64-mingw32"
-            subprocess.run(
-                ["sed", f's/target triple = ".*"/target triple = "{target_triple}"/', str(llvm_ir_raw)],
-                stdout=open(str(llvm_ir_file), 'w'),
-                check=True
-            )
+                data_layout = "e-m:w-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128"
+
+            # Read, fix, and write
+            with open(str(llvm_ir_raw), 'r') as f:
+                ir_content = f.read()
+
+            import re
+            ir_content = re.sub(r'target triple = ".*"', f'target triple = "{target_triple}"', ir_content)
+            ir_content = re.sub(r'target datalayout = ".*"', f'target datalayout = "{data_layout}"', ir_content)
+
+            with open(str(llvm_ir_file), 'w') as f:
+                f.write(ir_content)
 
             current_input = llvm_ir_file
 

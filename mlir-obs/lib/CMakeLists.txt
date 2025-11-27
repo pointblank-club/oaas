@@ -7,7 +7,6 @@ set(SOURCES
 add_llvm_library(MLIRObfuscation MODULE
   ${SOURCES}
   PLUGIN_TOOL mlir-opt
-  LLVM_EXPORTED_SYMBOL_FILE ${CMAKE_CURRENT_SOURCE_DIR}/ObfuscationPlugin.exports
 )
 
 target_include_directories(MLIRObfuscation

@@ -74,10 +74,19 @@ echo ""
 
 # Test 2: Apply symbol obfuscation
 echo "[Test 2] Testing symbol obfuscation pass..."
+# Try direct pass invocation (not pipeline)
 mlir-opt test.mlir \
     --load-pass-plugin="$SCRIPT_DIR/$LIBRARY" \
-    --pass-pipeline="builtin.module(symbol-obfuscate)" \
-    -o test_symbol_obf.mlir 2>&1 || { echo "ERROR: Symbol obfuscation failed"; exit 1; }
+    --symbol-obfuscate \
+    -o test_symbol_obf.mlir 2>&1
+
+if [ $? -ne 0 ]; then
+    echo "Direct invocation failed, trying pass pipeline..."
+    mlir-opt test.mlir \
+        --load-pass-plugin="$SCRIPT_DIR/$LIBRARY" \
+        --pass-pipeline="builtin.module(symbol-obfuscate)" \
+        -o test_symbol_obf.mlir 2>&1 || { echo "ERROR: Symbol obfuscation failed"; exit 1; }
+fi
 
 if grep -q "validate_password" test_symbol_obf.mlir; then
     echo "⚠️  Warning: Original function names still present (may need pass refinement)"

@@ -1,18 +1,24 @@
 #include "Obfuscator/Passes.h"
 #include "mlir/Pass/Pass.h"
+#include "mlir/Pass/PassManager.h"
+#include "mlir/Pass/PassRegistry.h"
 #include "llvm/Support/Compiler.h"
 
 using namespace mlir;
 
-// Global pass registrations - must be outside anonymous namespace
-LLVM_ATTRIBUTE_USED
-static PassRegistration<mlir::obs::StringEncryptPass> stringEncryptPass;
+namespace {
+void registerObfuscationPasses() {
+  registerPass([]() -> std::unique_ptr<Pass> {
+    return std::make_unique<mlir::obs::StringEncryptPass>();
+  });
 
-LLVM_ATTRIBUTE_USED
-static PassRegistration<mlir::obs::SymbolObfuscatePass> symbolObfuscatePass;
+  registerPass([]() -> std::unique_ptr<Pass> {
+    return std::make_unique<mlir::obs::SymbolObfuscatePass>();
+  });
+}
+} // namespace
 
-// Force library initialization by providing a function that mlir-opt can call
+// This is the entry point that mlir-opt calls when loading the plugin
 extern "C" LLVM_ATTRIBUTE_USED void mlirRegisterPasses() {
-  // Nothing needed - registration happens via static constructors above
-  // But this symbol ensures the library gets loaded and initialized
+  registerObfuscationPasses();
 }

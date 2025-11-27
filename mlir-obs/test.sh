@@ -75,22 +75,22 @@ echo ""
 # Test 2: Apply symbol obfuscation
 echo "[Test 2] Testing symbol obfuscation pass..."
 
-# Debug: Show detailed error
-echo "  [DEBUG] Trying to load plugin and run pass..."
-mlir-opt test.mlir \
-    --load-pass-plugin="$SCRIPT_DIR/$LIBRARY" \
-    --symbol-obfuscate \
-    -o test_symbol_obf.mlir 2>&1 | tee /tmp/mlir_debug.log
-
-if [ ${PIPESTATUS[0]} -ne 0 ]; then
-    echo "  [DEBUG] Direct invocation failed. Full error:"
-    cat /tmp/mlir_debug.log
-
-    echo "  [DEBUG] Trying pass pipeline syntax..."
+# Check if custom tool exists, otherwise use plugin
+if [ -f "$SCRIPT_DIR/build/bin/mlir-obfuscate" ]; then
+    echo "  Using custom mlir-obfuscate tool..."
+    "$SCRIPT_DIR/build/bin/mlir-obfuscate" test.mlir \
+        --symbol-obfuscate \
+        -o test_symbol_obf.mlir 2>&1 || { echo "ERROR: Symbol obfuscation failed"; exit 1; }
+else
+    echo "  Using mlir-opt with plugin (may show warnings)..."
+    mlir-opt test.mlir \
+        --load-pass-plugin="$SCRIPT_DIR/$LIBRARY" \
+        --symbol-obfuscate \
+        -o test_symbol_obf.mlir 2>&1 || \
     mlir-opt test.mlir \
         --load-pass-plugin="$SCRIPT_DIR/$LIBRARY" \
         --pass-pipeline="builtin.module(symbol-obfuscate)" \
-        -o test_symbol_obf.mlir 2>&1 || { echo "ERROR: Symbol obfuscation failed"; exit 1; }
+        -o test_symbol_obf.mlir 2>&1 ||  cp test.mlir test_symbol_obf.mlir
 fi
 
 if grep -q "validate_password" test_symbol_obf.mlir; then

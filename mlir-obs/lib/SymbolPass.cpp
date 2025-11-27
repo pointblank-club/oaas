@@ -56,7 +56,7 @@ void SymbolObfuscatePass::runOnOperation() {
     bool changed = false;
 
     for (auto &attr : op->getAttrs()) {
-      if (auto symAttr = attr.getValue().dyn_cast<SymbolRefAttr>()) {
+      if (auto symAttr = llvm::dyn_cast<SymbolRefAttr>(attr.getValue())) {
         StringRef old = symAttr.getRootReference();
         auto it = renameMap.find(old);
         if (it != renameMap.end()) {

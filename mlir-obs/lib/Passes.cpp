@@ -42,7 +42,7 @@ void StringEncryptPass::runOnOperation() {
       }
 
       // Original encryption logic (unchanged)
-      if (auto strAttr = attr.getValue().dyn_cast<StringAttr>()) {
+      if (auto strAttr = llvm::dyn_cast<StringAttr>(attr.getValue())) {
         std::string original = strAttr.getValue().str();
         std::string encrypted = xorEncrypt(original, key);
 

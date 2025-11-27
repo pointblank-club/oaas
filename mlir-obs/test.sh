@@ -74,14 +74,19 @@ echo ""
 
 # Test 2: Apply symbol obfuscation
 echo "[Test 2] Testing symbol obfuscation pass..."
-# Try direct pass invocation (not pipeline)
+
+# Debug: Show detailed error
+echo "  [DEBUG] Trying to load plugin and run pass..."
 mlir-opt test.mlir \
     --load-pass-plugin="$SCRIPT_DIR/$LIBRARY" \
     --symbol-obfuscate \
-    -o test_symbol_obf.mlir 2>&1
+    -o test_symbol_obf.mlir 2>&1 | tee /tmp/mlir_debug.log
 
-if [ $? -ne 0 ]; then
-    echo "Direct invocation failed, trying pass pipeline..."
+if [ ${PIPESTATUS[0]} -ne 0 ]; then
+    echo "  [DEBUG] Direct invocation failed. Full error:"
+    cat /tmp/mlir_debug.log
+
+    echo "  [DEBUG] Trying pass pipeline syntax..."
     mlir-opt test.mlir \
         --load-pass-plugin="$SCRIPT_DIR/$LIBRARY" \
         --pass-pipeline="builtin.module(symbol-obfuscate)" \

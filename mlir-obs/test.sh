@@ -111,13 +111,17 @@ echo ""
 
 # Test 5: Lower to LLVM IR
 echo "[Test 5] Lowering MLIR to LLVM IR..."
-mlir-translate --mlir-to-llvmir test_combined_obf.mlir -o test.ll 2>&1 || { echo "ERROR: MLIR to LLVM IR failed"; exit 1; }
+mlir-translate --mlir-to-llvmir test_combined_obf.mlir -o test_raw.ll 2>&1 || { echo "ERROR: MLIR to LLVM IR failed"; exit 1; }
+
+# Fix target triple in LLVM IR
+sed 's/target triple = ".*"/target triple = "x86_64-unknown-linux-gnu"/' test_raw.ll > test.ll
+
 echo "✅ MLIR → LLVM IR successful"
 echo ""
 
 # Test 6: Compile to binary
 echo "[Test 6] Compiling to binary..."
-clang test.ll -o test_binary -Wno-override-module 2>&1 || { echo "ERROR: Binary compilation failed"; exit 1; }
+clang test.ll -o test_binary 2>&1 || { echo "ERROR: Binary compilation failed"; exit 1; }
 echo "✅ Binary compilation successful"
 echo ""
 

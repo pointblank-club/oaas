@@ -618,11 +618,27 @@ class LLVMObfuscator:
             run_command(opt_cmd, cwd=source_abs.parent)
 
             # 1d: Translate MLIR back to LLVM IR
-            llvm_ir_file = destination_abs.parent / f"{destination_abs.stem}_from_mlir.ll"
-            translate_cmd = ["mlir-translate", "--mlir-to-llvmir", str(obfuscated_mlir), "-o", str(llvm_ir_file)]
+            llvm_ir_raw = destination_abs.parent / f"{destination_abs.stem}_raw.ll"
+            translate_cmd = ["mlir-translate", "--mlir-to-llvmir", str(obfuscated_mlir), "-o", str(llvm_ir_raw)]
             run_command(translate_cmd, cwd=source_abs.parent)
 
+            # Fix target triple (MLIR sometimes generates malformed triples)
+            llvm_ir_file = destination_abs.parent / f"{destination_abs.stem}_from_mlir.ll"
+            import subprocess
+            target_triple = "x86_64-unknown-linux-gnu"
+            if config.platform == Platform.WINDOWS:
+                target_triple = "x86_64-w64-mingw32"
+            subprocess.run(
+                ["sed", f's/target triple = ".*"/target triple = "{target_triple}"/', str(llvm_ir_raw)],
+                stdout=open(str(llvm_ir_file), 'w'),
+                check=True
+            )
+
             current_input = llvm_ir_file
+
+            # Clean up raw IR
+            if llvm_ir_raw.exists():
+                llvm_ir_raw.unlink()
 
             # Clean up intermediate files
             if llvm_ir_temp.exists():

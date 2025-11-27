@@ -64,7 +64,7 @@ echo ""
 
 # Test 1: Compile C to MLIR
 echo "[Test 1] Converting C to MLIR..."
-clang -emit-llvm -S -emit-mlir test.c -o test.mlir 2>&1 || { echo "ERROR: Failed to emit MLIR"; exit 1; }
+/home/devalgupta4/llvm-project/build/bin/clang -emit-llvm -S -emit-mlir test.c -o test.mlir 2>&1 || { echo "ERROR: Failed to emit MLIR"; exit 1; }
 echo "✅ C → MLIR conversion successful"
 echo ""
 
@@ -113,7 +113,7 @@ echo ""
 
 # Test 6: Compile to binary
 echo "[Test 6] Compiling to binary..."
-clang test.ll -o test_binary 2>&1 || { echo "ERROR: Binary compilation failed"; exit 1; }
+/home/devalgupta4/llvm-project/build/bin/clang test.ll -o test_binary 2>&1 || { echo "ERROR: Binary compilation failed"; exit 1; }
 echo "✅ Binary compilation successful"
 echo ""
 

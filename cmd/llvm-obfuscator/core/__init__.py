@@ -15,7 +15,6 @@ from .config import (
 )
 from .obfuscator import LLVMObfuscator
 from .reporter import ObfuscationReport
-from .symbol_obfuscator import SymbolObfuscator
 
 __all__ = [
     "LLVMObfuscator",
@@ -28,7 +27,6 @@ __all__ = [
     "AnalyzeConfig",
     "CompareConfig",
     "ObfuscationReport",
-    "SymbolObfuscator",
     "analyze_binary",
     "compare_binaries",
 ]

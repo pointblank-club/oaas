@@ -1,0 +1,43 @@
+version: '3.8'
+
+services:
+  # Automated test runner
+  test-mlir:
+    build:
+      context: .
+      dockerfile: Dockerfile.test
+    volumes:
+      - ./tests:/app/tests
+      - ./test_results:/app/test_results
+    environment:
+      - PYTHONPATH=/app/cmd/llvm-obfuscator
+      - LD_LIBRARY_PATH=/opt/llvm/lib:/app/mlir-obs/build/lib
+    command: bash -c "cd /app/tests && ./run_integration_tests.sh"
+    
+  # Interactive development container
+  dev:
+    build:
+      context: .
+      dockerfile: Dockerfile.test
+    volumes:
+      - .:/app
+      - ./test_results:/app/test_results
+    working_dir: /app
+    environment:
+      - PYTHONPATH=/app/cmd/llvm-obfuscator
+      - LD_LIBRARY_PATH=/opt/llvm/lib:/app/mlir-obs/build/lib
+    stdin_open: true
+    tty: true
+    command: /bin/bash
+
+  # Quick test runner (just MLIR passes, no CLI)
+  test-passes-only:
+    build:
+      context: .
+      dockerfile: Dockerfile.test
+    volumes:
+      - ./tests:/app/tests
+      - ./test_results:/app/test_results
+    environment:
+      - LD_LIBRARY_PATH=/opt/llvm/lib:/app/mlir-obs/build/lib
+    command: bash -c "cd /app/tests && ./test_mlir_passes_only.sh"

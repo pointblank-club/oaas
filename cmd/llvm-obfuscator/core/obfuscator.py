@@ -589,14 +589,19 @@ class LLVMObfuscator:
                     "  cmake .. && make"
                 )
 
-            # 1a: Compile source to MLIR
-            mlir_file = destination_abs.parent / f"{destination_abs.stem}_temp.mlir"
-            mlir_cmd = [compiler, str(current_input), "-S", "-emit-llvm", "-emit-mlir", "-o", str(mlir_file)]
+            # 1a: Compile source to LLVM IR
+            llvm_ir_temp = destination_abs.parent / f"{destination_abs.stem}_temp.ll"
+            ir_cmd = [compiler, str(current_input), "-S", "-emit-llvm", "-o", str(llvm_ir_temp)]
             if config.platform == Platform.WINDOWS:
-                mlir_cmd.extend(["--target=x86_64-w64-mingw32"])
-            run_command(mlir_cmd, cwd=source_abs.parent)
+                ir_cmd.extend(["--target=x86_64-w64-mingw32"])
+            run_command(ir_cmd, cwd=source_abs.parent)
 
-            # 1b: Apply MLIR passes
+            # 1b: Convert LLVM IR to MLIR
+            mlir_file = destination_abs.parent / f"{destination_abs.stem}_temp.mlir"
+            translate_to_mlir_cmd = ["mlir-translate", "--import-llvm", str(llvm_ir_temp), "-o", str(mlir_file)]
+            run_command(translate_to_mlir_cmd, cwd=source_abs.parent)
+
+            # 1c: Apply MLIR obfuscation passes
             obfuscated_mlir = destination_abs.parent / f"{destination_abs.stem}_obfuscated.mlir"
 
             # Build pass pipeline: "builtin.module(string-encrypt,symbol-obfuscate)"
@@ -612,14 +617,16 @@ class LLVMObfuscator:
             ]
             run_command(opt_cmd, cwd=source_abs.parent)
 
-            # 1c: Translate MLIR to LLVM IR
+            # 1d: Translate MLIR back to LLVM IR
             llvm_ir_file = destination_abs.parent / f"{destination_abs.stem}_from_mlir.ll"
             translate_cmd = ["mlir-translate", "--mlir-to-llvmir", str(obfuscated_mlir), "-o", str(llvm_ir_file)]
             run_command(translate_cmd, cwd=source_abs.parent)
 
             current_input = llvm_ir_file
 
-            # Clean up intermediate MLIR files
+            # Clean up intermediate files
+            if llvm_ir_temp.exists():
+                llvm_ir_temp.unlink()
             if mlir_file.exists():
                 mlir_file.unlink()
             if obfuscated_mlir.exists():

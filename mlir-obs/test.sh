@@ -62,10 +62,14 @@ EOF
 echo "✅ Test file created"
 echo ""
 
-# Test 1: Compile C to MLIR
-echo "[Test 1] Converting C to MLIR..."
-/home/devalgupta4/llvm-project/build/bin/clang -emit-llvm -S -emit-mlir test.c -o test.mlir 2>&1 || { echo "ERROR: Failed to emit MLIR"; exit 1; }
-echo "✅ C → MLIR conversion successful"
+# Test 1: Compile C to LLVM IR, then to MLIR
+echo "[Test 1] Converting C to LLVM IR..."
+clang -S -emit-llvm test.c -o test.ll 2>&1 || { echo "ERROR: Failed to emit LLVM IR"; exit 1; }
+echo "✅ C → LLVM IR successful"
+
+echo "Converting LLVM IR to MLIR..."
+mlir-translate --import-llvm test.ll -o test.mlir 2>&1 || { echo "ERROR: Failed to convert to MLIR"; exit 1; }
+echo "✅ LLVM IR → MLIR conversion successful"
 echo ""
 
 # Test 2: Apply symbol obfuscation
@@ -113,7 +117,7 @@ echo ""
 
 # Test 6: Compile to binary
 echo "[Test 6] Compiling to binary..."
-/home/devalgupta4/llvm-project/build/bin/clang test.ll -o test_binary 2>&1 || { echo "ERROR: Binary compilation failed"; exit 1; }
+clang test.ll -o test_binary 2>&1 || { echo "ERROR: Binary compilation failed"; exit 1; }
 echo "✅ Binary compilation successful"
 echo ""
 

@@ -36,8 +36,12 @@ cmake .. \
 # Build
 echo ""
 echo "Building library..."
-make -j$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4) \
-  || { echo "ERROR: Build failed"; exit 1; }
+if [ -f "build.ninja" ]; then
+    ninja || { echo "ERROR: Build failed"; exit 1; }
+else
+    make -j$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4) \
+      || { echo "ERROR: Build failed"; exit 1; }
+fi
 
 echo ""
 echo "=========================================="

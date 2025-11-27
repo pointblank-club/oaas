@@ -13,7 +13,7 @@ SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 cd "$SCRIPT_DIR"
 
 # Check if library is built
-LIBRARY=$(find build -name "libMLIRObfuscation.*" -type f | head -1)
+LIBRARY=$(find build -name "*MLIRObfuscation.*" -type f | head -1)
 if [ -z "$LIBRARY" ]; then
     echo "ERROR: MLIR library not found. Please run ./build.sh first"
     exit 1

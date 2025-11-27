@@ -49,7 +49,7 @@ echo "✅ Build successful!"
 echo "=========================================="
 echo ""
 echo "Library location:"
-find . -name "libMLIRObfuscation.*" -type f
+find . -name "*MLIRObfuscation.*" -type f
 echo ""
 echo "To test the library, run:"
 echo "  cd $SCRIPT_DIR"

@@ -141,9 +141,12 @@ class LLVMObfuscator:
             # Search locations for MLIR plugin
             search_paths = [
                 # Relative to the obfuscator script
+                Path(__file__).parent.parent.parent.parent / "mlir-obs" / "build" / "lib" / f"MLIRObfuscation.{ext}",
                 Path(__file__).parent.parent.parent.parent / "mlir-obs" / "build" / "lib" / f"libMLIRObfuscation.{ext}",
                 # Absolute paths
+                Path("/app/mlir-obs/build/lib") / f"MLIRObfuscation.{ext}",
                 Path("/app/mlir-obs/build/lib") / f"libMLIRObfuscation.{ext}",
+                Path("/usr/local/lib") / f"MLIRObfuscation.{ext}",
                 Path("/usr/local/lib") / f"libMLIRObfuscation.{ext}",
             ]
 

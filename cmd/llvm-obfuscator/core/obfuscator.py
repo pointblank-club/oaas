@@ -123,6 +123,42 @@ class LLVMObfuscator:
             self.logger.debug(f"Could not auto-detect bundled plugin: {e}")
             return None
 
+    def _get_mlir_plugin_path(self) -> Optional[Path]:
+        """Find MLIR obfuscation plugin library."""
+        try:
+            import platform as py_platform
+
+            system = py_platform.system().lower()
+            if system == "linux":
+                ext = "so"
+            elif system == "darwin":
+                ext = "dylib"
+            elif system == "windows":
+                ext = "dll"
+            else:
+                return None
+
+            # Search locations for MLIR plugin
+            search_paths = [
+                # Relative to the obfuscator script
+                Path(__file__).parent.parent.parent.parent / "mlir-obs" / "build" / "lib" / f"libMLIRObfuscation.{ext}",
+                # Absolute paths
+                Path("/app/mlir-obs/build/lib") / f"libMLIRObfuscation.{ext}",
+                Path("/usr/local/lib") / f"libMLIRObfuscation.{ext}",
+            ]
+
+            for path in search_paths:
+                if path.exists():
+                    self.logger.info(f"Found MLIR plugin: {path}")
+                    return path
+
+            self.logger.debug("MLIR plugin not found in any search paths")
+            return None
+
+        except Exception as e:
+            self.logger.debug(f"Could not locate MLIR plugin: {e}")
+            return None
+
     def obfuscate(self, source_file: Path, config: ObfuscationConfig, job_id: Optional[str] = None) -> Dict:
         if not source_file.exists():
             raise FileNotFoundError(f"Source file not found: {source_file}")
@@ -542,27 +578,47 @@ class LLVMObfuscator:
         # Stage 1: MLIR Obfuscation
         if mlir_passes:
             self.logger.info("Running MLIR pipeline with passes: %s", ", ".join(mlir_passes))
-            
+
+            # Find MLIR plugin
+            mlir_plugin = self._get_mlir_plugin_path()
+            if not mlir_plugin:
+                raise ObfuscationError(
+                    "MLIR passes requested but plugin not found. "
+                    "Please build the MLIR obfuscation library first:\n"
+                    "  cd mlir-obs && mkdir build && cd build\n"
+                    "  cmake .. && make"
+                )
+
             # 1a: Compile source to MLIR
             mlir_file = destination_abs.parent / f"{destination_abs.stem}_temp.mlir"
-            mlir_cmd = [compiler, str(current_input), "-S", "--emit-mlir", "-o", str(mlir_file)]
+            mlir_cmd = [compiler, str(current_input), "-S", "-emit-llvm", "-emit-mlir", "-o", str(mlir_file)]
             if config.platform == Platform.WINDOWS:
                 mlir_cmd.extend(["--target=x86_64-w64-mingw32"])
             run_command(mlir_cmd, cwd=source_abs.parent)
 
             # 1b: Apply MLIR passes
             obfuscated_mlir = destination_abs.parent / f"{destination_abs.stem}_obfuscated.mlir"
-            passes_pipeline = " ".join([f"--{p}" for p in mlir_passes])
-            opt_cmd = ["mlir-opt", str(mlir_file), passes_pipeline, "-o", str(obfuscated_mlir)]
+
+            # Build pass pipeline: "builtin.module(string-encrypt,symbol-obfuscate)"
+            passes_str = ",".join(mlir_passes)
+            pass_pipeline = f"builtin.module({passes_str})"
+
+            opt_cmd = [
+                "mlir-opt",
+                str(mlir_file),
+                f"--load-pass-plugin={str(mlir_plugin)}",
+                f"--pass-pipeline={pass_pipeline}",
+                "-o", str(obfuscated_mlir)
+            ]
             run_command(opt_cmd, cwd=source_abs.parent)
 
             # 1c: Translate MLIR to LLVM IR
             llvm_ir_file = destination_abs.parent / f"{destination_abs.stem}_from_mlir.ll"
             translate_cmd = ["mlir-translate", "--mlir-to-llvmir", str(obfuscated_mlir), "-o", str(llvm_ir_file)]
             run_command(translate_cmd, cwd=source_abs.parent)
-            
+
             current_input = llvm_ir_file
-            
+
             # Clean up intermediate MLIR files
             if mlir_file.exists():
                 mlir_file.unlink()

@@ -4,9 +4,14 @@ set(SOURCES
   SymbolPass.cpp
 )
 
-add_llvm_library(MLIRObfuscation MODULE
+add_library(MLIRObfuscation SHARED
   ${SOURCES}
-  PLUGIN_TOOL mlir-opt
+)
+
+# Export all symbols for plugin loading
+set_target_properties(MLIRObfuscation PROPERTIES
+  CXX_VISIBILITY_PRESET default
+  VISIBILITY_INLINES_HIDDEN OFF
 )
 
 target_include_directories(MLIRObfuscation

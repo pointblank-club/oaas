@@ -636,13 +636,22 @@ class LLVMObfuscator:
                 target_triple = "x86_64-w64-mingw32"
                 data_layout = "e-m:w-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128"
 
-            # Read, fix, and write
+            # Read, fix, and write - remove ALL target-specific attributes
             with open(str(llvm_ir_raw), 'r') as f:
                 ir_content = f.read()
 
             import re
+            # Fix target triple and datalayout
             ir_content = re.sub(r'target triple = ".*"', f'target triple = "{target_triple}"', ir_content)
             ir_content = re.sub(r'target datalayout = ".*"', f'target datalayout = "{data_layout}"', ir_content)
+
+            # Remove corrupted CPU attributes
+            ir_content = re.sub(r'"target-cpu"="[^"]*"', '', ir_content)
+            ir_content = re.sub(r'"target-features"="[^"]*"', '', ir_content)
+            ir_content = re.sub(r'"tune-cpu"="[^"]*"', '', ir_content)
+
+            # Clean up empty attribute groups
+            ir_content = re.sub(r'attributes #\d+ = \{\s*\}', '', ir_content)
 
             with open(str(llvm_ir_file), 'w') as f:
                 f.write(ir_content)

@@ -113,10 +113,14 @@ echo ""
 echo "[Test 5] Lowering MLIR to LLVM IR..."
 mlir-translate --mlir-to-llvmir test_combined_obf.mlir -o test_raw.ll 2>&1 || { echo "ERROR: MLIR to LLVM IR failed"; exit 1; }
 
-# Fix target triple and data layout in LLVM IR
+# Fix ALL target-specific info in LLVM IR (triple, datalayout, CPU attributes)
 cat test_raw.ll | \
   sed 's/target triple = ".*"/target triple = "x86_64-unknown-linux-gnu"/' | \
-  sed 's/target datalayout = ".*"/target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128"/' \
+  sed 's/target datalayout = ".*"/target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128"/' | \
+  sed 's/attributes #[0-9]* = { .* "target-cpu"="[^"]*" .* }//' | \
+  sed 's/"target-cpu"="[^"]*"//' | \
+  sed 's/"target-features"="[^"]*"//' | \
+  sed 's/"tune-cpu"="[^"]*"//' \
   > test.ll
 
 echo "✅ MLIR → LLVM IR successful"

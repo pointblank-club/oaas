@@ -1,0 +1,94 @@
+FROM ubuntu:22.04
+
+# Avoid interactive prompts
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install basic dependencies
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    clang-15 \
+    llvm-15 \
+    llvm-15-dev \
+    llvm-15-tools \
+    cmake \
+    ninja-build \
+    git \
+    python3 \
+    python3-pip \
+    wget \
+    curl \
+    binutils \
+    file \
+    xz-utils \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create symlinks for clang/llvm tools
+RUN update-alternatives --install /usr/bin/clang clang /usr/bin/clang-15 100 && \
+    update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-15 100 && \
+    update-alternatives --install /usr/bin/llvm-config llvm-config /usr/bin/llvm-config-15 100
+
+# Download and install pre-built MLIR/LLVM (fixed URL)
+# WORKDIR /opt
+# RUN wget --no-check-certificate https://github.com/llvm/llvm-project/releases/download/llvmorg-15.0.0/clang+llvm-15.0.0-x86_64-linux-gnu-ubuntu-18.04.tar.xz || \
+#     wget https://apt.llvm.org/llvm.sh && chmod +x llvm.sh && ./llvm.sh 15
+# 
+# # Try to extract if download succeeded
+# RUN if [ -f clang+llvm-15.0.0-x86_64-linux-gnu-ubuntu-18.04.tar.xz ]; then \
+#         tar -xf clang+llvm-15.0.0-x86_64-linux-gnu-ubuntu-18.04.tar.xz && \
+#         mv clang+llvm-15.0.0-x86_64-linux-gnu-ubuntu-18.04 llvm && \
+#         rm clang+llvm-15.0.0-x86_64-linux-gnu-ubuntu-18.04.tar.xz; \
+#     fi
+
+# Set environment variables (use system LLVM if download failed)
+ENV PATH="/usr/lib/llvm-15/bin:${PATH}"
+ENV LD_LIBRARY_PATH="/usr/lib/llvm-15/lib"
+ENV LLVM_DIR="/usr/lib/llvm-15/lib/cmake/llvm"
+ENV MLIR_DIR="/usr/lib/llvm-15/lib/cmake/mlir"
+
+# Install mlir-opt and mlir-translate from apt
+RUN apt-get update && apt-get install -y \
+    mlir-15-tools \
+    libmlir-15-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create symlinks for MLIR tools
+RUN ln -sf /usr/lib/llvm-15/bin/mlir-opt /usr/bin/mlir-opt && \
+    ln -sf /usr/lib/llvm-15/bin/mlir-translate /usr/bin/mlir-translate
+
+# Verify installations
+RUN clang --version && \
+    llvm-config --version && \
+    which mlir-opt && mlir-opt --version && \
+    which mlir-translate && mlir-translate --version
+
+# Copy project files
+WORKDIR /app
+COPY . .
+
+# Build MLIR obfuscation passes
+WORKDIR /app/mlir-obs
+RUN mkdir -p build && cd build && \
+    cmake .. \
+        --log-level=VERBOSE \
+        -G Ninja \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DLLVM_DIR=/usr/lib/llvm-15/lib/cmake/llvm \
+        -DMLIR_DIR=/usr/lib/llvm-15/lib/cmake/mlir && \
+    ninja
+
+# Verify the library was built
+RUN ls -la /app/mlir-obs/build/lib/ || echo "Warning: MLIR library not found"
+
+# Install Python dependencies
+WORKDIR /app/cmd/llvm-obfuscator
+RUN pip3 install -r requirements.txt || echo "No requirements.txt found"
+
+# Set working directory back to root
+WORKDIR /app
+
+# Make test scripts executable
+RUN chmod +x tests/run_integration_tests.sh 2>/dev/null || true
+RUN chmod +x tests/test_mlir_passes_only.sh 2>/dev/null || true
+
+# Default command
+CMD ["/bin/bash"]

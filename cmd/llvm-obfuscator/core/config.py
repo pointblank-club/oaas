@@ -39,28 +39,20 @@ class PassConfiguration:
     bogus_control_flow: bool = False
     split: bool = False
     linear_mba: bool = False
+    string_encrypt: bool = False
+    symbol_obfuscate: bool = False
 
     def enabled_passes(self) -> List[str]:
         mapping = {
             "flattening": self.flattening,
             "substitution": self.substitution,
             "boguscf": self.bogus_control_flow,
-            "split": self.split,  # Note: New PM uses "split", legacy uses "splitbbl"
+            "split": self.split,
             "linear-mba": self.linear_mba,
+            "string-encrypt": self.string_encrypt,
+            "symbol-obfuscate": self.symbol_obfuscate,
         }
         return [name for name, enabled in mapping.items() if enabled]
-
-
-@dataclass
-class SymbolObfuscationConfiguration:
-    enabled: bool = False
-    algorithm: str = "sha256"  # sha256, blake2b, siphash
-    hash_length: int = 12
-    prefix_style: str = "typed"  # none, typed, underscore
-    salt: Optional[str] = None
-    preserve_main: bool = True
-    preserve_stdlib: bool = True
-
 
 @dataclass
 class IndirectCallConfiguration:
@@ -89,19 +81,15 @@ class RemarksConfiguration:
 @dataclass
 class AdvancedConfiguration:
     cycles: int = 1
-    string_encryption: bool = False
     fake_loops: int = 0
-    symbol_obfuscation: SymbolObfuscationConfiguration = field(default_factory=SymbolObfuscationConfiguration)
     indirect_calls: IndirectCallConfiguration = field(default_factory=IndirectCallConfiguration)
     remarks: RemarksConfiguration = field(default_factory=RemarksConfiguration)
     upx_packing: UPXConfiguration = field(default_factory=UPXConfiguration)
-
 
 @dataclass
 class OutputConfiguration:
     directory: Path
     report_formats: List[str] = field(default_factory=lambda: ["json"])  # json, html, pdf
-
 
 @dataclass
 class ObfuscationConfig:
@@ -128,6 +116,8 @@ class ObfuscationConfig:
             bogus_control_flow=passes_data.get("bogus_control_flow", False),
             split=passes_data.get("split", False),
             linear_mba=passes_data.get("linear_mba", False),
+            string_encrypt=passes_data.get("string_encrypt", False),
+            symbol_obfuscate=passes_data.get("symbol_obfuscate", False),
         )
         adv_data = data.get("advanced", {})
 
@@ -157,7 +147,6 @@ class ObfuscationConfig:
         )
         advanced = AdvancedConfiguration(
             cycles=adv_data.get("cycles", 1),
-            string_encryption=adv_data.get("string_encryption", False),
             fake_loops=adv_data.get("fake_loops", 0),
             indirect_calls=indirect_calls,
             remarks=remarks_config,

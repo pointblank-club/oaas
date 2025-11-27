@@ -9,8 +9,6 @@ from .exceptions import ObfuscationError
 from .fake_loop_inserter import FakeLoopGenerator
 from .multifile_compiler import compile_multifile_ir_workflow
 from .reporter import ObfuscationReport
-from .string_encryptor import StringEncryptionResult, XORStringEncryptor
-from .symbol_obfuscator import SymbolObfuscator
 from .llvm_remarks import RemarksCollector
 from .upx_packer import UPXPacker
 from .utils import (
@@ -48,14 +46,14 @@ class LLVMObfuscator:
         "substitution",
         "boguscf",
         "split",
+        "string-encrypt",
+        "symbol-obfuscate",
     ]
 
     def __init__(self, reporter: Optional[ObfuscationReport] = None) -> None:
         self.logger = create_logger(__name__)
         self.reporter = reporter
-        self.encryptor = XORStringEncryptor()
         self.fake_loop_generator = FakeLoopGenerator()
-        self.symbol_obfuscator = SymbolObfuscator()
         self.remarks_collector = RemarksCollector()
         self.upx_packer = UPXPacker()
 
@@ -138,6 +136,8 @@ class LLVMObfuscator:
         actually_applied_passes = []
 
         require_tool("clang")
+        require_tool("mlir-opt")
+        require_tool("mlir-translate")
         if config.platform == Platform.WINDOWS:
             require_tool("x86_64-w64-mingw32-gcc")
 
@@ -148,47 +148,10 @@ class LLVMObfuscator:
         baseline_binary = output_directory / f"{source_file.stem}_baseline"
         baseline_metrics = self._compile_and_analyze_baseline(source_file, baseline_binary, config)
 
-        # Symbol obfuscation (if enabled) - applied FIRST before other transformations
+        # Symbol and string obfuscation are now handled by MLIR passes.
         symbol_result = None
+        string_result = None
         working_source = source_file
-        if config.advanced.symbol_obfuscation.enabled:
-            try:
-                symbol_obfuscated_file = output_directory / f"{source_file.stem}_symbol_obfuscated{source_file.suffix}"
-                symbol_result = self.symbol_obfuscator.obfuscate(
-                    source_file=source_file,
-                    output_file=symbol_obfuscated_file,
-                    algorithm=config.advanced.symbol_obfuscation.algorithm,
-                    hash_length=config.advanced.symbol_obfuscation.hash_length,
-                    prefix_style=config.advanced.symbol_obfuscation.prefix_style,
-                    salt=config.advanced.symbol_obfuscation.salt,
-                    preserve_main=config.advanced.symbol_obfuscation.preserve_main,
-                    preserve_stdlib=config.advanced.symbol_obfuscation.preserve_stdlib,
-                    generate_map=True,
-                    map_file=output_directory / "symbol_map.json",
-                    is_cpp=source_file.suffix in [".cpp", ".cc", ".cxx"],
-                )
-                working_source = symbol_obfuscated_file
-                self.logger.info(f"Symbol obfuscation complete: {symbol_result['symbols_obfuscated']} symbols renamed")
-            except Exception as e:
-                self.logger.warning(f"Symbol obfuscation failed, continuing without it: {e}")
-
-        # String encryption (if enabled) - applied to source content
-        string_result: Optional[StringEncryptionResult] = None
-        if config.advanced.string_encryption:
-            try:
-                # Get the symbol-obfuscated source if available, otherwise use original
-                current_source_content = working_source.read_text(encoding="utf-8", errors="replace")
-                string_result = self.encryptor.encrypt_strings(current_source_content)
-
-                # Write the transformed source to a new file IN THE SAME DIRECTORY as the source
-                # This ensures relative #include paths still work for multi-file projects
-                string_encrypted_file = working_source.parent / f"{source_file.stem}_string_encrypted{source_file.suffix}"
-                string_encrypted_file.write_text(string_result.transformed_source, encoding="utf-8", errors="replace")
-                working_source = string_encrypted_file
-                self.logger.info(f"String encryption complete: {string_result.encrypted_strings}/{string_result.total_strings} strings encrypted")
-            except Exception as e:
-                self.logger.error(f"String encryption failed: {e}")
-                string_result = None
 
         # Indirect call obfuscation (if enabled) - applied after string encryption
         indirect_call_result = None
@@ -320,7 +283,7 @@ class LLVMObfuscator:
                 "symbols_count": symbols_count,
                 "functions_count": functions_count,
                 "entropy": entropy,
-                "obfuscation_methods": actually_applied_passes + (["symbol_obfuscation"] if symbol_result else []) + (["string_encryption"] if string_result else []) + (["indirect_calls"] if indirect_call_result else []),
+                "obfuscation_methods": actually_applied_passes + (["indirect_calls"] if indirect_call_result else []),
             },
             "comparison": {
                 "size_change": file_size - baseline_metrics.get("file_size", file_size) if baseline_metrics else 0,
@@ -568,384 +531,143 @@ class LLVMObfuscator:
         else:
             base_compiler = "clang"
 
-        # Check for bundled clang FIRST (from LLVM 22) - used for ALL compilations
-        compiler = base_compiler  # default to system clang
-        bundled_clang_path = None
+        compiler = base_compiler
 
-        # Only use bundled clang if we're compiling for the SAME platform we're running on
-        # AND we're NOT using LTO (bundled clang doesn't have LLVMgold.so plugin)
-        import platform as py_platform
-        current_os = py_platform.system().lower()
-        target_os = config.platform.value.lower()
-        if target_os == "macos":
-            target_os = "darwin"
+        mlir_passes = [p for p in enabled_passes if p in ["string-encrypt", "symbol-obfuscate"]]
+        ollvm_passes = [p for p in enabled_passes if p not in mlir_passes]
 
-        # Check if LTO is enabled in compiler flags
-        has_lto = any('lto' in flag.lower() for flag in compiler_flags)
+        # The input for the current stage of the pipeline
+        current_input = source_abs
+        
+        # Stage 1: MLIR Obfuscation
+        if mlir_passes:
+            self.logger.info("Running MLIR pipeline with passes: %s", ", ".join(mlir_passes))
+            
+            # 1a: Compile source to MLIR
+            mlir_file = destination_abs.parent / f"{destination_abs.stem}_temp.mlir"
+            mlir_cmd = [compiler, str(current_input), "-S", "--emit-mlir", "-o", str(mlir_file)]
+            if config.platform == Platform.WINDOWS:
+                mlir_cmd.extend(["--target=x86_64-w64-mingw32"])
+            run_command(mlir_cmd, cwd=source_abs.parent)
 
-        # Only look for bundled clang if not cross-compiling AND not using LTO
-        is_same_platform = (current_os == target_os)
-        if is_same_platform and not has_lto:
-            # Try to find bundled plugin directory for this platform
-            plugin_path = self._get_bundled_plugin_path(config.platform)
-            if plugin_path:
-                bundled_clang_path = plugin_path.parent / "clang"
-                if bundled_clang_path.exists():
-                    self.logger.info("Using bundled clang from LLVM 22: %s", bundled_clang_path)
-                    compiler = str(bundled_clang_path)
-                else:
-                    self.logger.debug("Bundled clang not found at: %s", bundled_clang_path)
-                    bundled_clang_path = None
-        elif has_lto:
-            self.logger.debug("LTO enabled in flags, using system clang (bundled clang doesn't have LLVMgold.so)")
+            # 1b: Apply MLIR passes
+            obfuscated_mlir = destination_abs.parent / f"{destination_abs.stem}_obfuscated.mlir"
+            passes_pipeline = " ".join([f"--{p}" for p in mlir_passes])
+            opt_cmd = ["mlir-opt", str(mlir_file), passes_pipeline, "-o", str(obfuscated_mlir)]
+            run_command(opt_cmd, cwd=source_abs.parent)
 
-        # If OLLVM passes are requested, use 3-step workflow: source -> IR -> obfuscated IR -> binary
-        if enabled_passes:
-            # Determine which plugin to use (priority: explicit > env var > bundled)
-            import os
-            plugin_path = config.custom_pass_plugin
+            # 1c: Translate MLIR to LLVM IR
+            llvm_ir_file = destination_abs.parent / f"{destination_abs.stem}_from_mlir.ll"
+            translate_cmd = ["mlir-translate", "--mlir-to-llvmir", str(obfuscated_mlir), "-o", str(llvm_ir_file)]
+            run_command(translate_cmd, cwd=source_abs.parent)
+            
+            current_input = llvm_ir_file
+            
+            # Clean up intermediate MLIR files
+            if mlir_file.exists():
+                mlir_file.unlink()
+            if obfuscated_mlir.exists():
+                obfuscated_mlir.unlink()
 
-            if not plugin_path:
-                # Try environment variable
-                env_plugin = os.getenv("LLVM_OBFUSCATION_PLUGIN")
-                if env_plugin:
-                    plugin_path = Path(env_plugin)
-                    if plugin_path.exists():
-                        self.logger.info(f"Using plugin from environment: {plugin_path}")
-                    else:
-                        self.logger.warning(f"Environment plugin not found: {plugin_path}")
-                        plugin_path = None
+        # Stage 2: OLLVM Obfuscation
+        if ollvm_passes:
+            self.logger.info("Running OLLVM pipeline with passes: %s", ", ".join(ollvm_passes))
 
-            if not plugin_path:
-                # Try bundled plugin for target platform
-                plugin_path = self._get_bundled_plugin_path(config.platform)
-
+            # Find the OLLVM plugin
+            plugin_path = config.custom_pass_plugin or self._get_bundled_plugin_path(config.platform)
             if not plugin_path or not plugin_path.exists():
-                self.logger.error(
-                    "OLLVM passes requested but no plugin found.\n"
-                    "Options:\n"
-                    "  1. Specify path: --custom-pass-plugin /path/to/LLVMObfuscationPlugin.dylib\n"
-                    "  2. Set environment: export LLVM_OBFUSCATION_PLUGIN=/path/to/plugin\n"
-                    "  3. Ensure bundled plugin exists for your platform\n"
-                    f"  4. Build plugin from: /Users/akashsingh/Desktop/llvm-project"
-                )
-                raise ObfuscationError("OLLVM plugin not found")
+                raise ObfuscationError("OLLVM passes requested but no plugin found.")
 
-        if enabled_passes and plugin_path:
-            # Check for cross-compilation
-            import platform as py_platform
-            current_os = py_platform.system().lower()
-            target_os = config.platform.value.lower()
-            # Normalize macos to darwin for comparison
-            if target_os == "macos":
-                target_os = "darwin"
-            is_cross_compiling = (current_os == "darwin" and target_os == "linux") or \
-                                 (current_os == "darwin" and target_os == "windows") or \
-                                 (current_os == "linux" and target_os == "darwin") or \
-                                 (current_os == "linux" and target_os == "windows") or \
-                                 (current_os == "windows" and target_os == "darwin") or \
-                                 (current_os == "windows" and target_os == "linux")
-
-            if is_cross_compiling:
-                warning_msg = (
-                    f"Cross-compilation detected: Building on {current_os} for {target_os}. "
-                    f"OLLVM passes require running opt binary for target platform. "
-                    f"OLLVM passes will be skipped. Applying other obfuscation layers only."
-                )
-                self.logger.warning(warning_msg)
-                warnings.append(warning_msg)
-                enabled_passes = []  # Skip OLLVM passes for cross-compilation
-                actually_applied_passes = []  # No OLLVM passes applied
-
-                # Fall through to standard compilation without OLLVM
-                command = [compiler, str(source_abs), "-o", str(destination_abs)] + compiler_flags
-                resource_dir_flags = self._get_resource_dir_flag(compiler)
-                if resource_dir_flags:
-                    command.extend(resource_dir_flags)
-                self._add_remarks_flags(command, config, destination_abs)
-                if config.platform == Platform.WINDOWS:
-                    command.extend(["--target=x86_64-w64-mingw32"])
-                run_command(command, cwd=source_abs.parent)
-                return {
-                    "applied_passes": actually_applied_passes,
-                    "warnings": warnings,
-                    "disabled_passes": list(config.passes.enabled_passes())  # Original requested passes
-                }
-
-            # Check if this is a multi-file project
-            additional_sources = [flag for flag in compiler_flags if flag.endswith(('.c', '.cpp', '.cc', '.cxx', '.c++'))]
-            is_multi_file = len(additional_sources) > 0
-
-            if is_multi_file and enabled_passes:
-                # Use the extracted multi-file IR workflow
-                return compile_multifile_ir_workflow(
-                    source_abs=source_abs,
-                    destination_abs=destination_abs,
-                    config=config,
-                    compiler_flags=compiler_flags,
-                    enabled_passes=enabled_passes,
-                    plugin_path=plugin_path,
-                    compiler=compiler,
-                    symbol_obfuscator=self.symbol_obfuscator,
-                    encryptor=self.encryptor,
-                    get_resource_dir_flag_fn=self._get_resource_dir_flag,
-                    has_exception_handling_fn=self._has_exception_handling,
-                    entrypoint_command=config.entrypoint_command,
-                    project_root_override=config.project_root,
-                )
-
-            if enabled_passes:  # Re-check after potential multi-file skip
-                self.logger.info("Using opt-based workflow for OLLVM passes: %s", ", ".join(enabled_passes))
-
-                # Determine opt and clang binary paths early
-                plugin_path_resolved = Path(plugin_path)
-
-                # FIRST: Check for bundled opt and clang in same directory as plugin
-                bundled_opt = plugin_path_resolved.parent / "opt"
-                bundled_clang = plugin_path_resolved.parent / "clang"
-
-                # Step 1: Compile source to OPTIMIZED LLVM IR with -O3
-                # This ensures obfuscation is applied to stable, optimized code
-                # Prevents later optimization passes from removing obfuscation
+            # If the input is still a source file, compile it to LLVM IR
+            if current_input.suffix not in ['.ll', '.bc']:
                 ir_file = destination_abs.parent / f"{destination_abs.stem}_temp.ll"
-                
-                # Apply -O3 BEFORE obfuscation
+                # Apply -O3 BEFORE obfuscation for stable, optimized code
                 pre_obfuscation_flags = ["-O3", "-fno-builtin", "-fno-slp-vectorize", "-fno-vectorize"]
-                ir_cmd = [compiler, str(source_abs), "-S", "-emit-llvm", "-o", str(ir_file)] + pre_obfuscation_flags
-
+                ir_cmd = [compiler, str(current_input), "-S", "-emit-llvm", "-o", str(ir_file)] + pre_obfuscation_flags
                 # Add resource-dir flag if using custom clang
                 resource_dir_flags = self._get_resource_dir_flag(compiler)
                 if resource_dir_flags:
                     ir_cmd.extend(resource_dir_flags)
-
-                # Add platform target if Windows
                 if config.platform == Platform.WINDOWS:
                     ir_cmd.extend(["--target=x86_64-w64-mingw32"])
-
-                self.logger.info("Step 1/3: Compiling to LLVM IR")
                 run_command(ir_cmd, cwd=source_abs.parent)
+                current_input = ir_file
 
-                # Check for C++ exception handling - Hikari approach
-                # Flattening crashes on EH, but other passes work fine
-                if self._has_exception_handling(ir_file):
-                    if "flattening" in enabled_passes:
-                        warning_msg = (
-                            "C++ exception handling detected in IR (invoke/landingpad instructions). "
-                            "Flattening pass disabled for stability (known to crash on exception handling). "
-                            "Other OLLVM passes (substitution, boguscf, split) will still be applied."
-                        )
-                        self.logger.warning(warning_msg)
-                        warnings.append(warning_msg)
-                        enabled_passes = [p for p in enabled_passes if p != "flattening"]  # Remove only flattening
-                        actually_applied_passes = list(enabled_passes)  # Track remaining passes
-
-                # Only continue with OLLVM if we still have passes enabled
-                if not enabled_passes:
-                    # Fall back to standard compilation without OLLVM passes
-                    command = [compiler, str(source_abs), "-o", str(destination_abs)] + compiler_flags
-
-                    # Add resource-dir flag if using custom clang
-                    resource_dir_flags = self._get_resource_dir_flag(compiler)
-                    if resource_dir_flags:
-                        command.extend(resource_dir_flags)
-
-                    self._add_remarks_flags(command, config, destination_abs)
-
-                    if config.platform == Platform.WINDOWS:
-                        command.extend(["--target=x86_64-w64-mingw32"])
-
-                    # Clean up the IR file we don't need anymore
-                    if ir_file.exists():
-                        ir_file.unlink()
-
-                    run_command(command, cwd=source_abs.parent)
-                    return {
-                        "applied_passes": actually_applied_passes,
-                        "warnings": warnings,
-                        "disabled_passes": [p for p in enabled_passes if p not in actually_applied_passes]
-                    }
-
-                # Step 2: Apply OLLVM passes using opt
-                obfuscated_ir = destination_abs.parent / f"{destination_abs.stem}_obfuscated.bc"
-
-                if bundled_opt.exists():
-                    self.logger.info("Using bundled opt: %s", bundled_opt)
-                    opt_binary = bundled_opt
-
-                    # Also use bundled clang if available (ensures LLVM 22 compatibility)
-                    if bundled_clang.exists():
-                        self.logger.info("Using bundled clang from LLVM 22: %s", bundled_clang)
-                        compiler = str(bundled_clang)
-                    else:
-                        self.logger.warning("Bundled clang not found, using system clang (may have version mismatch)")
-                # SECOND: Check Docker installation path (production deployment)
-                elif Path("/usr/local/llvm-obfuscator/bin/opt").exists():
-                    opt_binary = Path("/usr/local/llvm-obfuscator/bin/opt")
-                    self.logger.info("Using opt from Docker installation: %s", opt_binary)
-
-                    # Use bundled LLVM 22 clang to ensure version compatibility with opt output
-                    # The bitcode produced by LLVM 22 opt uses attributes that older LLVM can't read
-                    docker_clang = Path("/usr/local/llvm-obfuscator/bin/clang")
-                    if docker_clang.exists():
-                        compiler = str(docker_clang)
-                        self.logger.info("Using bundled clang from Docker installation (LLVM 22): %s", compiler)
-                    else:
-                        compiler = "/usr/bin/clang++" if base_compiler == "clang++" else "/usr/bin/clang"
-                        self.logger.warning("Bundled clang not found, falling back to system clang (%s) - may have version mismatch", compiler)
-                # THIRD: Check if plugin is from LLVM build directory
-                elif "/llvm-project/build/lib/" in str(plugin_path_resolved):
-                    # Plugin is from LLVM build, try to find opt and clang in same build
-                    llvm_build_dir = plugin_path_resolved.parent.parent  # Go up from lib/ to build/
-                    opt_binary = llvm_build_dir / "bin" / "opt"
-                    llvm_clang = llvm_build_dir / "bin" / "clang"
-
-                    if opt_binary.exists():
-                        self.logger.info("Using opt from LLVM build: %s", opt_binary)
-
-                        # Also use clang from same build if available
-                        if llvm_clang.exists():
-                            self.logger.info("Using clang from LLVM build: %s", llvm_clang)
-                            compiler = str(llvm_clang)
-                    else:
-                        self.logger.error(
-                            "OLLVM passes require custom opt binary.\n"
-                            "The plugin is from LLVM build but opt not found.\n"
-                            f"Expected at: {opt_binary}"
-                        )
-                        raise ObfuscationError("Custom opt binary not found")
-                # FOURTH: Try known system locations (will fail - stock LLVM doesn't have our passes)
-                else:
-                    self.logger.warning(
-                        "Using bundled plugin without bundled opt.\n"
-                        "Note: Stock LLVM 'opt' does NOT include OLLVM passes.\n"
-                        "This will likely fail. Please bundle opt with plugin."
+            # Check for exception handling incompatibility
+            if self._has_exception_handling(current_input):
+                if "flattening" in ollvm_passes:
+                    warning_msg = (
+                        "C++ exception handling detected in IR (invoke/landingpad instructions). "
+                        "Flattening pass disabled for stability (known to crash on exception handling). "
+                        "Other OLLVM passes (substitution, boguscf, split) will still be applied."
                     )
-                    # Try to find opt in known locations
-                    opt_paths = [
-                        Path("/Users/akashsingh/Desktop/llvm-project/build/bin/opt"),
-                        Path("/usr/local/bin/opt"),
-                        Path("/opt/homebrew/bin/opt"),
-                    ]
+                    self.logger.warning(warning_msg)
+                    warnings.append(warning_msg)
+                    ollvm_passes = [p for p in ollvm_passes if p != "flattening"]
+                    actually_applied_passes = [p for p in actually_applied_passes if p != "flattening"]
 
-                    opt_binary = None
-                    for opt_path in opt_paths:
-                        if opt_path.exists():
-                            opt_binary = opt_path
-                            self.logger.warning("Trying opt at: %s (may not have OLLVM passes)", opt_binary)
-                            break
+            # Determine opt binary path - check multiple locations
+            plugin_path_resolved = Path(plugin_path)
+            bundled_opt = plugin_path_resolved.parent / "opt"
+            bundled_clang = plugin_path_resolved.parent / "clang"
+            opt_binary = None
 
-                    if not opt_binary:
-                        self.logger.error(
-                            "No opt binary found and plugin needs compatible opt.\n"
-                            "Stock system LLVM does NOT include OLLVM passes.\n"
-                            "Please ensure bundled opt is in plugins/<platform>/ directory."
-                        )
-                        raise ObfuscationError("Compatible opt binary not found")
+            if bundled_opt.exists():
+                self.logger.info("Using bundled opt: %s", bundled_opt)
+                opt_binary = bundled_opt
+                if bundled_clang.exists():
+                    self.logger.info("Using bundled clang from LLVM 22: %s", bundled_clang)
+                    compiler = str(bundled_clang)
+            elif Path("/usr/local/llvm-obfuscator/bin/opt").exists():
+                opt_binary = Path("/usr/local/llvm-obfuscator/bin/opt")
+                self.logger.info("Using opt from Docker installation: %s", opt_binary)
+                docker_clang = Path("/usr/local/llvm-obfuscator/bin/clang")
+                if docker_clang.exists():
+                    compiler = str(docker_clang)
+                    self.logger.info("Using bundled clang from Docker installation (LLVM 22): %s", compiler)
+            elif "/llvm-project/build/lib/" in str(plugin_path_resolved):
+                llvm_build_dir = plugin_path_resolved.parent.parent
+                opt_binary = llvm_build_dir / "bin" / "opt"
+                llvm_clang = llvm_build_dir / "bin" / "clang"
+                if opt_binary.exists():
+                    self.logger.info("Using opt from LLVM build: %s", opt_binary)
+                    if llvm_clang.exists():
+                        compiler = str(llvm_clang)
+                else:
+                    raise ObfuscationError("Custom opt binary not found")
+            else:
+                raise ObfuscationError(f"OLLVM opt binary not found at {bundled_opt}")
 
-                # Build the passes pipeline
-                passes_pipeline = ",".join(enabled_passes)
-                opt_cmd = [
-                    str(opt_binary),
-                    "-load-pass-plugin=" + str(plugin_path),
-                    f"-passes={passes_pipeline}",
-                    str(ir_file),
-                    "-o", str(obfuscated_ir)
-                ]
+            # Apply OLLVM passes
+            obfuscated_ir = destination_abs.parent / f"{destination_abs.stem}_obfuscated.bc"
+            passes_pipeline = ",".join(ollvm_passes)
+            opt_cmd = [
+                str(opt_binary),
+                "-load-pass-plugin=" + str(plugin_path),
+                f"-passes={passes_pipeline}",
+                str(current_input),
+                "-o", str(obfuscated_ir)
+            ]
+            self.logger.info("Applying OLLVM passes via opt")
+            run_command(opt_cmd, cwd=source_abs.parent)
+            current_input = obfuscated_ir
 
-                self.logger.info("Step 2/3: Applying OLLVM passes via opt")
-                run_command(opt_cmd, cwd=source_abs.parent)
+        # Stage 3: Compile to binary
+        self.logger.info("Compiling final IR to binary...")
+        final_cmd = [compiler, str(current_input), "-o", str(destination_abs)] + compiler_flags
+        if config.platform == Platform.WINDOWS:
+            final_cmd.extend(["--target=x86_64-w64-mingw32"])
+        run_command(final_cmd, cwd=source_abs.parent)
 
-                # Step 3: Compile obfuscated IR to binary with MINIMAL optimization
-                # This prevents backend optimizations from removing obfuscation
-                # Filter out optimization flags that would destroy obfuscation
-                post_obfuscation_flags = []
-                
-                for flag in compiler_flags:
-                    # Skip optimization and LTO flags that might undo obfuscation
-                    if any(opt in flag.lower() for opt in ['-o1', '-o2', '-o3', '-flto', 'lto']):
-                        self.logger.debug(f"Skipping post-obfuscation optimization flag: {flag}")
-                        continue
-                    post_obfuscation_flags.append(flag)
-                
-                # Add minimal optimization to preserve obfuscation
-                post_obfuscation_flags.append('-O0')
-                
-                # If using bundled clang, strip LTO flags (bundled clang doesn't have LLVMgold.so)
-                final_flags = post_obfuscation_flags
-                if str(compiler) == str(bundled_clang):
-                    # Remove all LTO-related flags
-                    final_flags = [f for f in post_obfuscation_flags if 'lto' not in f.lower()]
-                    if len(final_flags) != len(post_obfuscation_flags):
-                        self.logger.info("Removed LTO flags (incompatible with bundled clang)")
+        # Cleanup any remaining intermediate files
+        if current_input != source_abs and current_input.exists():
+            current_input.unlink()
 
-                final_cmd = [compiler, str(obfuscated_ir), "-o", str(destination_abs)] + final_flags
-
-                if config.platform == Platform.WINDOWS:
-                    final_cmd.extend(["--target=x86_64-w64-mingw32"])
-
-                self.logger.info("Step 3/3: Compiling obfuscated IR to binary (with -O0 to preserve obfuscation)")
-                run_command(final_cmd, cwd=source_abs.parent)
-
-                # Cleanup temporary files
-                if ir_file.exists():
-                    ir_file.unlink()
-                if obfuscated_ir.exists():
-                    obfuscated_ir.unlink()
-
-                self.logger.info("OLLVM obfuscation complete")
-                return {
-                    "applied_passes": actually_applied_passes,
-                    "warnings": warnings,
-                    "disabled_passes": []
-                }
-
-        elif enabled_passes:
-            # Log warning but continue without passes
-            warning_msg = (
-                f"OLLVM passes requested ({', '.join(enabled_passes)}) but no plugin available. "
-                f"Continuing with compiler flags only. Set custom_pass_plugin to enable passes."
-            )
-            self.logger.warning(warning_msg)
-            warnings.append(warning_msg)
-            actually_applied_passes = []  # No OLLVM passes applied
-            command = [compiler, str(source_abs), "-o", str(destination_abs)] + compiler_flags
-
-            # Add resource-dir flag if using custom clang
-            resource_dir_flags = self._get_resource_dir_flag(compiler)
-            if resource_dir_flags:
-                command.extend(resource_dir_flags)
-
-            self._add_remarks_flags(command, config, destination_abs)
-
-            if config.platform == Platform.WINDOWS:
-                command.extend(["--target=x86_64-w64-mingw32"])
-            run_command(command, cwd=source_abs.parent)
-            return {
-                "applied_passes": actually_applied_passes,
-                "warnings": warnings,
-                "disabled_passes": enabled_passes
-            }
-        else:
-            # No OLLVM passes - standard compilation
-            command = [compiler, str(source_abs), "-o", str(destination_abs)] + compiler_flags
-
-            # Add resource-dir flag if using custom clang
-            resource_dir_flags = self._get_resource_dir_flag(compiler)
-            if resource_dir_flags:
-                command.extend(resource_dir_flags)
-
-            self._add_remarks_flags(command, config, destination_abs)
-
-            if config.platform == Platform.WINDOWS:
-                command.extend(["--target=x86_64-w64-mingw32"])
-
-            self.logger.info(f"Standard compilation command: {' '.join(command)}")
-            run_command(command, cwd=source_abs.parent)
-            return {
-                "applied_passes": actually_applied_passes,
-                "warnings": warnings,
-                "disabled_passes": []
-            }
+        return {
+            "applied_passes": actually_applied_passes,
+            "warnings": warnings,
+            "disabled_passes": []
+        }
 
     def _compile_and_analyze_baseline(self, source_file: Path, baseline_binary: Path, config: ObfuscationConfig) -> Dict:
         """Compile an unobfuscated baseline binary and analyze its metrics for comparison."""
@@ -1054,12 +776,12 @@ class LLVMObfuscator:
         output_binary: Path,
         passes: List[str],
         cycles: int,
-        string_result: Optional[StringEncryptionResult],
+        string_result: Optional[Dict],
         fake_loops,
         entropy: float,
     ) -> Dict:
         baseline_score = 50 + 5 * len(passes) + 3 * cycles
-        score = min(95.0, baseline_score + (string_result.encryption_percentage if string_result else 0) * 0.2)
+        score = min(95.0, baseline_score)
         symbol_reduction = round(min(90.0, 20 + 10 * len(passes)), 2)
         function_reduction = round(min(70.0, 10 + 5 * len(passes)), 2)
         size_reduction = round(max(-30.0, 10 - 5 * len(passes)), 2)
@@ -1071,11 +793,13 @@ class LLVMObfuscator:
             "code_bloat_percentage": round(5 + len(passes) * 1.5, 2),
         }
         string_obfuscation = {
-            "total_strings": string_result.total_strings if string_result else 0,
-            "encrypted_strings": string_result.encrypted_strings if string_result else 0,
-            "encryption_method": string_result.encryption_method if string_result else "none",
-            "encryption_percentage": string_result.encryption_percentage if string_result else 0.0,
+            "total_strings": 0,
+            "encrypted_strings": 0,
+            "encryption_method": "none",
+            "encryption_percentage": 0.0,
         }
+        if string_result:
+            string_obfuscation.update(string_result)
         fake_loops_inserted = {
             "count": len(fake_loops),
             "types": [loop.loop_type for loop in fake_loops],

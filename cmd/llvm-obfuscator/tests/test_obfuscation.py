@@ -19,6 +19,7 @@ def test_functional_equivalence(sample_source, obfuscation_config, obfuscator: L
 
 def test_symbol_reduction(sample_source, obfuscation_config, obfuscator: LLVMObfuscator):
     """Verify symbols are properly hidden"""
+    obfuscation_config.passes.symbol_obfuscate = True
     result = obfuscator.obfuscate(sample_source, obfuscation_config)
     assert result["symbol_reduction"] >= 20
 
@@ -26,7 +27,7 @@ def test_symbol_reduction(sample_source, obfuscation_config, obfuscator: LLVMObf
 def test_all_passes(sample_source, obfuscation_config, obfuscator: LLVMObfuscator):
     """Test each OLLVM pass individually"""
     result = obfuscator.obfuscate(sample_source, obfuscation_config)
-    assert set(result["enabled_passes"]) == {"flattening", "substitution", "boguscf", "split"}
+    assert set(result["requested_passes"]) == {"flattening", "substitution", "boguscf", "split", "string-encrypt", "symbol-obfuscate"}
 
 
 def test_report_generation(sample_source, obfuscation_config, obfuscator: LLVMObfuscator):
@@ -70,10 +71,10 @@ def test_api_endpoints_obfuscate_flow(sample_source, base64_source):
                 "flattening": True,
                 "substitution": True,
                 "bogus_control_flow": True,
-                "split": True
+                "split": True,
+                "string_encrypt": True,
             },
             "cycles": 1,
-            "string_encryption": True,
             "fake_loops": 1
         },
         "report_formats": ["json"]
@@ -133,7 +134,7 @@ def test_cli_commands(sample_source, tmp_path, monkeypatch):
             "--enable-substitution",
             "--enable-bogus-cf",
             "--enable-split",
-            "--string-encryption",
+            "--enable-string-encrypt",
         ],
     )
     assert result.exit_code == 0

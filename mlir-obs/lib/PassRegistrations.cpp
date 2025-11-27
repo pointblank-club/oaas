@@ -15,3 +15,9 @@ namespace {
     return std::make_unique<SymbolObfuscatePass>();
   });
 }
+
+// This function must exist for MLIR plugins to register their passes
+extern "C" void mlirRegisterPasses() {
+  // Nothing required here — the static registration above is enough,
+  // but MLIR needs this exported function symbol to locate the plugin.
+}

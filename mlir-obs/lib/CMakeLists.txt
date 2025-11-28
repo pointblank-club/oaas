@@ -14,6 +14,7 @@ add_llvm_library(MLIRObfuscation
   MLIRFuncDialect
   MLIRTransforms
   MLIRSupport
+  MLIROptLib
 )
 
 target_include_directories(MLIRObfuscation

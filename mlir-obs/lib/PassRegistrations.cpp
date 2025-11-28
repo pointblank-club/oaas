@@ -18,17 +18,18 @@ struct PassPluginLibraryInfo {
 
 using namespace mlir;
 
-// Static registration using PassRegistration template
-// This makes passes available as CLI flags (--string-encrypt, --symbol-obfuscate)
-inline void registerObfuscationPasses() {
-  ::mlir::registerPass([]() -> std::unique_ptr<::mlir::Pass> {
-    return std::make_unique<::mlir::obs::StringEncryptPass>();
-  });
-
-  ::mlir::registerPass([]() -> std::unique_ptr<::mlir::Pass> {
-    return std::make_unique<::mlir::obs::SymbolObfuscatePass>();
-  });
+// Use PassRegistration to make passes available as CLI flags
+namespace {
+void registerObfuscationPasses() {
+  // Register with PassRegistration to get CLI flags
+  static bool initialized = false;
+  if (!initialized) {
+    ::mlir::PassRegistration<::mlir::obs::StringEncryptPass>();
+    ::mlir::PassRegistration<::mlir::obs::SymbolObfuscatePass>();
+    initialized = true;
+  }
 }
+} // namespace
 
 // Pass plugin registration - mlir-opt calls this when loading the plugin
 extern "C" LLVM_ATTRIBUTE_WEAK PassPluginLibraryInfo mlirGetPassPluginInfo() {

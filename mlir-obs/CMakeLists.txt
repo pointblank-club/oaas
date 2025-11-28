@@ -25,6 +25,6 @@ include_directories(${MLIR_INCLUDE_DIRS})
 # Build library from sources in lib/
 add_subdirectory(lib)
 
-# Build standalone tool
-add_subdirectory(tools)
+# Don't build standalone tool for now - focus on plugin
+# add_subdirectory(tools)
 

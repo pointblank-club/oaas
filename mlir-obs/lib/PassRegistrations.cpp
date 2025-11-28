@@ -1,10 +1,11 @@
 #include "Obfuscator/Passes.h"
 #include "mlir/Pass/Pass.h"
+#include "mlir/Tools/Plugins/PassPlugin.h"
 
 namespace mlir {
 namespace obs {
 
-// Register passes - these will be automatically registered when the plugin loads
+// Register passes with MLIR
 void registerStringEncryptPass() {
   PassRegistration<StringEncryptPass>();
 }
@@ -16,8 +17,12 @@ void registerSymbolObfuscatePass() {
 } // namespace obs
 } // namespace mlir
 
-// Plugin initialization - called when mlir-opt loads the plugin
-extern "C" void mlirRegisterPasses() {
-  mlir::obs::registerStringEncryptPass();
-  mlir::obs::registerSymbolObfuscatePass();
+// Plugin entry point - mlir-opt expects this exact function signature
+extern "C" LLVM_ATTRIBUTE_WEAK ::mlir::PassPluginLibraryInfo
+mlirGetPassPluginInfo() {
+  return {MLIR_PLUGIN_API_VERSION, "MLIRObfuscation", LLVM_VERSION_STRING,
+          [](PassManager &PM) {
+            mlir::obs::registerStringEncryptPass();
+            mlir::obs::registerSymbolObfuscatePass();
+          }};
 }

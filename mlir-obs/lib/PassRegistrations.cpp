@@ -2,23 +2,30 @@
 #include "mlir/Pass/Pass.h"
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Pass/PassRegistry.h"
+#include "mlir/Tools/Plugins/PassPlugin.h"
 #include "llvm/Support/Compiler.h"
 
 using namespace mlir;
 
-namespace {
+namespace mlir {
+namespace obs {
+
+// Register our obfuscation passes
 void registerObfuscationPasses() {
   registerPass([]() -> std::unique_ptr<Pass> {
-    return std::make_unique<mlir::obs::StringEncryptPass>();
+    return std::make_unique<StringEncryptPass>();
   });
 
   registerPass([]() -> std::unique_ptr<Pass> {
-    return std::make_unique<mlir::obs::SymbolObfuscatePass>();
+    return std::make_unique<SymbolObfuscatePass>();
   });
 }
-} // namespace
 
-// This is the entry point that mlir-opt calls when loading the plugin
-extern "C" LLVM_ATTRIBUTE_USED void mlirRegisterPasses() {
-  registerObfuscationPasses();
+} // namespace obs
+} // namespace mlir
+
+// Pass plugin registration - this is what mlir-opt calls when loading
+extern "C" LLVM_ATTRIBUTE_WEAK PassPluginLibraryInfo mlirGetPassPluginInfo() {
+  return {MLIR_PLUGIN_API_VERSION, "ObfuscationPasses", LLVM_VERSION_STRING,
+          []() { mlir::obs::registerObfuscationPasses(); }};
 }

@@ -21,7 +21,7 @@ void registerSymbolObfuscatePass() {
 extern "C" LLVM_ATTRIBUTE_WEAK ::mlir::PassPluginLibraryInfo
 mlirGetPassPluginInfo() {
   return {MLIR_PLUGIN_API_VERSION, "MLIRObfuscation", LLVM_VERSION_STRING,
-          [](PassManager &PM) {
+          []() {
             mlir::obs::registerStringEncryptPass();
             mlir::obs::registerSymbolObfuscatePass();
           }};

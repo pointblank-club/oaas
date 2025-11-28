@@ -2,8 +2,19 @@
 #include "mlir/Pass/Pass.h"
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Pass/PassRegistry.h"
-#include "mlir/Tools/Plugins/PassPlugin.h"
 #include "llvm/Support/Compiler.h"
+
+// Define PassPluginLibraryInfo if not available
+#ifndef MLIR_PLUGIN_API_VERSION
+#define MLIR_PLUGIN_API_VERSION 1
+#endif
+
+struct PassPluginLibraryInfo {
+  uint32_t APIVersion;
+  const char *PluginName;
+  const char *PluginVersion;
+  void (*RegisterPasses)();
+};
 
 using namespace mlir;
 

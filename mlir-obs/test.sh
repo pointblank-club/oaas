@@ -82,15 +82,25 @@ if [ -f "$SCRIPT_DIR/build/bin/mlir-obfuscate" ]; then
         --symbol-obfuscate \
         -o test_symbol_obf.mlir 2>&1 || { echo "ERROR: Symbol obfuscation failed"; exit 1; }
 else
-    echo "  Using mlir-opt with plugin (may show warnings)..."
+    echo "  Using mlir-opt with plugin..."
+    # Show full error output
     mlir-opt test.mlir \
         --load-pass-plugin="$SCRIPT_DIR/$LIBRARY" \
         --symbol-obfuscate \
-        -o test_symbol_obf.mlir 2>&1 || \
-    mlir-opt test.mlir \
-        --load-pass-plugin="$SCRIPT_DIR/$LIBRARY" \
-        --pass-pipeline="builtin.module(symbol-obfuscate)" \
-        -o test_symbol_obf.mlir 2>&1 ||  cp test.mlir test_symbol_obf.mlir
+        -o test_symbol_obf.mlir 2>&1 | head -20
+
+    if [ ${PIPESTATUS[0]} -ne 0 ]; then
+        echo "  Trying pipeline syntax..."
+        mlir-opt test.mlir \
+            --load-pass-plugin="$SCRIPT_DIR/$LIBRARY" \
+            --pass-pipeline="builtin.module(symbol-obfuscate)" \
+            -o test_symbol_obf.mlir 2>&1 | head -20
+
+        if [ ${PIPESTATUS[0]} -ne 0 ]; then
+            echo "  Both methods failed, copying input as output for pipeline to continue..."
+            cp test.mlir test_symbol_obf.mlir
+        fi
+    fi
 fi
 
 if grep -q "validate_password" test_symbol_obf.mlir; then

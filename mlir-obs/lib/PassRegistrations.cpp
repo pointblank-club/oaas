@@ -5,13 +5,15 @@
 namespace mlir {
 namespace obs {
 
-// Register passes with MLIR
-void registerStringEncryptPass() {
-  PassRegistration<StringEncryptPass>();
-}
+// Static registration - these will be created when the plugin loads
+inline void registerPasses() {
+  registerPass([]() -> std::unique_ptr<Pass> {
+    return std::make_unique<StringEncryptPass>();
+  });
 
-void registerSymbolObfuscatePass() {
-  PassRegistration<SymbolObfuscatePass>();
+  registerPass([]() -> std::unique_ptr<Pass> {
+    return std::make_unique<SymbolObfuscatePass>();
+  });
 }
 
 void registerCryptoHashPass() {

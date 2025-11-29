@@ -78,17 +78,36 @@ class LLVMRemarksParser:
         self.logger = create_logger(__name__)
     
     def parse_remarks_file(self, remarks_file: Path) -> List[Remark]:
-        """Parse LLVM remarks YAML file."""
+        """
+        Parse LLVM remarks YAML file.
+        
+        LLVM remarks use custom YAML tags (!Passed, !Missed, !Analysis, etc.)
+        We need a custom loader to handle these.
+        """
         if not remarks_file.exists():
             self.logger.warning(f"Remarks file not found: {remarks_file}")
             return []
         
         try:
+            # Create custom YAML loader that handles LLVM remark tags
+            class LLVMRemarkLoader(yaml.SafeLoader):
+                """Custom YAML loader for LLVM remarks with custom tags."""
+                pass
+            
+            # Register constructors for LLVM remark tags
+            # These tags are just metadata, the actual data is in the mapping
+            for tag in ['!Passed', '!Missed', '!Analysis', 
+                       '!AnalysisFPCommute', '!AnalysisAliasing', '!Failure']:
+                LLVMRemarkLoader.add_constructor(
+                    tag,
+                    lambda loader, node: loader.construct_mapping(node)
+                )
+            
             with open(remarks_file, 'r') as f:
                 # LLVM remarks YAML is a stream of documents
                 remarks = []
-                for doc in yaml.safe_load_all(f):
-                    if doc:
+                for doc in yaml.load_all(f, Loader=LLVMRemarkLoader):
+                    if doc and isinstance(doc, dict):
                         remarks.append(Remark.from_dict(doc))
                 return remarks
         except Exception as e:

@@ -6,6 +6,7 @@ add_llvm_library(MLIRObfuscation
   SymbolPass.cpp
   CryptoHashPass.cpp
   ConstantObfuscationPass.cpp
+  SCFPass.cpp
 
   PLUGIN_TOOL
   mlir-opt
@@ -15,6 +16,8 @@ add_llvm_library(MLIRObfuscation
   MLIRPass
   MLIRFuncDialect
   MLIRLLVMDialect
+  MLIRSCFDialect
+  MLIRArithDialect
   MLIRTransforms
   MLIRSupport
   MLIROptLib
@@ -24,4 +27,5 @@ add_llvm_library(MLIRObfuscation
 target_include_directories(MLIRObfuscation
   PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    ${CMAKE_CURRENT_BINARY_DIR}/../include
 )

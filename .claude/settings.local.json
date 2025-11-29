@@ -12,8 +12,7 @@
       "WebFetch(domain:github.com)",
       "Bash(cat:*)",
       "Bash(git log:*)",
-      "Bash(git submodule:*)",
-      "Bash(git rebase:*)"
+      "Bash(git submodule:*)"
     ],
     "deny": [],
     "ask": []

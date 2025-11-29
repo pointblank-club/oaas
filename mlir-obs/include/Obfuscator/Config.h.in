@@ -1,0 +1,15 @@
+#pragma once
+
+// Auto-generated configuration file
+// Defines feature flags for the MLIR Obfuscation toolkit
+
+// Polygeist frontend support (C/C++ -> high-level MLIR)
+#cmakedefine HAVE_POLYGEIST @HAVE_POLYGEIST@
+
+// Polygeist paths (if available)
+#ifdef HAVE_POLYGEIST
+#define CGEIST_EXECUTABLE "@CGEIST_EXECUTABLE@"
+#endif
+
+// MLIR/LLVM version info
+#define MLIR_VERSION_STRING "@LLVM_VERSION_STRING@"

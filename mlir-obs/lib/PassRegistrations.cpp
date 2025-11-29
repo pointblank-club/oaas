@@ -7,12 +7,18 @@ namespace obs {
 
 // Static registration - these will be created when the plugin loads
 inline void registerPasses() {
+  // Core obfuscation passes (work with any MLIR)
   registerPass([]() -> std::unique_ptr<Pass> {
     return std::make_unique<StringEncryptPass>();
   });
 
   registerPass([]() -> std::unique_ptr<Pass> {
     return std::make_unique<SymbolObfuscatePass>();
+  });
+
+  // Polygeist-specific pass (works on SCF dialect)
+  registerPass([]() -> std::unique_ptr<Pass> {
+    return std::make_unique<SCFObfuscatePass>();
   });
 }
 

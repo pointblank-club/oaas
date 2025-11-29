@@ -50,6 +50,8 @@ std::unique_ptr<Pass> createConstantObfuscationPass(llvm::StringRef key);
 
 
 // ======================== SYMBOL OBFUSCATION PASS ==========================
+// Supports BOTH func::FuncOp (Polygeist, high-level MLIR)
+// AND LLVM::LLVMFuncOp (post-lowering)
 struct SymbolObfuscatePass
     : public PassWrapper<SymbolObfuscatePass, OperationPass<ModuleOp>> {
 
@@ -58,12 +60,19 @@ struct SymbolObfuscatePass
 
   StringRef getArgument() const override { return "symbol-obfuscate"; }
   StringRef getDescription() const override {
-    return "Obfuscate symbol names randomly";
+    return "Obfuscate symbol names randomly (supports func + LLVM dialects)";
   }
 
   void runOnOperation() override;
 
   std::string key = "seed";
+
+private:
+  // Helper to process func::FuncOp (Polygeist input)
+  void processFuncDialect();
+
+  // Helper to process LLVM::LLVMFuncOp (post-lowering)
+  void processLLVMDialect();
 };
 
 std::unique_ptr<Pass> createSymbolObfuscatePass(llvm::StringRef key);
@@ -100,6 +109,23 @@ std::unique_ptr<Pass> createCryptoHashPass(
     llvm::StringRef salt = "",
     unsigned hashLength = 12
 );
+
+// =================== POLYGEIST-AWARE CONTROL FLOW PASS =====================
+// New pass: Operates on SCF dialect from Polygeist for better obfuscation
+struct SCFObfuscatePass
+    : public PassWrapper<SCFObfuscatePass, OperationPass<ModuleOp>> {
+
+  SCFObfuscatePass() = default;
+
+  StringRef getArgument() const override { return "scf-obfuscate"; }
+  StringRef getDescription() const override {
+    return "Obfuscate structured control flow (Polygeist SCF dialect)";
+  }
+
+  void runOnOperation() override;
+};
+
+std::unique_ptr<Pass> createSCFObfuscatePass();
 
 
 } // namespace obs

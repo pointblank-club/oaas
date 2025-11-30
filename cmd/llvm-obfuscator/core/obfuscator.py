@@ -333,7 +333,7 @@ class LLVMObfuscator:
             return f"{stem}.exe"
         return stem
 
-    def _get_resource_dir_flag(self, compiler_path: str) -> List[str]:
+    def _get_resource_dir_flag(self, compiler_path: str, is_cpp: bool = False) -> List[str]:
         """
         Get the -resource-dir flag for custom clang binaries that don't have
         their own resource directory (stddef.h, stdint.h, etc.).
@@ -378,7 +378,14 @@ class LLVMObfuscator:
         if not is_custom_clang:
             return []
 
-        # Try to find system clang's resource directory
+        # For bundled clang in /usr/local/llvm-obfuscator, use bundled resource dir
+        if "/usr/local/llvm-obfuscator/" in resolved_path:
+            bundled_resource_dir = "/usr/local/llvm-obfuscator/lib/clang/22"
+            if Path(bundled_resource_dir).exists():
+                self.logger.info(f"[RESOURCE-DIR-DEBUG] Using bundled resource directory: {bundled_resource_dir}")
+                return ["-resource-dir", bundled_resource_dir]
+
+        # Try to find system clang's resource directory (fallback)
         # Priority: system clang-19 > clang-18 > clang
         system_clang_candidates = [
             "/usr/lib/llvm-19/lib/clang/19",
@@ -412,6 +419,28 @@ class LLVMObfuscator:
             "Compilation may fail with 'stddef.h not found' errors."
         )
         return []
+
+    def _get_llvm_version(self) -> str:
+        """Get the LLVM version being used."""
+        import subprocess
+        try:
+            result = subprocess.run(
+                ["clang", "--version"],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            if result.returncode == 0:
+                # Extract version from output like "clang version 19.0.0"
+                for line in result.stdout.split('\n'):
+                    if 'version' in line.lower():
+                        parts = line.split()
+                        for i, part in enumerate(parts):
+                            if part == 'version' and i + 1 < len(parts):
+                                return parts[i + 1].split('.')[0]  # Return major version
+        except Exception:
+            pass
+        return "19"  # Default fallback
 
     def _has_exception_handling(self, ir_file: Path) -> bool:
         """
@@ -450,21 +479,23 @@ class LLVMObfuscator:
         actually_applied = list(enabled_passes)
 
         # Detect compiler based on file extension
-        if source_abs.suffix in ['.cpp', '.cxx', '.cc', '.c++']:
-            base_compiler = "clang++"
-            is_cpp = True
+        # IMPORTANT: Bundled clang works for C but has incomplete headers for C++
+        # Use system clang for C++, bundled clang for C
+        bundled_clang_dir = Path("/usr/local/llvm-obfuscator/bin")
+        is_cpp = source_abs.suffix in ['.cpp', '.cxx', '.cc', '.c++']
+
+        # Use bundled clang for both C and C++ (headers are now complete)
+        if (bundled_clang_dir / "clang").exists():
+            compiler = str(bundled_clang_dir / "clang")
         else:
-            base_compiler = "clang"
-            is_cpp = False
-
-        compiler = base_compiler
-
+            compiler = "clang"
         # Build IR flags: strip LTO-related flags for the IR-phase
         ir_flags: List[str] = [f for f in compiler_flags if 'lto' not in f.lower()]
-        
+        if is_cpp:
+            ir_flags = ["-x", "c++"] + ir_flags
 
         # Add resource-dir if necessary
-        ir_flags.extend(self._get_resource_dir_flag(compiler))
+        ir_flags.extend(self._get_resource_dir_flag(compiler, is_cpp=is_cpp))
 
         # Windows target
         if config.platform == Platform.WINDOWS:
@@ -473,7 +504,7 @@ class LLVMObfuscator:
         # If no OLLVM passes requested -> normal compile
         if not enabled_passes:
             final_cmd = [compiler, str(source_abs), '-o', str(destination_abs)] + compiler_flags
-            final_cmd.extend(self._get_resource_dir_flag(compiler))
+            final_cmd.extend(self._get_resource_dir_flag(compiler, is_cpp=is_cpp))
             if config.platform == Platform.WINDOWS:
                 final_cmd.append('--target=x86_64-w64-mingw32')
             run_command(final_cmd, cwd=source_abs.parent)
@@ -507,32 +538,64 @@ class LLVMObfuscator:
         ir_file = destination_abs.parent / f"{destination_abs.stem}_temp.ll"
         ir_cmd = [compiler, str(source_abs), '-S', '-emit-llvm', '-o', str(ir_file)] + ir_flags
         self.logger.info(f"[IR-FLAGS] {ir_flags}")
+
+        # Warn about potential C++ compatibility issues
+        if is_cpp:
+            self.logger.warning(
+                "C++ source detected. OLLVM plugin may encounter compatibility issues. "
+                "If obfuscation fails, the code will be compiled without OLLVM passes."
+            )
+
         run_command(ir_cmd, cwd=source_abs.parent)
 
         # Check for exception handling
-        if self._has_exception_handling(ir_file):
-            warning = 'C++ exception handling detected in IR — skipping OLLVM passes'
-            self.logger.warning(warning)
-            warnings.append(warning)
-            actually_applied = []
-            # compile normally
-            no_opt_cmd = [compiler, str(source_abs), '-o', str(destination_abs)] + compiler_flags
-            run_command(no_opt_cmd, cwd=source_abs.parent)
-            if ir_file.exists():
-                ir_file.unlink()
-            return {"applied_passes": [], "warnings": warnings}
 
         # Step 2: apply passes using opt
         obf_ir = destination_abs.parent / f"{destination_abs.stem}_obf.bc"
         passes_pipeline = ','.join(enabled_passes)
         opt_cmd = [str(opt_bin), f'-load-pass-plugin={str(plugin_path)}', f'-passes={passes_pipeline}', str(ir_file), '-o', str(obf_ir)]
         self.logger.info(f"[OPT] {opt_cmd}")
-        run_command(opt_cmd, cwd=source_abs.parent)
 
-        # Step 3: compile obfuscated IR -> binary (restore original flags)
-        final_flags = compiler_flags[:]  # include LTO again if user requested it
+        try:
+            run_command(opt_cmd, cwd=source_abs.parent)
+        except ObfuscationError as e:
+            # Check for plugin symbol incompatibility (common with C++ code)
+            if "symbol lookup error" in str(e) or "undefined symbol" in str(e):
+                warning = (
+                    f"OLLVM plugin incompatibility detected (likely LLVM version mismatch). "
+                    f"This often occurs with C++ code due to missing symbols. "
+                    f"Compiling without OLLVM passes. "
+                    f"To fix: rebuild the plugin against LLVM {self._get_llvm_version()}"
+                )
+                self.logger.warning(warning)
+                warnings.append(warning)
+                actually_applied = []
+                # Fallback: compile normally without OLLVM passes - strip LTO flags
+                fallback_flags = [f for f in compiler_flags if 'lto' not in f.lower()]
+                fallback_cmd = [compiler, str(source_abs), '-o', str(destination_abs)] + fallback_flags
+                if is_cpp:
+                    fallback_cmd.append('-lstdc++')  # Link C++ standard library
+                fallback_cmd.extend(self._get_resource_dir_flag(compiler, is_cpp=is_cpp))
+                if config.platform == Platform.WINDOWS:
+                    fallback_cmd.append('--target=x86_64-w64-mingw32')
+                run_command(fallback_cmd, cwd=source_abs.parent)
+                if ir_file.exists():
+                    ir_file.unlink()
+                return {"applied_passes": [], "warnings": warnings}
+            else:
+                # Re-raise if it's a different error
+                raise
+
+        # Step 3: compile obfuscated IR -> binary
+        # Strip LTO flags as they're incompatible when linking from bitcode
+        # (bitcode is already intermediate representation, LTO doesn't apply)
+        final_flags = [f for f in compiler_flags if 'lto' not in f.lower()]
         final_cmd = [compiler, str(obf_ir), '-o', str(destination_abs)] + final_flags
-        final_cmd.extend(self._get_resource_dir_flag(compiler))
+        if is_cpp:
+            # Don't use -x c++ when compiling from bitcode - clang auto-detects it
+            # Just link the C++ standard library
+            final_cmd.append("-lstdc++")  # Link C++ standard library
+        final_cmd.extend(self._get_resource_dir_flag(compiler, is_cpp=is_cpp))
         if config.platform == Platform.WINDOWS:
             final_cmd.append('--target=x86_64-w64-mingw32')
 
@@ -562,16 +625,25 @@ class LLVMObfuscator:
             source_abs = source_file.resolve()
             baseline_abs = baseline_binary.resolve()
 
-            # Detect compiler
-            if source_file.suffix in ['.cpp', '.cxx', '.cc', '.c++']:
-                compiler = "clang++"
-                compile_flags = ["-lstdc++"]
+            # Detect compiler - use bundled clang for both C and C++
+            bundled_clang_dir = Path("/usr/local/llvm-obfuscator/bin")
+            is_cpp = source_file.suffix in ['.cpp', '.cxx', '.cc', '.c++']
+            if is_cpp:
+                compile_flags = ["-x", "c++", "-lstdc++"]
             else:
-                compiler = "clang"
                 compile_flags = []
 
-            # Add minimal optimization flags
+            # Use bundled clang (headers are now complete)
+            if (bundled_clang_dir / "clang").exists():
+                compiler = str(bundled_clang_dir / "clang")
+            else:
+                compiler = "clang"
+
+            # Add minimal optimization flags (no LTO for baseline to avoid LLVMgold.so dependency)
             compile_flags.extend(["-O2"])
+
+            # Add resource-dir if necessary
+            compile_flags.extend(self._get_resource_dir_flag(compiler, is_cpp=is_cpp))
 
             # Platform-specific flags
             if config.platform == Platform.WINDOWS:

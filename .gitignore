@@ -29,4 +29,6 @@ cmd/llvm-obfuscator/obfuscated/
 
 # Bundled compiler headers
 !cmd/llvm-obfuscator/plugins/*/lib/clang/*/include/
+
+# Generated reports - these are test outputs, don't commit
 cmd/llvm-obfuscator/reports/

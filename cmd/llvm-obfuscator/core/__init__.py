@@ -12,10 +12,13 @@ from .config import (
     OutputConfiguration,
     PassConfiguration,
     Platform,
+    SymbolObfuscationConfiguration,
+    UPXConfiguration,
 )
 from .obfuscator import LLVMObfuscator
 from .reporter import ObfuscationReport
 from .symbol_obfuscator import SymbolObfuscator
+from .upx_packer import UPXPacker
 
 __all__ = [
     "LLVMObfuscator",
@@ -29,6 +32,9 @@ __all__ = [
     "CompareConfig",
     "ObfuscationReport",
     "SymbolObfuscator",
+    "SymbolObfuscationConfiguration",
+    "UPXConfiguration",
+    "UPXPacker",
     "analyze_binary",
     "compare_binaries",
 ]

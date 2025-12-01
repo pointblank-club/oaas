@@ -34,10 +34,17 @@ RUN mkdir -p /usr/local/llvm-obfuscator/lib
 COPY plugins/linux-x86_64/clang /usr/local/llvm-obfuscator/bin/clang
 COPY plugins/linux-x86_64/opt /usr/local/llvm-obfuscator/bin/opt
 COPY plugins/linux-x86_64/LLVMObfuscationPlugin.so /usr/local/llvm-obfuscator/lib/
+COPY plugins/linux-x86_64/lib/libLLVM.so.22.0git /usr/local/llvm-obfuscator/lib/
+COPY plugins/linux-x86_64/lib/clang/22 /usr/local/llvm-obfuscator/lib/clang/22
+
 
 # Make binaries executable
 RUN chmod +x /usr/local/llvm-obfuscator/bin/clang
 RUN chmod +x /usr/local/llvm-obfuscator/bin/opt
+
+# Fix incomplete bundled headers by copying missing file from system clang
+RUN cp /usr/lib/llvm-*/lib/clang/*/include/__stddef_header_macro.h \
+       /usr/local/llvm-obfuscator/lib/clang/22/include/ || true
 
 # Add custom LLVM toolchain to PATH
 ENV PATH="/usr/local/llvm-obfuscator/bin:${PATH}"
@@ -55,5 +62,3 @@ EXPOSE 8000
 HEALTHCHECK CMD curl -fsS http://localhost:8000/api/health || exit 1
 
 CMD ["uvicorn", "api.server:app", "--host", "0.0.0.0", "--port", "8000"]
-
-

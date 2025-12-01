@@ -504,6 +504,298 @@ class CodeCoverageAnalyzer:
         return 0  # Would require detailed CFG analysis
 
 
+class IDAProAnalyzer:
+    """IDA Pro-based decompilation and analysis
+    
+    Note: IDA Pro is a commercial tool that requires a license.
+    To use this analyzer:
+    - Set IDA_PATH environment variable to your IDA installation
+    - Or install IDA in standard locations (/opt/ida, ~/ida, etc.)
+    
+    Supports both IDA Pro (with Hex-Rays decompiler) and IDA Freeware.
+    """
+    
+    def __init__(self):
+        self._ida_path = None
+        self._has_ida_cached = None
+        
+        # Try to find IDA installation
+        possible_paths = [
+            os.getenv('IDA_PATH'),
+            os.getenv('IDADIR'),
+            '/opt/ida',
+            '/opt/idapro',
+            '/opt/ida-pro',
+            '/usr/local/ida',
+            Path.home() / 'ida',
+            Path.home() / 'idapro',
+            Path.home() / '.idapro',
+            '/opt/ida-freeware',
+            Path.home() / 'ida-freeware',
+        ]
+        
+        for path in possible_paths:
+            if path and Path(path).exists():
+                # Check for idat64 (headless) or ida64
+                ida_bin = Path(path) / 'idat64'
+                ida_bin_alt = Path(path) / 'ida64'
+                if ida_bin.exists() or ida_bin_alt.exists():
+                    self._ida_path = str(path)
+                    break
+    
+    def has_ida(self) -> bool:
+        """Check if IDA Pro is available
+        
+        Returns:
+            bool: True if IDA is installed and accessible
+        """
+        if self._has_ida_cached is not None:
+            return self._has_ida_cached
+            
+        if self._ida_path:
+            self._has_ida_cached = True
+            logger.info(f"IDA Pro found at: {self._ida_path}")
+            return True
+        
+        self._has_ida_cached = False
+        logger.debug("IDA Pro not found. Set IDA_PATH environment variable.")
+        return False
+    
+    def analyze_binary(self, binary_path: str) -> Dict[str, Any]:
+        """Analyze binary using IDA Pro headless mode"""
+        if not self.has_ida():
+            return {"status": "skipped", "reason": "IDA Pro not installed"}
+        
+        try:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                # Create IDA Python script for analysis
+                script_path = Path(tmpdir) / "ida_analysis.py"
+                output_path = Path(tmpdir) / "analysis_output.json"
+                
+                script_content = f'''
+import idautils
+import idaapi
+import idc
+import json
+
+def analyze():
+    results = {{
+        "functions": [],
+        "strings": [],
+        "imports": [],
+        "exports": [],
+        "segments": [],
+        "cfg_complexity": 0
+    }}
+    
+    # Wait for auto-analysis
+    idaapi.auto_wait()
+    
+    # Analyze functions
+    for func_ea in idautils.Functions():
+        func = idaapi.get_func(func_ea)
+        if func:
+            func_info = {{
+                "name": idc.get_func_name(func_ea),
+                "address": hex(func_ea),
+                "size": func.size(),
+                "basic_blocks": 0
+            }}
+            
+            # Count basic blocks
+            try:
+                flowchart = idaapi.FlowChart(func)
+                func_info["basic_blocks"] = flowchart.size
+                results["cfg_complexity"] += flowchart.size
+            except:
+                pass
+            
+            results["functions"].append(func_info)
+    
+    # Analyze strings
+    for s in idautils.Strings():
+        if s.length > 4:
+            results["strings"].append({{
+                "address": hex(s.ea),
+                "value": str(s),
+                "length": s.length
+            }})
+    
+    # Analyze imports
+    for i in range(idaapi.get_import_module_qty()):
+        module_name = idaapi.get_import_module_name(i)
+        if module_name:
+            results["imports"].append(module_name)
+    
+    # Analyze exports
+    for entry_idx in range(idaapi.get_entry_qty()):
+        entry_addr = idaapi.get_entry(entry_idx)
+        entry_name = idaapi.get_entry_name(entry_idx)
+        if entry_name:
+            results["exports"].append({{
+                "name": entry_name,
+                "address": hex(entry_addr)
+            }})
+    
+    # Analyze segments
+    for seg in idautils.Segments():
+        seg_name = idc.get_segm_name(seg)
+        results["segments"].append({{
+            "name": seg_name,
+            "start": hex(seg),
+            "end": hex(idc.get_segm_end(seg))
+        }})
+    
+    # Write results
+    with open("{output_path}", "w") as f:
+        json.dump(results, f, indent=2)
+    
+    idc.qexit(0)
+
+analyze()
+'''
+                script_path.write_text(script_content)
+                
+                # Run IDA in headless mode
+                idat_path = Path(self._ida_path) / 'idat64'
+                if not idat_path.exists():
+                    idat_path = Path(self._ida_path) / 'ida64'
+                
+                cmd = [
+                    str(idat_path),
+                    '-A',  # Autonomous mode
+                    '-S' + str(script_path),  # Run script
+                    '-L' + str(Path(tmpdir) / 'ida.log'),  # Log file
+                    binary_path
+                ]
+                
+                result = subprocess.run(cmd, capture_output=True, timeout=120, text=True)
+                
+                if output_path.exists():
+                    with open(output_path) as f:
+                        analysis_data = json.load(f)
+                    
+                    return {
+                        "status": "success",
+                        "function_count": len(analysis_data.get("functions", [])),
+                        "string_count": len(analysis_data.get("strings", [])),
+                        "import_count": len(analysis_data.get("imports", [])),
+                        "export_count": len(analysis_data.get("exports", [])),
+                        "cfg_complexity": analysis_data.get("cfg_complexity", 0),
+                        "segments": analysis_data.get("segments", []),
+                        "decompilation_available": self._check_hexrays()
+                    }
+                else:
+                    return {"status": "error", "reason": "Analysis output not generated"}
+                    
+        except subprocess.TimeoutExpired:
+            return {"status": "timeout", "reason": "IDA analysis timed out"}
+        except Exception as e:
+            logger.warning(f"IDA Pro analysis failed: {e}")
+            return {"status": "error", "message": str(e)}
+    
+    def decompile_function(self, binary_path: str, function_name: str = "main") -> Dict[str, Any]:
+        """Decompile a specific function using Hex-Rays"""
+        if not self.has_ida():
+            return {"status": "skipped", "reason": "IDA Pro not installed"}
+        
+        if not self._check_hexrays():
+            return {"status": "skipped", "reason": "Hex-Rays decompiler not available"}
+        
+        try:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                script_path = Path(tmpdir) / "decompile.py"
+                output_path = Path(tmpdir) / "decompiled.txt"
+                
+                script_content = f'''
+import idaapi
+import idc
+import ida_hexrays
+
+def decompile():
+    idaapi.auto_wait()
+    
+    # Find function
+    func_ea = idc.get_name_ea_simple("{function_name}")
+    if func_ea == idc.BADADDR:
+        # Try to find main
+        func_ea = idc.get_name_ea_simple("main")
+    
+    if func_ea == idc.BADADDR:
+        with open("{output_path}", "w") as f:
+            f.write("FUNCTION_NOT_FOUND")
+        idc.qexit(1)
+        return
+    
+    try:
+        cfunc = ida_hexrays.decompile(func_ea)
+        if cfunc:
+            with open("{output_path}", "w") as f:
+                f.write(str(cfunc))
+    except Exception as e:
+        with open("{output_path}", "w") as f:
+            f.write(f"DECOMPILATION_FAILED: {{str(e)}}")
+    
+    idc.qexit(0)
+
+decompile()
+'''
+                script_path.write_text(script_content)
+                
+                idat_path = Path(self._ida_path) / 'idat64'
+                if not idat_path.exists():
+                    idat_path = Path(self._ida_path) / 'ida64'
+                
+                cmd = [str(idat_path), '-A', '-S' + str(script_path), binary_path]
+                subprocess.run(cmd, capture_output=True, timeout=60)
+                
+                if output_path.exists():
+                    decompiled = output_path.read_text()
+                    return {
+                        "status": "success",
+                        "function": function_name,
+                        "decompiled_code": decompiled[:2000],  # Limit output
+                        "code_lines": len(decompiled.split('\n'))
+                    }
+                    
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
+        
+        return {"status": "error", "reason": "Unknown error"}
+    
+    def _check_hexrays(self) -> bool:
+        """Check if Hex-Rays decompiler is available"""
+        if not self._ida_path:
+            return False
+        # Hex-Rays is typically included with IDA Pro license
+        hexrays_plugin = Path(self._ida_path) / 'plugins' / 'hexrays.so'
+        hexrays_plugin_dll = Path(self._ida_path) / 'plugins' / 'hexrays.dll'
+        return hexrays_plugin.exists() or hexrays_plugin_dll.exists()
+    
+    def compare_decompilation(self, baseline_path: str, obfuscated_path: str) -> Dict[str, Any]:
+        """Compare decompilation output between baseline and obfuscated"""
+        baseline_result = self.decompile_function(baseline_path)
+        obfuscated_result = self.decompile_function(obfuscated_path)
+        
+        if baseline_result.get("status") != "success" or obfuscated_result.get("status") != "success":
+            return {
+                "status": "partial",
+                "baseline": baseline_result,
+                "obfuscated": obfuscated_result
+            }
+        
+        baseline_lines = baseline_result.get("code_lines", 0)
+        obfuscated_lines = obfuscated_result.get("code_lines", 0)
+        
+        return {
+            "status": "success",
+            "baseline_lines": baseline_lines,
+            "obfuscated_lines": obfuscated_lines,
+            "code_expansion_ratio": obfuscated_lines / max(1, baseline_lines),
+            "obfuscation_detected": obfuscated_lines > baseline_lines * 1.5
+        }
+
+
 class PatchabilityAnalyzer:
     """Assess binary patchability"""
 

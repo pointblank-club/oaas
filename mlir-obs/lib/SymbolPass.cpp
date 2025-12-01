@@ -53,7 +53,7 @@ void SymbolObfuscatePass::runOnOperation() {
   // If neither found, this is still okay - module might be empty or use other dialects
 }
 
-// Process func::FuncOp (Polygeist high-level MLIR)
+// Process func::FuncOp (ClangIR / high-level MLIR)
 void SymbolObfuscatePass::processFuncDialect() {
   ModuleOp module = getOperation();
   MLIRContext *ctx = module.getContext();

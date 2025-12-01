@@ -22,19 +22,11 @@ include(AddMLIR)
 include(AddLLVM)
 include(LLVMConfig)
 
-# Try to find Polygeist (OPTIONAL - enhanced frontend)
-# This enables C/C++ -> high-level MLIR directly
-find_package(Polygeist)
-
-if(POLYGEIST_FOUND)
-    message(STATUS "✓ Polygeist support ENABLED")
-    message(STATUS "  You can now use: cgeist source.c -o source.mlir")
-    set(HAVE_POLYGEIST 1)
-else()
-    message(STATUS "⚠ Polygeist support DISABLED (not found)")
-    message(STATUS "  Falling back to: clang + mlir-translate workflow")
-    set(HAVE_POLYGEIST 0)
-endif()
+# ClangIR is natively supported in LLVM 22.0.0
+# No additional package finding required - it's part of LLVM/Clang
+message(STATUS "✓ Using LLVM ${LLVM_VERSION} with native ClangIR support")
+message(STATUS "  ClangIR frontend: clang -emit-cir or clangir command")
+message(STATUS "  Default frontend: clang → LLVM IR → mlir-translate")
 
 # Configure header with feature flags
 configure_file(
@@ -47,11 +39,6 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR}/include)
 include_directories(${CMAKE_CURRENT_BINARY_DIR}/include)  # For Config.h
 include_directories(${LLVM_INCLUDE_DIRS})
 include_directories(${MLIR_INCLUDE_DIRS})
-
-# Add Polygeist includes if available
-if(POLYGEIST_FOUND AND POLYGEIST_INCLUDE_DIRS)
-    include_directories(${POLYGEIST_INCLUDE_DIRS})
-endif()
 
 # Build library from sources in lib/
 add_subdirectory(lib)

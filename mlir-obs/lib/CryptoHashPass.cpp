@@ -5,9 +5,9 @@
 #include "mlir/Pass/Pass.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 
 #include <openssl/evp.h>
-#include <openssl/sha.h>
 #include <iomanip>
 #include <sstream>
 #include <cstring>
@@ -17,18 +17,23 @@ using namespace mlir::obs;
 
 namespace {
 
-/// Compute SHA256 hash of input string
+/// Compute SHA256 hash of input string using modern EVP API
 static std::string computeSHA256(const std::string &input, const std::string &salt) {
   std::string data = salt + input + salt;  // Salt prefix and suffix
 
-  unsigned char hash[SHA256_DIGEST_LENGTH];
-  SHA256_CTX sha256;
-  SHA256_Init(&sha256);
-  SHA256_Update(&sha256, data.c_str(), data.size());
-  SHA256_Final(hash, &sha256);
+  unsigned char hash[EVP_MAX_MD_SIZE];
+  unsigned int hashLen = 0;
+
+  EVP_MD_CTX *mdctx = EVP_MD_CTX_new();
+  const EVP_MD *md = EVP_sha256();
+
+  EVP_DigestInit_ex(mdctx, md, NULL);
+  EVP_DigestUpdate(mdctx, data.c_str(), data.size());
+  EVP_DigestFinal_ex(mdctx, hash, &hashLen);
+  EVP_MD_CTX_free(mdctx);
 
   std::stringstream ss;
-  for (int i = 0; i < SHA256_DIGEST_LENGTH; i++) {
+  for (unsigned int i = 0; i < hashLen; i++) {
     ss << std::hex << std::setw(2) << std::setfill('0') << (int)hash[i];
   }
   return ss.str();
@@ -38,18 +43,19 @@ static std::string computeSHA256(const std::string &input, const std::string &sa
 static std::string computeBLAKE2B(const std::string &input, const std::string &salt) {
   std::string data = salt + input + salt;
 
-  unsigned char hash[64];  // BLAKE2b-512 produces 64 bytes
+  unsigned char hash[EVP_MAX_MD_SIZE];
+  unsigned int hashLen = 0;
+
   EVP_MD_CTX *mdctx = EVP_MD_CTX_new();
   const EVP_MD *md = EVP_blake2b512();
 
   EVP_DigestInit_ex(mdctx, md, NULL);
   EVP_DigestUpdate(mdctx, data.c_str(), data.size());
-  unsigned int digest_len;
-  EVP_DigestFinal_ex(mdctx, hash, &digest_len);
+  EVP_DigestFinal_ex(mdctx, hash, &hashLen);
   EVP_MD_CTX_free(mdctx);
 
   std::stringstream ss;
-  for (unsigned int i = 0; i < digest_len && i < 64; i++) {
+  for (unsigned int i = 0; i < hashLen; i++) {
     ss << std::hex << std::setw(2) << std::setfill('0') << (int)hash[i];
   }
   return ss.str();
@@ -96,67 +102,146 @@ void CryptoHashPass::runOnOperation() {
   MLIRContext *ctx = module.getContext();
   SymbolTable symbolTable(module);
 
-  // Step 1: Collect rename map for func definitions (oldName -> hashedName)
-  llvm::StringMap<std::string> renameMap;
+  // Detect which dialect we're working with
+  bool hasFuncDialect = false;
+  bool hasLLVMDialect = false;
 
-  module.walk([&](func::FuncOp func) {
-    StringRef oldName = func.getSymName();
-
-    // Skip main function to preserve entry point (optional - can be configured)
-    if (oldName == "main") {
-      return;
-    }
-
-    // Skip functions that start with llvm. or mlir. (intrinsics)
-    if (oldName.starts_with("llvm.") || oldName.starts_with("mlir.")) {
-      return;
-    }
-
-    // Only assign a new name once per function
-    if (renameMap.find(oldName) == renameMap.end()) {
-      std::string newName = generateHashedName(
-          oldName.str(),
-          algorithm,
-          salt,
-          hashLength
-      );
-      renameMap[oldName] = newName;
-    }
-  });
-
-  // Step 2: Update symbol references *before* renaming definitions
   module.walk([&](Operation *op) {
-    SmallVector<NamedAttribute> updatedAttrs;
-    bool changed = false;
+    if (llvm::isa<func::FuncOp>(op)) {
+      hasFuncDialect = true;
+    } else if (llvm::isa<LLVM::LLVMFuncOp>(op)) {
+      hasLLVMDialect = true;
+    }
+  });
 
-    for (auto &attr : op->getAttrs()) {
-      if (auto symAttr = llvm::dyn_cast<SymbolRefAttr>(attr.getValue())) {
-        StringRef old = symAttr.getRootReference();
-        auto it = renameMap.find(old);
-        if (it != renameMap.end()) {
-          auto newRef = SymbolRefAttr::get(ctx, it->second);
-          updatedAttrs.emplace_back(attr.getName(), newRef);
-          changed = true;
-          continue;
-        }
+  // Process Func dialect (high-level MLIR from ClangIR/Polygeist)
+  if (hasFuncDialect) {
+    llvm::StringMap<std::string> renameMap;
+
+    // Step 1: Collect rename map for func definitions
+    module.walk([&](func::FuncOp func) {
+      StringRef oldName = func.getSymName();
+
+      // Skip main function to preserve entry point
+      if (oldName == "main") {
+        return;
       }
-      // No change -> keep original
-      updatedAttrs.push_back(attr);
-    }
 
-    if (changed) {
-      op->setAttrs(DictionaryAttr::get(ctx, updatedAttrs));
-    }
-  });
+      // Skip functions that start with llvm. or mlir. (intrinsics)
+      if (oldName.starts_with("llvm.") || oldName.starts_with("mlir.")) {
+        return;
+      }
 
-  // Step 3: Rename function definitions *after* updating uses
-  module.walk([&](func::FuncOp func) {
-    StringRef oldName = func.getSymName();
-    auto it = renameMap.find(oldName);
-    if (it != renameMap.end()) {
-      symbolTable.setSymbolName(func, it->second);
-    }
-  });
+      // Only assign a new name once per function
+      if (renameMap.find(oldName) == renameMap.end()) {
+        std::string newName = generateHashedName(
+            oldName.str(),
+            algorithm,
+            salt,
+            hashLength
+        );
+        renameMap[oldName] = newName;
+      }
+    });
+
+    // Step 2: Update symbol references *before* renaming definitions
+    module.walk([&](Operation *op) {
+      SmallVector<NamedAttribute> updatedAttrs;
+      bool changed = false;
+
+      for (auto &attr : op->getAttrs()) {
+        if (auto symAttr = llvm::dyn_cast<SymbolRefAttr>(attr.getValue())) {
+          StringRef old = symAttr.getRootReference();
+          auto it = renameMap.find(old);
+          if (it != renameMap.end()) {
+            auto newRef = SymbolRefAttr::get(ctx, it->second);
+            updatedAttrs.emplace_back(attr.getName(), newRef);
+            changed = true;
+            continue;
+          }
+        }
+        // No change -> keep original
+        updatedAttrs.push_back(attr);
+      }
+
+      if (changed) {
+        op->setAttrs(DictionaryAttr::get(ctx, updatedAttrs));
+      }
+    });
+
+    // Step 3: Rename function definitions *after* updating uses
+    module.walk([&](func::FuncOp func) {
+      StringRef oldName = func.getSymName();
+      auto it = renameMap.find(oldName);
+      if (it != renameMap.end()) {
+        symbolTable.setSymbolName(func, it->second);
+      }
+    });
+  }
+
+  // Process LLVM dialect (post-lowering from mlir-translate or ClangIR lowering)
+  if (hasLLVMDialect) {
+    llvm::StringMap<std::string> renameMap;
+
+    // Step 1: Collect rename map for LLVM func definitions
+    module.walk([&](LLVM::LLVMFuncOp func) {
+      StringRef oldName = func.getSymName();
+
+      // Skip main function to preserve entry point
+      if (oldName == "main") {
+        return;
+      }
+
+      // Skip LLVM intrinsics
+      if (oldName.starts_with("llvm.")) {
+        return;
+      }
+
+      // Only assign a new name once per function
+      if (renameMap.find(oldName) == renameMap.end()) {
+        std::string newName = generateHashedName(
+            oldName.str(),
+            algorithm,
+            salt,
+            hashLength
+        );
+        renameMap[oldName] = newName;
+      }
+    });
+
+    // Step 2: Update symbol references
+    module.walk([&](Operation *op) {
+      SmallVector<NamedAttribute> updatedAttrs;
+      bool changed = false;
+
+      for (auto &attr : op->getAttrs()) {
+        if (auto symAttr = llvm::dyn_cast<SymbolRefAttr>(attr.getValue())) {
+          StringRef old = symAttr.getRootReference();
+          auto it = renameMap.find(old);
+          if (it != renameMap.end()) {
+            auto newRef = SymbolRefAttr::get(ctx, it->second);
+            updatedAttrs.emplace_back(attr.getName(), newRef);
+            changed = true;
+            continue;
+          }
+        }
+        updatedAttrs.push_back(attr);
+      }
+
+      if (changed) {
+        op->setAttrs(DictionaryAttr::get(ctx, updatedAttrs));
+      }
+    });
+
+    // Step 3: Rename LLVM function definitions
+    module.walk([&](LLVM::LLVMFuncOp func) {
+      StringRef oldName = func.getSymName();
+      auto it = renameMap.find(oldName);
+      if (it != renameMap.end()) {
+        symbolTable.setSymbolName(func, it->second);
+      }
+    });
+  }
 }
 
 std::unique_ptr<Pass> mlir::obs::createCryptoHashPass(

@@ -50,8 +50,8 @@ std::unique_ptr<Pass> createConstantObfuscationPass(llvm::StringRef key);
 
 
 // ======================== SYMBOL OBFUSCATION PASS ==========================
-// Supports BOTH func::FuncOp (Polygeist, high-level MLIR)
-// AND LLVM::LLVMFuncOp (post-lowering)
+// Supports BOTH func::FuncOp (ClangIR/high-level MLIR)
+// AND LLVM::LLVMFuncOp (post-lowering from mlir-translate)
 struct SymbolObfuscatePass
     : public PassWrapper<SymbolObfuscatePass, OperationPass<ModuleOp>> {
 
@@ -68,10 +68,10 @@ struct SymbolObfuscatePass
   std::string key = "seed";
 
 private:
-  // Helper to process func::FuncOp (Polygeist input)
+  // Helper to process func::FuncOp (ClangIR / high-level MLIR input)
   void processFuncDialect();
 
-  // Helper to process LLVM::LLVMFuncOp (post-lowering)
+  // Helper to process LLVM::LLVMFuncOp (post-lowering from mlir-translate)
   void processLLVMDialect();
 };
 
@@ -120,6 +120,25 @@ struct SCFObfuscatePass
   StringRef getArgument() const override { return "scf-obfuscate"; }
   StringRef getDescription() const override {
     return "Obfuscate structured control flow (Polygeist SCF dialect)";
+  }
+
+  void runOnOperation() override;
+};
+
+std::unique_ptr<Pass> createSCFObfuscatePass();
+
+
+// ======================== SCF OBFUSCATION PASS ==============================
+// Operates on SCF dialect operations (loops, conditionals)
+// Adds opaque predicates and control flow complexity
+struct SCFObfuscatePass
+    : public PassWrapper<SCFObfuscatePass, OperationPass<ModuleOp>> {
+
+  SCFObfuscatePass() = default;
+
+  StringRef getArgument() const override { return "scf-obfuscate"; }
+  StringRef getDescription() const override {
+    return "Obfuscate SCF control flow with opaque predicates";
   }
 
   void runOnOperation() override;

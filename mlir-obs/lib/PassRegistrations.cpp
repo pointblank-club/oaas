@@ -30,6 +30,10 @@ void registerConstantObfuscationPass() {
   PassRegistration<ConstantObfuscationPass>();
 }
 
+void registerSCFObfuscatePass() {
+  PassRegistration<SCFObfuscatePass>();
+}
+
 } // namespace obs
 } // namespace mlir
 
@@ -42,5 +46,6 @@ mlirGetPassPluginInfo() {
             mlir::obs::registerSymbolObfuscatePass();
             mlir::obs::registerCryptoHashPass();
             mlir::obs::registerConstantObfuscationPass();
+            mlir::obs::registerSCFObfuscatePass();
           }};
 }

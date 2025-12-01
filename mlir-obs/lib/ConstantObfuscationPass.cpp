@@ -74,7 +74,7 @@ void ConstantObfuscationPass::runOnOperation() {
   module.walk([&](LLVM::GlobalOp globalOp) {
     // Check if this is a string constant
     if (auto strAttr = globalOp.getValueAttr()) {
-      if (auto stringAttr = strAttr.dyn_cast<StringAttr>()) {
+      if (auto stringAttr = llvm::dyn_cast<StringAttr>(strAttr)) {
         std::string original = stringAttr.getValue().str();
         std::string encrypted = xorEncrypt(original, key);
 
@@ -111,7 +111,7 @@ void ConstantObfuscationPass::runOnOperation() {
       // ========================================================================
       // Obfuscate String Attributes (metadata, not global data)
       // ========================================================================
-      if (auto strAttr = attr.getValue().dyn_cast<StringAttr>()) {
+      if (auto strAttr = llvm::dyn_cast<StringAttr>(attr.getValue())) {
         std::string original = strAttr.getValue().str();
         std::string encrypted = xorEncrypt(original, key);
 
@@ -124,7 +124,7 @@ void ConstantObfuscationPass::runOnOperation() {
       // ========================================================================
       // Obfuscate Integer Attributes
       // ========================================================================
-      if (auto intAttr = attr.getValue().dyn_cast<IntegerAttr>()) {
+      if (auto intAttr = llvm::dyn_cast<IntegerAttr>(attr.getValue())) {
         int64_t original = intAttr.getInt();
         int64_t obfuscated = obfuscateInteger(original, key);
 
@@ -137,7 +137,7 @@ void ConstantObfuscationPass::runOnOperation() {
       // ========================================================================
       // Obfuscate Float Attributes
       // ========================================================================
-      if (auto floatAttr = attr.getValue().dyn_cast<FloatAttr>()) {
+      if (auto floatAttr = llvm::dyn_cast<FloatAttr>(attr.getValue())) {
         double original = floatAttr.getValueAsDouble();
         double obfuscated = obfuscateFloat(original, key);
 
@@ -150,7 +150,7 @@ void ConstantObfuscationPass::runOnOperation() {
       // ========================================================================
       // Obfuscate Dense Element Attributes (arrays of constants)
       // ========================================================================
-      if (auto denseAttr = attr.getValue().dyn_cast<DenseElementsAttr>()) {
+      if (auto denseAttr = llvm::dyn_cast<DenseElementsAttr>(attr.getValue())) {
         // Check if it's an integer array
         if (denseAttr.getElementType().isInteger()) {
           SmallVector<int64_t> obfuscatedValues;
@@ -161,7 +161,7 @@ void ConstantObfuscationPass::runOnOperation() {
           }
 
           auto newValue = DenseElementsAttr::get(
-              denseAttr.getType().cast<ShapedType>(),
+              llvm::cast<ShapedType>(denseAttr.getType()),
               ArrayRef<int64_t>(obfuscatedValues)
           );
           newAttrs.emplace_back(attr.getName(), newValue);
@@ -170,7 +170,7 @@ void ConstantObfuscationPass::runOnOperation() {
         }
 
         // Check if it's a float array
-        if (denseAttr.getElementType().isa<FloatType>()) {
+        if (llvm::isa<FloatType>(denseAttr.getElementType())) {
           SmallVector<double> obfuscatedValues;
           for (auto val : denseAttr.getValues<APFloat>()) {
             double original = val.convertToDouble();
@@ -179,7 +179,7 @@ void ConstantObfuscationPass::runOnOperation() {
           }
 
           auto newValue = DenseElementsAttr::get(
-              denseAttr.getType().cast<ShapedType>(),
+              llvm::cast<ShapedType>(denseAttr.getType()),
               ArrayRef<double>(obfuscatedValues)
           );
           newAttrs.emplace_back(attr.getName(), newValue);
@@ -202,7 +202,7 @@ void ConstantObfuscationPass::runOnOperation() {
   // ============================================================================
   module.walk([&](LLVM::ConstantOp constOp) {
     // Obfuscate integer constants
-    if (auto intAttr = constOp.getValue().dyn_cast<IntegerAttr>()) {
+    if (auto intAttr = llvm::dyn_cast<IntegerAttr>(constOp.getValue())) {
       int64_t original = intAttr.getInt();
       int64_t obfuscated = obfuscateInteger(original, key);
 
@@ -211,7 +211,7 @@ void ConstantObfuscationPass::runOnOperation() {
     }
 
     // Obfuscate float constants
-    if (auto floatAttr = constOp.getValue().dyn_cast<FloatAttr>()) {
+    if (auto floatAttr = llvm::dyn_cast<FloatAttr>(constOp.getValue())) {
       double original = floatAttr.getValueAsDouble();
       double obfuscated = obfuscateFloat(original, key);
 

@@ -40,18 +40,21 @@ int main(int argc, char **argv) {
   });
 
   mlir::registerPass([]() -> std::unique_ptr<mlir::Pass> {
+    return std::make_unique<mlir::obs::CryptoHashPass>();
+  });
+
+  mlir::registerPass([]() -> std::unique_ptr<mlir::Pass> {
+    return std::make_unique<mlir::obs::ConstantObfuscationPass>();
+  });
+
+  mlir::registerPass([]() -> std::unique_ptr<mlir::Pass> {
     return std::make_unique<mlir::obs::SCFObfuscatePass>();
   });
 
   // Print banner
   llvm::outs() << "MLIR Obfuscator Tool\n";
-  llvm::outs() << "MLIR Version: " << MLIR_VERSION_STRING << "\n";
-#ifdef HAVE_POLYGEIST
-  llvm::outs() << "Polygeist support: ENABLED\n";
-  llvm::outs() << "  cgeist: " << CGEIST_EXECUTABLE << "\n";
-#else
-  llvm::outs() << "Polygeist support: DISABLED\n";
-#endif
+  llvm::outs() << "MLIR/LLVM Version: " << MLIR_VERSION_STRING << "\n";
+  llvm::outs() << "Supported Frontend: ClangIR (LLVM 22 native)\n";
   llvm::outs() << "\n";
 
   // Run mlir-opt main with our registered passes

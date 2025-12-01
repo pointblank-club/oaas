@@ -10,6 +10,7 @@ from .fake_loop_inserter import FakeLoopGenerator
 from .reporter import ObfuscationReport
 from .string_encryptor import StringEncryptionResult, XORStringEncryptor
 from .symbol_obfuscator import SymbolObfuscator
+from .llvm_remarks import RemarksCollector
 from .upx_packer import UPXPacker
 from .utils import (
     compute_entropy,
@@ -53,6 +54,7 @@ class LLVMObfuscator:
         self.encryptor = XORStringEncryptor()
         self.fake_loop_generator = FakeLoopGenerator()
         self.symbol_obfuscator = SymbolObfuscator()
+        self.remarks_collector = RemarksCollector()
         self.upx_packer = UPXPacker()
 
     def _get_bundled_plugin_path(self, target_platform: Optional[Platform] = None) -> Optional[Path]:
@@ -357,6 +359,29 @@ class LLVMObfuscator:
             return f"{stem}.exe"
         return stem
 
+    def _add_remarks_flags(self, command: List[str], config: ObfuscationConfig, output_binary: Path) -> None:
+        """
+        Add LLVM remarks flags to compilation command if enabled.
+        
+        Based on https://llvm.org/docs/Remarks.html
+        """
+        if not config.advanced.remarks.enabled:
+            return
+        
+        remarks_file = output_binary.parent / (
+            config.advanced.remarks.output_file or f"{output_binary.stem}.opt.yaml"
+        )
+        
+        remarks_flags = self.remarks_collector.get_remarks_flags(
+            output_file=remarks_file,
+            remark_filter=config.advanced.remarks.pass_filter,
+            format=config.advanced.remarks.format,
+            with_hotness=config.advanced.remarks.with_hotness
+        )
+        
+        command.extend(remarks_flags)
+        self.logger.info(f"LLVM remarks enabled: {remarks_file}")
+    
     def _get_resource_dir_flag(self, compiler_path: str) -> List[str]:
         """
         Get the -resource-dir flag for custom clang binaries that don't have
@@ -576,6 +601,7 @@ class LLVMObfuscator:
                 resource_dir_flags = self._get_resource_dir_flag(compiler)
                 if resource_dir_flags:
                     command.extend(resource_dir_flags)
+                self._add_remarks_flags(command, config, destination_abs)
                 if config.platform == Platform.WINDOWS:
                     command.extend(["--target=x86_64-w64-mingw32"])
                 run_command(command, cwd=source_abs.parent)
@@ -639,6 +665,8 @@ class LLVMObfuscator:
                     resource_dir_flags = self._get_resource_dir_flag(compiler)
                     if resource_dir_flags:
                         command.extend(resource_dir_flags)
+
+                    self._add_remarks_flags(command, config, destination_abs)
 
                     if config.platform == Platform.WINDOWS:
                         command.extend(["--target=x86_64-w64-mingw32"])
@@ -801,6 +829,8 @@ class LLVMObfuscator:
             if resource_dir_flags:
                 command.extend(resource_dir_flags)
 
+            self._add_remarks_flags(command, config, destination_abs)
+
             if config.platform == Platform.WINDOWS:
                 command.extend(["--target=x86_64-w64-mingw32"])
             run_command(command, cwd=source_abs.parent)
@@ -817,6 +847,8 @@ class LLVMObfuscator:
             resource_dir_flags = self._get_resource_dir_flag(compiler)
             if resource_dir_flags:
                 command.extend(resource_dir_flags)
+
+            self._add_remarks_flags(command, config, destination_abs)
 
             if config.platform == Platform.WINDOWS:
                 command.extend(["--target=x86_64-w64-mingw32"])

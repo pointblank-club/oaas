@@ -91,7 +91,7 @@ def test_obfuscation_on_working_benchmark(benchmark_path):
     obfuscator = LLVMObfuscator(reporter=reporter)
     
     print(f"Benchmark: {benchmark_path.name}")
-    print(f"Obfuscation level: 2 (basic)")
+    print("Obfuscation level: 2 (basic)")
     print()
     
     result = manager.run_benchmark_test(

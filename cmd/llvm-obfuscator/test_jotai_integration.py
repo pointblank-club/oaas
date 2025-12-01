@@ -68,7 +68,7 @@ def test_jotai_integration():
         # Show first few lines
         try:
             lines = sample.read_text().splitlines()[:10]
-            print(f"  First 10 lines:")
+            print("  First 10 lines:")
             for line in lines:
                 print(f"    {line[:80]}")
         except Exception as e:

@@ -20,8 +20,7 @@ from core import (
     compare_binaries,
 )
 from core.batch import load_batch_config
-from core.config import AdvancedConfiguration, IndirectCallConfiguration, OutputConfiguration, SymbolObfuscationConfiguration
-from core.config import AdvancedConfiguration, OutputConfiguration, SymbolObfuscationConfiguration, UPXConfiguration
+from core.config import AdvancedConfiguration, IndirectCallConfiguration, OutputConfiguration, SymbolObfuscationConfiguration, UPXConfiguration
 from core.exceptions import ObfuscationError
 from core.jotai_benchmark import JotaiBenchmarkManager, BenchmarkCategory
 from core.utils import create_logger, load_yaml, normalize_flags_and_passes

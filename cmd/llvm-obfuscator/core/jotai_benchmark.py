@@ -8,11 +8,9 @@ for testing obfuscation effectiveness on real-world C programs.
 from __future__ import annotations
 
 import json
-import logging
-import subprocess
 import tempfile
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, TYPE_CHECKING
+from typing import Dict, List, Optional, TYPE_CHECKING
 from dataclasses import dataclass, asdict
 from enum import Enum
 
@@ -280,7 +278,6 @@ class JotaiBenchmarkManager:
         ensure_directory(obfuscated_dir)
 
         baseline_binary = baseline_dir / f"{benchmark_path.stem}_baseline"
-        obfuscated_binary = obfuscated_dir / f"{benchmark_path.stem}_obfuscated"
 
         try:
             # 1. Compile baseline
@@ -307,8 +304,8 @@ class JotaiBenchmarkManager:
                 # Update config output directory
                 config.output.directory = obfuscated_dir
                 
-                # Run obfuscation
-                obf_result = obfuscator.obfuscate(
+                # Run obfuscation (result not used directly, binary is retrieved from disk)
+                obfuscator.obfuscate(
                     source_file=benchmark_path,
                     config=config
                 )
@@ -347,23 +344,21 @@ class JotaiBenchmarkManager:
                 try:
                     # Run baseline
                     try:
-                        baseline_returncode, baseline_stdout, baseline_stderr = run_command(
+                        baseline_returncode, baseline_stdout, _ = run_command(
                             [str(baseline_binary), str(input_idx)]
                         )
                     except ObfuscationError:
                         baseline_returncode = 1
                         baseline_stdout = ""
-                        baseline_stderr = ""
 
                     # Run obfuscated
                     try:
-                        obfuscated_returncode, obfuscated_stdout, obfuscated_stderr = run_command(
+                        obfuscated_returncode, obfuscated_stdout, _ = run_command(
                             [str(result.obfuscated_binary), str(input_idx)]
                         )
                     except ObfuscationError:
                         obfuscated_returncode = 1
                         obfuscated_stdout = ""
-                        obfuscated_stderr = ""
 
                     # Compare outputs
                     if (baseline_returncode == obfuscated_returncode and

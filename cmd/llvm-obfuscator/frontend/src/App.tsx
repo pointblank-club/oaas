@@ -483,7 +483,13 @@ function App() {
   const handleLayerChange = (layer: number, value: boolean) => {
     if (layer === 1) setLayer1(value);
     if (layer === 2) setLayer2(value);
-    if (layer === 3) setLayer3(value);
+    if (layer === 3) {
+      setLayer3(value);
+      // Disable LTO when Layer 3 is enabled (LLVM version incompatibility)
+      if (value && flagLTO) {
+        setFlagLTO(false);
+      }
+    }
     if (layer === 4) setLayer4(value);
   };
 
@@ -1078,13 +1084,22 @@ function App() {
                   {flagLTO && flagSymbolHiding && flagOmitFramePointer && flagSpeculativeLoadHardening
                     ? 'Deselect All' : 'Select All'}
                 </button>
-                <label className="sub-option">
+                <label
+                  className="sub-option"
+                  title={layer3 ? "LTO is incompatible with OLLVM passes (LLVM version mismatch: bundled v22 vs system v19)" : ""}
+                  style={{
+                    opacity: layer3 ? 0.5 : 1,
+                    cursor: layer3 ? 'not-allowed' : 'pointer'
+                  }}
+                >
                   <input
                     type="checkbox"
                     checked={flagLTO}
                     onChange={(e) => setFlagLTO(e.target.checked)}
+                    disabled={layer3}
                   />
                   Link-Time Optimization (-flto)
+                  {layer3 && <span style={{ marginLeft: '8px', color: '#ff6b6b', fontSize: '0.85em' }}>⚠ Incompatible with Layer 3</span>}
                 </label>
                 <label className="sub-option">
                   <input

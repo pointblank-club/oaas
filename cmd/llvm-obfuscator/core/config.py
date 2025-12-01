@@ -67,11 +67,23 @@ class IndirectCallConfiguration:
     enabled: bool = False
     obfuscate_stdlib: bool = True
     obfuscate_custom: bool = True
+
+
+@dataclass
 class UPXConfiguration:
     enabled: bool = False
     compression_level: str = "best"  # fast, default, best, brute
     use_lzma: bool = True
     preserve_original: bool = False
+
+
+@dataclass
+class RemarksConfiguration:
+    enabled: bool = False
+    format: str = "yaml"  # yaml or bitstream
+    output_file: Optional[str] = None  # If None, auto-generate
+    pass_filter: str = ".*"  # Regex filter for passes
+    with_hotness: bool = False  # Include profile hotness (requires PGO)
 
 
 @dataclass
@@ -81,6 +93,7 @@ class AdvancedConfiguration:
     fake_loops: int = 0
     symbol_obfuscation: SymbolObfuscationConfiguration = field(default_factory=SymbolObfuscationConfiguration)
     indirect_calls: IndirectCallConfiguration = field(default_factory=IndirectCallConfiguration)
+    remarks: RemarksConfiguration = field(default_factory=RemarksConfiguration)
     upx_packing: UPXConfiguration = field(default_factory=UPXConfiguration)
 
 
@@ -123,6 +136,15 @@ class ObfuscationConfig:
             obfuscate_custom=indirect_data.get("obfuscate_custom", True),
         )
 
+        remarks_data = adv_data.get("remarks", {})
+        remarks_config = RemarksConfiguration(
+            enabled=remarks_data.get("enabled", False),
+            format=remarks_data.get("format", "yaml"),
+            output_file=remarks_data.get("output_file"),
+            pass_filter=remarks_data.get("pass_filter", ".*"),
+            with_hotness=remarks_data.get("with_hotness", False),
+        )
+
         upx_data = adv_data.get("upx_packing", {})
         upx_config = UPXConfiguration(
             enabled=upx_data.get("enabled", False),
@@ -135,6 +157,7 @@ class ObfuscationConfig:
             string_encryption=adv_data.get("string_encryption", False),
             fake_loops=adv_data.get("fake_loops", 0),
             indirect_calls=indirect_calls,
+            remarks=remarks_config,
             upx_packing=upx_config,
         )
         output_data = data.get("output", {})

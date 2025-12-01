@@ -12,6 +12,7 @@ from .config import (
     OutputConfiguration,
     PassConfiguration,
     Platform,
+    RemarksConfiguration,
     SymbolObfuscationConfiguration,
     UPXConfiguration,
 )
@@ -32,6 +33,7 @@ __all__ = [
     "CompareConfig",
     "ObfuscationReport",
     "SymbolObfuscator",
+    "RemarksConfiguration",
     "SymbolObfuscationConfiguration",
     "UPXConfiguration",
     "UPXPacker",

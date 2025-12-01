@@ -27,12 +27,14 @@ jobs:
     - name: Verify LFS binaries are present
       run: |
         echo "Verifying LFS binaries are present..."
+        # Check main binaries
         ls -lh cmd/llvm-obfuscator/plugins/linux-x86_64/clang || exit 1
         ls -lh cmd/llvm-obfuscator/plugins/linux-x86_64/opt || exit 1
         ls -lh cmd/llvm-obfuscator/plugins/linux-x86_64/LLVMObfuscationPlugin.so || exit 1
-        ls -lh cmd/llvm-obfuscator/plugins/linux-x86_64/lib/libLLVM.so.22.0git || exit 1
+        # Verify they are actual ELF binaries (not LFS pointer files)
         file cmd/llvm-obfuscator/plugins/linux-x86_64/clang | grep -q "ELF" || exit 1
         file cmd/llvm-obfuscator/plugins/linux-x86_64/opt | grep -q "ELF" || exit 1
+        file cmd/llvm-obfuscator/plugins/linux-x86_64/LLVMObfuscationPlugin.so | grep -q "shared object" || exit 1
         echo "✅ All LFS binaries verified successfully"
 
     - name: Set up Docker Buildx

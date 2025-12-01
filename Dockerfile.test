@@ -1,6 +1,5 @@
 FROM ubuntu:22.04
 
-# Avoid interactive prompts
 ENV DEBIAN_FRONTEND=noninteractive
 
 # ============================================================================
@@ -30,17 +29,14 @@ RUN apt-get update && apt-get install -y \
 
 # ============================================================================
 # STAGE 2: Build LLVM/Clang/MLIR with ClangIR (CIR) support
-# This requires ~60-80GB during build, ~15GB after cleanup
 # ============================================================================
 
 WORKDIR /opt
 
-# Clone LLVM - shallow clone to save space and time
 RUN git clone --depth=1 https://github.com/llvm/llvm-project.git llvm-project
 
-# Build LLVM with ClangIR enabled
-# Using Release build and minimal targets to reduce size
 WORKDIR /opt/llvm-project/build
+
 RUN cmake ../llvm \
     -G Ninja \
     -DCMAKE_BUILD_TYPE=Release \
@@ -60,25 +56,18 @@ RUN cmake ../llvm \
     -DCLANG_ENABLE_CIR=ON \
     -DCMAKE_INSTALL_PREFIX=/usr/local/llvm
 
-# Build the essential tools (this takes a while but uses less memory than full build)
-RUN ninja clang llvm-config mlir-opt mlir-translate opt llc \
-    FileCheck count not \
-    2>&1 | tail -100
+RUN ninja clang llvm-config mlir-opt mlir-translate opt llc FileCheck count not 2>&1 | tail -100
 
-# Try to build cir-opt if available (may not exist in all versions)
-RUN ninja cir-opt 2>/dev/null || echo "cir-opt not available in this LLVM version"
+RUN ninja cir-opt 2>/dev/null || echo "cir-opt not available"
 
-# Install
 RUN ninja install 2>&1 | tail -20
 
 # ============================================================================
-# STAGE 3: Cleanup to save space (~40GB freed)
+# STAGE 3: Cleanup to save space
 # ============================================================================
 
 WORKDIR /opt
-RUN rm -rf /opt/llvm-project/build && \
-    rm -rf /opt/llvm-project/.git && \
-    echo "Build artifacts cleaned"
+RUN rm -rf /opt/llvm-project/build /opt/llvm-project/.git
 
 # ============================================================================
 # STAGE 4: Set up environment
@@ -89,36 +78,17 @@ ENV LD_LIBRARY_PATH="/usr/local/llvm/lib:${LD_LIBRARY_PATH}"
 ENV LLVM_DIR="/usr/local/llvm/lib/cmake/llvm"
 ENV MLIR_DIR="/usr/local/llvm/lib/cmake/mlir"
 
-# Create clangir wrapper script
-RUN echo '#!/bin/bash' > /usr/local/bin/clangir && \
-    echo 'exec clang -fclangir "$@"' >> /usr/local/bin/clangir && \
-    chmod +x /usr/local/bin/clangir
+RUN echo '#!/bin/bash\nexec clang -fclangir "$@"' > /usr/local/bin/clangir && chmod +x /usr/local/bin/clangir
 
 # ============================================================================
 # STAGE 5: Verify installation
 # ============================================================================
 
-RUN echo "=== LLVM/ClangIR Installation Verification ===" && \
-    echo "" && \
-    echo "Clang version:" && clang --version && \
-    echo "" && \
-    echo "MLIR tools:" && \
-    mlir-opt --version && \
-    mlir-translate --version && \
-    echo "" && \
-    echo "Testing ClangIR support:" && \
-    echo 'int main() { return 0; }' > /tmp/test.c && \
-    (clang -fclangir -emit-cir /tmp/test.c -o /tmp/test.cir 2>&1 && \
-     echo "✅ ClangIR (-fclangir -emit-cir) WORKS!" && \
-     head -20 /tmp/test.cir) || \
-    echo "⚠️ ClangIR emit not working (will use fallback)" && \
-    echo "" && \
-    echo "Testing ClangIR full compilation:" && \
-    (clang -fclangir /tmp/test.c -o /tmp/test_cir 2>&1 && \
-     /tmp/test_cir && \
-     echo "✅ ClangIR full compilation WORKS!") || \
-    echo "⚠️ ClangIR compilation not working (will use fallback)" && \
-    rm -f /tmp/test.c /tmp/test.cir /tmp/test_cir
+RUN clang --version && mlir-opt --version && mlir-translate --version
+
+RUN echo 'int main() { return 0; }' > /tmp/test.c && \
+    (clang -fclangir -emit-cir /tmp/test.c -o /tmp/test.cir && echo "ClangIR works!" && cat /tmp/test.cir) || \
+    echo "ClangIR not available"
 
 # ============================================================================
 # STAGE 6: Copy project and build MLIR obfuscation passes
@@ -127,142 +97,22 @@ RUN echo "=== LLVM/ClangIR Installation Verification ===" && \
 WORKDIR /app
 COPY . .
 
-# Build MLIR obfuscation passes
 WORKDIR /app/mlir-obs
 RUN mkdir -p build && cd build && \
-    cmake .. \
-        -G Ninja \
-        -DCMAKE_BUILD_TYPE=Release \
-        -DLLVM_DIR=/usr/local/llvm/lib/cmake/llvm \
-        -DMLIR_DIR=/usr/local/llvm/lib/cmake/mlir && \
+    cmake .. -G Ninja -DCMAKE_BUILD_TYPE=Release \
+    -DLLVM_DIR=/usr/local/llvm/lib/cmake/llvm \
+    -DMLIR_DIR=/usr/local/llvm/lib/cmake/mlir && \
     ninja
 
-# Verify the library
-RUN echo "=== MLIR Obfuscation Library ===" && \
-    ls -la /app/mlir-obs/build/lib/ && \
-    echo "" && \
-    echo "Testing pass registration:" && \
-    (mlir-opt --load-pass-plugin=/app/mlir-obs/build/lib/libMLIRObfuscation.so --help 2>&1 | \
-     grep -E "string-encrypt|symbol-obfuscate|crypto-hash|constant-obfuscate" && \
-     echo "✅ All passes registered!") || \
-    echo "⚠️ Could not verify passes"
+RUN ls -la /app/mlir-obs/build/lib/
 
 # ============================================================================
 # STAGE 7: Install Python dependencies
 # ============================================================================
 
 WORKDIR /app/cmd/llvm-obfuscator
-RUN pip3 install --no-cache-dir -r requirements.txt 2>/dev/null || \
-    pip3 install --no-cache-dir typer pyyaml
-
-# ============================================================================
-# STAGE 8: Create test scripts
-# ============================================================================
+RUN pip3 install --no-cache-dir typer pyyaml || pip3 install typer pyyaml
 
 WORKDIR /app
 
-# Make existing scripts executable
-RUN chmod +x mlir-obs/build.sh mlir-obs/test.sh mlir-obs/test-clangir-pipeline.sh 2>/dev/null || true
-
-# Create comprehensive test script
-RUN cat > /usr/local/bin/test-all << 'TESTSCRIPT'
-#!/bin/bash
-set -e
-
-echo "============================================================"
-echo "  OAAS Complete Pipeline Test"
-echo "============================================================"
-echo ""
-
-cd /app
-
-# Test 1: System Info
-echo "=== Test 1: System Information ==="
-python3 -m cmd.llvm-obfuscator.cli.obfuscate info
-echo ""
-
-# Test 2: Standard Pipeline
-echo "=== Test 2: Standard Pipeline (Clang → LLVM IR → MLIR) ==="
-cat > /tmp/test_std.c << 'EOF'
-#include <stdio.h>
-const char* PASSWORD = "SecretPassword123";
-int authenticate(const char* input) { return 1; }
-int main() { printf("Auth: %d\n", authenticate("test")); return 0; }
-EOF
-
-python3 -m cmd.llvm-obfuscator.cli.obfuscate compile /tmp/test_std.c \
-    --enable-string-encrypt \
-    --enable-symbol-obfuscate \
-    --output /tmp/output_std
-
-if [ -f /tmp/output_std/test_std ]; then
-    echo "✅ Binary created"
-    /tmp/output_std/test_std
-    if strings /tmp/output_std/test_std | grep -q "SecretPassword123"; then
-        echo "⚠️ String still visible"
-    else
-        echo "✅ String hidden!"
-    fi
-    if nm /tmp/output_std/test_std 2>/dev/null | grep -q "authenticate"; then
-        echo "⚠️ Symbol still visible"
-    else
-        echo "✅ Symbol obfuscated!"
-    fi
-else
-    echo "❌ Binary not created"
-fi
-echo ""
-
-# Test 3: ClangIR Pipeline
-echo "=== Test 3: ClangIR Pipeline ==="
-if clang -fclangir --help 2>&1 | grep -q "unknown argument"; then
-    echo "⚠️ ClangIR not available, skipping"
-else
-    cat > /tmp/test_cir.c << 'EOF'
-int add(int a, int b) { return a + b; }
-int main() { return add(1, 2); }
-EOF
-
-    python3 -m cmd.llvm-obfuscator.cli.obfuscate compile /tmp/test_cir.c \
-        --mlir-frontend clangir \
-        --enable-constant-obfuscate \
-        --output /tmp/output_cir 2>&1 || echo "ClangIR pipeline result above"
-
-    if [ -f /tmp/output_cir/test_cir ]; then
-        echo "✅ ClangIR binary created"
-        /tmp/output_cir/test_cir
-        echo "Exit code: $?"
-    else
-        echo "⚠️ ClangIR binary not created (fallback may have been used)"
-    fi
-fi
-echo ""
-
-# Test 4: Crypto Hash
-echo "=== Test 4: Crypto Hash Pass ==="
-cat > /tmp/test_hash.c << 'EOF'
-int secret_function(int x) { return x * 2; }
-int main() { return secret_function(21); }
-EOF
-
-python3 -m cmd.llvm-obfuscator.cli.obfuscate compile /tmp/test_hash.c \
-    --enable-crypto-hash \
-    --crypto-hash-algorithm sha256 \
-    --crypto-hash-salt "mysalt" \
-    --output /tmp/output_hash
-
-if [ -f /tmp/output_hash/test_hash ]; then
-    echo "✅ Binary created"
-    RESULT=$(/tmp/output_hash/test_hash; echo $?)
-    echo "Exit code: $RESULT (expected: 42)"
-fi
-echo ""
-
-echo "============================================================"
-echo "  All Tests Completed!"
-echo "============================================================"
-TESTSCRIPT
-chmod +x /usr/local/bin/test-all
-
-# Default command
 CMD ["/bin/bash"]

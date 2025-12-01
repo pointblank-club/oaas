@@ -23,6 +23,7 @@ from core.batch import load_batch_config
 from core.config import AdvancedConfiguration, IndirectCallConfiguration, OutputConfiguration, SymbolObfuscationConfiguration
 from core.config import AdvancedConfiguration, OutputConfiguration, SymbolObfuscationConfiguration, UPXConfiguration
 from core.exceptions import ObfuscationError
+from core.jotai_benchmark import JotaiBenchmarkManager, BenchmarkCategory
 from core.utils import create_logger, load_yaml, normalize_flags_and_passes
 
 app = typer.Typer(add_completion=False, help="LLVM-based binary obfuscation toolkit")
@@ -87,6 +88,7 @@ def _build_config(
         enabled=enable_indirect_calls,
         obfuscate_stdlib=indirect_stdlib,
         obfuscate_custom=indirect_custom,
+    )
     upx_config = UPXConfiguration(
         enabled=enable_upx,
         compression_level=upx_compression,
@@ -227,6 +229,110 @@ def batch(
             typer.echo(json.dumps(result, indent=2))
         except ObfuscationError as exc:
             logger.error("Batch job failed for %s: %s", source, exc)
+
+
+@app.command()
+def jotai(
+    output: Path = typer.Option(Path("./jotai_results"), help="Output directory for benchmark results"),
+    category: Optional[str] = typer.Option(None, help="Benchmark category (anghaLeaves, anghaMath)"),
+    limit: Optional[int] = typer.Option(None, help="Maximum number of benchmarks to test"),
+    level: int = typer.Option(3, min=1, max=5, help="Obfuscation level 1-5"),
+    enable_flattening: bool = typer.Option(False, "--enable-flattening", help="Enable control flow flattening"),
+    enable_substitution: bool = typer.Option(False, "--enable-substitution", help="Enable instruction substitution"),
+    enable_bogus_cf: bool = typer.Option(False, "--enable-bogus-cf", help="Enable bogus control flow"),
+    enable_split: bool = typer.Option(False, "--enable-split", help="Enable basic block splitting"),
+    string_encryption: bool = typer.Option(False, "--string-encryption", help="Enable string encryption"),
+    enable_symbol_obfuscation: bool = typer.Option(False, "--enable-symbol-obfuscation", help="Enable cryptographic symbol renaming"),
+    custom_flags: Optional[str] = typer.Option(None, help="Additional compiler flags"),
+    custom_pass_plugin: Optional[Path] = typer.Option(None, help="Path to custom LLVM pass plugin"),
+    max_failures: int = typer.Option(5, help="Stop after this many consecutive failures"),
+    cache_dir: Optional[Path] = typer.Option(None, help="Directory to cache Jotai benchmarks"),
+):
+    """
+    Run Jotai benchmarks through obfuscation to test effectiveness.
+    
+    Jotai is a collection of executable C benchmarks from real-world code.
+    This command downloads the benchmarks (if needed) and tests obfuscation on them.
+    """
+    try:
+        # Initialize benchmark manager
+        manager = JotaiBenchmarkManager(cache_dir=cache_dir, auto_download=True)
+        
+        # Determine category
+        benchmark_category = None
+        if category:
+            try:
+                benchmark_category = BenchmarkCategory(category)
+            except ValueError:
+                typer.echo(f"Invalid category: {category}. Use 'anghaLeaves' or 'anghaMath'", err=True)
+                raise typer.Exit(code=1)
+        
+        # Build obfuscation config
+        config = _build_config(
+            input_path=Path("dummy"),  # Not used for benchmark config
+            output=output,
+            platform=Platform.LINUX,
+            level=ObfuscationLevel(level),
+            enable_flattening=enable_flattening,
+            enable_substitution=enable_substitution,
+            enable_bogus_cf=enable_bogus_cf,
+            enable_split=enable_split,
+            enable_linear_mba=False,
+            cycles=1,
+            string_encryption=string_encryption,
+            fake_loops=0,
+            enable_symbol_obfuscation=enable_symbol_obfuscation,
+            symbol_algorithm="sha256",
+            symbol_hash_length=12,
+            symbol_prefix="typed",
+            symbol_salt=None,
+            enable_indirect_calls=False,
+            indirect_stdlib=True,
+            indirect_custom=True,
+            enable_upx=False,
+            upx_compression="best",
+            upx_lzma=True,
+            upx_preserve_original=False,
+            report_formats="json",
+            custom_flags=custom_flags,
+            config_file=None,
+            custom_pass_plugin=custom_pass_plugin,
+        )
+        
+        # Initialize obfuscator
+        reporter = ObfuscationReport(output)
+        obfuscator = LLVMObfuscator(reporter=reporter)
+        
+        typer.echo(f"Running Jotai benchmarks with obfuscation level {level}...")
+        typer.echo(f"Output directory: {output}")
+        
+        # Run benchmark suite
+        results = manager.run_benchmark_suite(
+            obfuscator=obfuscator,
+            config=config,
+            output_dir=output,
+            category=benchmark_category,
+            limit=limit,
+            max_failures=max_failures
+        )
+        
+        # Generate report
+        report_file = output / "jotai_report.json"
+        manager.generate_report(results, report_file)
+        
+        # Print summary
+        typer.echo("\n" + "="*60)
+        typer.echo("Jotai Benchmark Results Summary")
+        typer.echo("="*60)
+        typer.echo(f"Total benchmarks: {len(results)}")
+        typer.echo(f"Compilation success: {sum(1 for r in results if r.compilation_success)}")
+        typer.echo(f"Obfuscation success: {sum(1 for r in results if r.obfuscation_success)}")
+        typer.echo(f"Functional tests passed: {sum(1 for r in results if r.functional_test_passed)}")
+        typer.echo(f"\nFull report: {report_file}")
+        
+    except Exception as exc:
+        logger.error("Jotai benchmark failed: %s", exc)
+        raise typer.Exit(code=1)
 
 
 if __name__ == "__main__":

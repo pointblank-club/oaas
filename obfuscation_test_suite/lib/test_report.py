@@ -161,6 +161,34 @@ class ReportGenerator:
                     lines.append(f"  Status: {decomp.get('status', 'N/A')}")
                     lines.append(f"  Functions: {decomp.get('function_count', 0)}")
 
+            if 'binja' in adv and adv['binja'].get('status') != 'not_installed':
+                lines.append("Binary Ninja Analysis:")
+                binja = adv['binja']
+                if 'hlil' in binja:
+                    hlil = binja['hlil']
+                    lines.append(f"  Status: {hlil.get('status', 'N/A')}")
+                    lines.append(f"  Functions: {hlil.get('function_count', 0)}")
+                    lines.append(f"  Avg HLIL Lines: {hlil.get('avg_hlil_lines', 0):.1f}")
+                    lines.append(f"  CFG Complexity: {hlil.get('total_cfg_complexity', 0)}")
+
+            if 'ida' in adv and adv['ida'].get('status') != 'not_installed':
+                lines.append("IDA Pro Analysis:")
+                ida = adv['ida']
+                if 'analysis' in ida:
+                    analysis = ida['analysis']
+                    lines.append(f"  Status: {analysis.get('status', 'N/A')}")
+                    lines.append(f"  Functions: {analysis.get('function_count', 0)}")
+                    lines.append(f"  Strings: {analysis.get('string_count', 0)}")
+                    lines.append(f"  Imports: {analysis.get('import_count', 0)}")
+                    lines.append(f"  CFG Complexity: {analysis.get('cfg_complexity', 0)}")
+                    lines.append(f"  Hex-Rays Available: {analysis.get('decompilation_available', False)}")
+                if 'decompilation_comparison' in ida:
+                    decomp = ida['decompilation_comparison']
+                    if decomp.get('status') == 'success':
+                        lines.append(f"  Baseline Code Lines: {decomp.get('baseline_lines', 0)}")
+                        lines.append(f"  Obfuscated Code Lines: {decomp.get('obfuscated_lines', 0)}")
+                        lines.append(f"  Code Expansion: {decomp.get('code_expansion_ratio', 0):.2f}x")
+
             if 'angr' in adv and adv['angr'].get('status') != 'not_installed':
                 lines.append("Angr Symbolic Execution:")
                 angr = adv['angr']

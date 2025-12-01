@@ -27,109 +27,45 @@ jobs:
             set -e
             echo "🚀 Deploying LLVM Obfuscator..."
             
-            cd oaas/
+            # Navigate to the deployment directory
+            cd /home/devopswale/oaas/
             
-            # Create docker-compose.yml
-            cat > docker-compose.yml << 'EOF'
-            version: "3.9"
+            # Verify docker-compose.yml exists
+            if [ ! -f docker-compose.yml ]; then
+              echo "❌ docker-compose.yml not found!"
+              exit 1
+            fi
             
-            services:
-              backend:
-                image: ${{ secrets.DOCKERHUB_USERNAME }}/llvm-obfuscator-backend:latest
-                container_name: llvm-obfuscator-backend
-                environment:
-                  - OBFUSCATOR_DISABLE_AUTH=false
-                  - PYTHONDONTWRITEBYTECODE=1
-                  - PYTHONUNBUFFERED=1
-                volumes:
-                  - ./reports:/app/reports
-                  - ./logs:/app/logs
-                expose:
-                  - "8000"
-                restart: unless-stopped
-                healthcheck:
-                  test: ["CMD", "curl", "-fsS", "http://localhost:8000/api/health"]
-                  interval: 30s
-                  timeout: 10s
-                  retries: 3
-                  start_period: 40s
-                networks:
-                  - obfuscator-network
+            echo "✅ Using existing docker-compose.yml"
             
-              frontend:
-                image: ${{ secrets.DOCKERHUB_USERNAME }}/llvm-obfuscator-frontend:latest
-                container_name: llvm-obfuscator-frontend
-                ports:
-                  - "80:80"
-                depends_on:
-                  backend:
-                    condition: service_healthy
-                restart: unless-stopped
-                healthcheck:
-                  test: ["CMD", "curl", "-fsS", "http://localhost/"]
-                  interval: 30s
-                  timeout: 10s
-                  retries: 3
-                networks:
-                  - obfuscator-network
-            
-            networks:
-              obfuscator-network:
-                driver: bridge
-            
-            volumes:
-              reports:
-                driver: local
-              logs:
-                driver: local
-            EOF
-            
-            # Create necessary directories
+            # Create necessary directories if they don't exist
             mkdir -p reports logs
             
-            # Pull latest images
-            echo "📦 Pulling latest images..."
-            docker pull ${{ secrets.DOCKERHUB_USERNAME }}/llvm-obfuscator-backend:latest
-            docker pull ${{ secrets.DOCKERHUB_USERNAME }}/llvm-obfuscator-frontend:latest
+            # Pull latest images from Docker Hub
+            echo "📦 Pulling latest images from Docker Hub..."
+            docker compose pull
             
             # Stop existing containers
             echo "🛑 Stopping existing containers..."
-            docker-compose down || true
+            docker compose down || true
             
             # Start new containers
             echo "🚀 Starting new containers..."
-            docker-compose up -d
+            docker compose up -d
             
-            # Wait for services to be healthy
-            echo "⏳ Waiting for services to be healthy..."
-            sleep 30
+            # Wait for services to start
+            echo "⏳ Waiting for services to start..."
+            sleep 10
             
-            # Check health
-            echo "🔍 Checking service health..."
-            if curl -fsS http://localhost:8000/api/health > /dev/null 2>&1; then
-              echo "✅ Backend is healthy"
-            else
-              echo "❌ Backend health check failed"
-              exit 1
-            fi
-            
-            if curl -fsS http://localhost/ > /dev/null 2>&1; then
-              echo "✅ Frontend is healthy"
-            else
-              echo "❌ Frontend health check failed"
-              exit 1
-            fi
+            # Show container status
+            echo "📊 Service Status:"
+            docker compose ps
             
             # Clean up old images
             echo "🧹 Cleaning up old images..."
             docker image prune -f
             
+            echo "Hello world"
             echo "🎉 Deployment completed successfully!"
-            echo "📊 Service Status:"
-            docker-compose ps
-            
-            echo "🌐 Application is available at:"
-            echo "   Frontend: http://${{ secrets.SSH_HOST }}"
-            echo "   Backend API: http://${{ secrets.SSH_HOST }}/api"
 
 

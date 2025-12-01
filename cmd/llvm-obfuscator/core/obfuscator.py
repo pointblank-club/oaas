@@ -595,9 +595,14 @@ class LLVMObfuscator:
                 bundled_opt = plugin_path_resolved.parent / "opt"
                 bundled_clang = plugin_path_resolved.parent / "clang"
 
-                # Step 1: Compile source to LLVM IR
+                # Step 1: Compile source to OPTIMIZED LLVM IR with -O3
+                # This ensures obfuscation is applied to stable, optimized code
+                # Prevents later optimization passes from removing obfuscation
                 ir_file = destination_abs.parent / f"{destination_abs.stem}_temp.ll"
-                ir_cmd = [compiler, str(source_abs), "-S", "-emit-llvm", "-o", str(ir_file)]
+                
+                # Apply -O3 BEFORE obfuscation
+                pre_obfuscation_flags = ["-O3", "-fno-builtin", "-fno-slp-vectorize", "-fno-vectorize"]
+                ir_cmd = [compiler, str(source_abs), "-S", "-emit-llvm", "-o", str(ir_file)] + pre_obfuscation_flags
 
                 # Add resource-dir flag if using custom clang
                 resource_dir_flags = self._get_resource_dir_flag(compiler)
@@ -736,13 +741,27 @@ class LLVMObfuscator:
                 self.logger.info("Step 2/3: Applying OLLVM passes via opt")
                 run_command(opt_cmd, cwd=source_abs.parent)
 
-                # Step 3: Compile obfuscated IR to binary
+                # Step 3: Compile obfuscated IR to binary with MINIMAL optimization
+                # This prevents backend optimizations from removing obfuscation
+                # Filter out optimization flags that would destroy obfuscation
+                post_obfuscation_flags = []
+                
+                for flag in compiler_flags:
+                    # Skip optimization and LTO flags that might undo obfuscation
+                    if any(opt in flag.lower() for opt in ['-o1', '-o2', '-o3', '-flto', 'lto']):
+                        self.logger.debug(f"Skipping post-obfuscation optimization flag: {flag}")
+                        continue
+                    post_obfuscation_flags.append(flag)
+                
+                # Add minimal optimization to preserve obfuscation
+                post_obfuscation_flags.append('-O0')
+                
                 # If using bundled clang, strip LTO flags (bundled clang doesn't have LLVMgold.so)
-                final_flags = compiler_flags
+                final_flags = post_obfuscation_flags
                 if str(compiler) == str(bundled_clang):
                     # Remove all LTO-related flags
-                    final_flags = [f for f in compiler_flags if 'lto' not in f.lower()]
-                    if len(final_flags) != len(compiler_flags):
+                    final_flags = [f for f in post_obfuscation_flags if 'lto' not in f.lower()]
+                    if len(final_flags) != len(post_obfuscation_flags):
                         self.logger.info("Removed LTO flags (incompatible with bundled clang)")
 
                 final_cmd = [compiler, str(obfuscated_ir), "-o", str(destination_abs)] + final_flags
@@ -750,7 +769,7 @@ class LLVMObfuscator:
                 if config.platform == Platform.WINDOWS:
                     final_cmd.extend(["--target=x86_64-w64-mingw32"])
 
-                self.logger.info("Step 3/3: Compiling obfuscated IR to binary")
+                self.logger.info("Step 3/3: Compiling obfuscated IR to binary (with -O0 to preserve obfuscation)")
                 run_command(final_cmd, cwd=source_abs.parent)
 
                 # Cleanup temporary files

@@ -479,16 +479,43 @@ class LLVMObfuscator:
         actually_applied = list(enabled_passes)
 
         # Detect compiler based on file extension
-        # IMPORTANT: Bundled clang works for C but has incomplete headers for C++
-        # Use system clang for C++, bundled clang for C
-        bundled_clang_dir = Path("/usr/local/llvm-obfuscator/bin")
         is_cpp = source_abs.suffix in ['.cpp', '.cxx', '.cc', '.c++']
 
-        # Use bundled clang for both C and C++ (headers are now complete)
-        if (bundled_clang_dir / "clang").exists():
-            compiler = str(bundled_clang_dir / "clang")
+        # Check for bundled clang (from LLVM 22) - but only if LTO is not requested
+        # Bundled clang doesn't have LLVMgold.so plugin required for LTO linking
+
+        # Check platform compatibility and LTO requirements
+        import platform as py_platform
+        current_os = py_platform.system().lower()
+        target_os = config.platform.value.lower()
+        if target_os == "macos":
+            target_os = "darwin"
+
+        # Check if LTO is enabled in compiler flags
+        has_lto = any('lto' in flag.lower() for flag in compiler_flags)
+
+        # Only look for bundled clang if not cross-compiling AND not using LTO
+        is_same_platform = (current_os == target_os)
+        if is_same_platform and not has_lto:
+            # Try to find bundled clang
+            bundled_clang_dir = Path("/usr/local/llvm-obfuscator/bin")
+            bundled_clang_path = bundled_clang_dir / "clang"
+            if bundled_clang_path.exists():
+                compiler = str(bundled_clang_path)
+                self.logger.info("Using bundled clang from LLVM 22: %s", bundled_clang_path)
+            else:
+                self.logger.debug("Bundled clang not found, falling back to system clang")
+                compiler = "/usr/bin/clang"  # Explicit system clang path
+        elif has_lto:
+            # Use explicit system clang path (not just "clang" which might resolve to bundled via PATH)
+            compiler = "/usr/bin/clang"
+            self.logger.info("LTO enabled in flags, using system clang (bundled clang doesn't have LLVMgold.so)")
+        elif not is_same_platform:
+            compiler = "/usr/bin/clang"  # Explicit system clang for cross-compilation
+            self.logger.debug("Cross-compiling from %s to %s, using system clang", current_os, target_os)
         else:
-            compiler = "clang"
+            # Fallback
+            compiler = "/usr/bin/clang"
         # Build IR flags: strip LTO-related flags for the IR-phase
         ir_flags: List[str] = [f for f in compiler_flags if 'lto' not in f.lower()]
         if is_cpp:
@@ -504,6 +531,8 @@ class LLVMObfuscator:
         # If no OLLVM passes requested -> normal compile
         if not enabled_passes:
             final_cmd = [compiler, str(source_abs), '-o', str(destination_abs)] + compiler_flags
+            if is_cpp:
+                final_cmd.append('-lstdc++')  # Link C++ standard library
             final_cmd.extend(self._get_resource_dir_flag(compiler, is_cpp=is_cpp))
             if config.platform == Platform.WINDOWS:
                 final_cmd.append('--target=x86_64-w64-mingw32')
@@ -587,10 +616,16 @@ class LLVMObfuscator:
                 raise
 
         # Step 3: compile obfuscated IR -> binary
+        # IMPORTANT: Must use bundled clang (same version as opt) to compile OLLVM-obfuscated bitcode
+        # System clang v19 cannot read bitcode produced by opt v22
+        bundled_clang_for_final = Path("/usr/local/llvm-obfuscator/bin/clang")
+        final_compiler = str(bundled_clang_for_final) if bundled_clang_for_final.exists() else compiler
+
         # Strip LTO flags as they're incompatible when linking from bitcode
         # (bitcode is already intermediate representation, LTO doesn't apply)
+        # Also, bundled clang doesn't have LLVMgold.so plugin
         final_flags = [f for f in compiler_flags if 'lto' not in f.lower()]
-        final_cmd = [compiler, str(obf_ir), '-o', str(destination_abs)] + final_flags
+        final_cmd = [final_compiler, str(obf_ir), '-o', str(destination_abs)] + final_flags
         if is_cpp:
             # Don't use -x c++ when compiling from bitcode - clang auto-detects it
             # Just link the C++ standard library

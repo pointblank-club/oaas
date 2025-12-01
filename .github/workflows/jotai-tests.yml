@@ -2,9 +2,21 @@ name: Jotai Benchmark Tests
 
 on:
   push:
-    branches: [ main, develop ]
+    branches:
+      - main
+      - '*'
+      - '*/*'
+      - '*/*/*'
+      - '*/*/*/*'
   pull_request:
-    branches: [ main ]
+    branches:
+      - main
+      - '*'
+      - '*/*'
+      - '*/*/*'
+      - '*/*/*/*'
+
+
   workflow_dispatch:
     inputs:
       limit:

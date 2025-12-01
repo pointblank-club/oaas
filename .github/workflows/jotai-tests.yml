@@ -116,15 +116,15 @@ jobs:
         if [ -f jotai_ci_summary.json ]; then
           echo "## Jotai Test Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          python3 - << 'EOF' >> $GITHUB_STEP_SUMMARY
-import json
-with open("jotai_ci_summary.json") as f:
-    data = json.load(f)
-s = data["summary"]
-print(f"- **Total benchmarks:** {s['total_benchmarks']}")
-print(f"- **Tested:** {s['tested']}")
-print(f"- **Skipped:** {s['skipped']}")
-print(f"- **Success rate:** {s['success_rate']*100:.1f}%")
-print(f"- **Functional tests passed:** {s['functional_success']}/{s['tested']}")
-EOF
+          python3 << 'PYEOF' >> $GITHUB_STEP_SUMMARY
+        import json
+        with open("jotai_ci_summary.json") as f:
+            data = json.load(f)
+        s = data["summary"]
+        print(f"- **Total benchmarks:** {s['total_benchmarks']}")
+        print(f"- **Tested:** {s['tested']}")
+        print(f"- **Skipped:** {s['skipped']}")
+        print(f"- **Success rate:** {s['success_rate']*100:.1f}%")
+        print(f"- **Functional tests passed:** {s['functional_success']}/{s['tested']}")
+        PYEOF
         fi

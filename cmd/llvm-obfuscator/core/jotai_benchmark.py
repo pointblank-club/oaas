@@ -283,8 +283,8 @@ class JotaiBenchmarkManager:
         obfuscated_binary = obfuscated_dir / f"{benchmark_path.stem}_obfuscated"
 
         try:
-            # 1. Compile baseline
-            self.logger.info(f"Compiling baseline for {benchmark_path.name}...")
+            # 1. Compile baseline binary (normal compilation, no obfuscation)
+            self.logger.info(f"Step 1: Compiling baseline binary for {benchmark_path.name}...")
             compile_cmd = [
                 "clang", "-g", "-O1",
                 str(benchmark_path),
@@ -300,14 +300,16 @@ class JotaiBenchmarkManager:
             result.baseline_binary = baseline_binary
             result.compilation_success = True
             result.size_baseline = baseline_binary.stat().st_size if baseline_binary.exists() else 0
+            self.logger.info(f"✓ Baseline binary created: {baseline_binary.name} ({result.size_baseline} bytes)")
 
-            # 2. Obfuscate and compile
-            self.logger.info(f"Obfuscating {benchmark_path.name}...")
+            # 2. Obfuscate the binary using LLVM obfuscator
+            # The obfuscator takes source and produces obfuscated binary
+            self.logger.info(f"Step 2: Obfuscating binary using LLVM obfuscator...")
             try:
                 # Update config output directory
                 config.output.directory = obfuscated_dir
                 
-                # Run obfuscation
+                # Run obfuscation on source file (produces obfuscated binary)
                 obf_result = obfuscator.obfuscate(
                     source_file=benchmark_path,
                     config=config

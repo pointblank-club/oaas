@@ -1,0 +1,61 @@
+{
+  "summary": {
+    "total": 3,
+    "compilation_success": 2,
+    "obfuscation_success": 2,
+    "functional_pass": 2
+  },
+  "results": [
+    {
+      "benchmark_name": "extr_darwin-xnubsdnfsgssgss_krb5_mech.c_gss_krb5_der_length_get_Final",
+      "category": "anghaLeaves",
+      "source_file": "/home/dhruv/.cache/llvm-obfuscator/jotai-benchmarks/jotai-benchmarks/benchmarks/anghaLeaves/extr_darwin-xnubsdnfsgssgss_krb5_mech.c_gss_krb5_der_length_get_Final.c",
+      "baseline_binary": null,
+      "obfuscated_binary": null,
+      "compilation_success": false,
+      "obfuscation_success": false,
+      "functional_test_passed": false,
+      "execution_time_baseline": null,
+      "execution_time_obfuscated": null,
+      "size_baseline": null,
+      "size_obfuscated": null,
+      "error_message": "Baseline compilation failed: Command failed with exit code 1: clang -g -O1 /home/dhruv/.cache/llvm-obfuscator/jotai-benchmarks/jotai-benchmarks/benchmarks/anghaLeaves/extr_darwin-xnubsdnfsgssgss_krb5_mech.c_gss_krb5_der_length_get_Final.c -o test_results/extr_darwin-xnubsdnfsgssgss_krb5_mech.c_gss_krb5_der_length_get_Final/baseline/extr_darwin-xnubsdnfsgssgss_krb5_mech.c_gss_krb5_der_length_get_Final_baseline\n/home/dhruv/.cache/llvm-obfuscator/jotai-benchmarks/jotai-benchmarks/benchmarks/anghaLeaves/extr_darwin-xnubsdnfsgssgss_krb5_mech.c_gss_krb5_der_length_get_Final.c:58:14: error: typedef redefinition with different types ('int' vs '__ssize_t' (aka 'long'))\n   58 | typedef  int ssize_t ;\n      |              ^\n/usr/include/stdio.h:78:19: note: previous definition is here\n   78 | typedef __ssize_t ssize_t;\n      |                   ^\n1 error generated.\n",
+      "inputs_tested": 0,
+      "inputs_passed": 0
+    },
+    {
+      "benchmark_name": "extr_linuxdriversgpudrmi915intel_cdclk.c_bxt_calc_cdclk_Final",
+      "category": "anghaLeaves",
+      "source_file": "/home/dhruv/.cache/llvm-obfuscator/jotai-benchmarks/jotai-benchmarks/benchmarks/anghaLeaves/extr_linuxdriversgpudrmi915intel_cdclk.c_bxt_calc_cdclk_Final.c",
+      "baseline_binary": "test_results/extr_linuxdriversgpudrmi915intel_cdclk.c_bxt_calc_cdclk_Final/baseline/extr_linuxdriversgpudrmi915intel_cdclk.c_bxt_calc_cdclk_Final_baseline",
+      "obfuscated_binary": "test_results/extr_linuxdriversgpudrmi915intel_cdclk.c_bxt_calc_cdclk_Final/obfuscated/extr_linuxdriversgpudrmi915intel_cdclk.c_bxt_calc_cdclk_Final",
+      "compilation_success": true,
+      "obfuscation_success": true,
+      "functional_test_passed": true,
+      "execution_time_baseline": null,
+      "execution_time_obfuscated": null,
+      "size_baseline": 18528,
+      "size_obfuscated": 14432,
+      "error_message": null,
+      "inputs_tested": 1,
+      "inputs_passed": 1
+    },
+    {
+      "benchmark_name": "extr_xhyvesrcvmmiovhpet.c_update_register_Final",
+      "category": "anghaLeaves",
+      "source_file": "/home/dhruv/.cache/llvm-obfuscator/jotai-benchmarks/jotai-benchmarks/benchmarks/anghaLeaves/extr_xhyvesrcvmmiovhpet.c_update_register_Final.c",
+      "baseline_binary": "test_results/extr_xhyvesrcvmmiovhpet.c_update_register_Final/baseline/extr_xhyvesrcvmmiovhpet.c_update_register_Final_baseline",
+      "obfuscated_binary": "test_results/extr_xhyvesrcvmmiovhpet.c_update_register_Final/obfuscated/extr_xhyvesrcvmmiovhpet.c_update_register_Final",
+      "compilation_success": true,
+      "obfuscation_success": true,
+      "functional_test_passed": true,
+      "execution_time_baseline": null,
+      "execution_time_obfuscated": null,
+      "size_baseline": 19120,
+      "size_obfuscated": 14448,
+      "error_message": null,
+      "inputs_tested": 1,
+      "inputs_passed": 1
+    }
+  ]
+}

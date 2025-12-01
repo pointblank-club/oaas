@@ -65,6 +65,7 @@ jobs:
             echo "🧹 Cleaning up old images..."
             docker image prune -f
             
+            echo "Hello world"
             echo "🎉 Deployment completed successfully!"
 
 

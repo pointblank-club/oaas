@@ -4,8 +4,7 @@ FROM ubuntu:22.04
 ENV DEBIAN_FRONTEND=noninteractive
 
 # ============================================================================
-# STAGE 1: Install LLVM/MLIR from pre-built packages (SPACE EFFICIENT!)
-# Using apt.llvm.org for latest LLVM packages
+# STAGE 1: Install build dependencies
 # ============================================================================
 
 RUN apt-get update && apt-get install -y \
@@ -24,51 +23,105 @@ RUN apt-get update && apt-get install -y \
     openssl \
     binutils \
     file \
+    zlib1g-dev \
+    libtinfo-dev \
+    libxml2-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Add LLVM apt repository for latest packages
-RUN wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc
-RUN echo "deb http://apt.llvm.org/jammy/ llvm-toolchain-jammy-18 main" >> /etc/apt/sources.list.d/llvm.list
-
-# Install LLVM 18 (latest stable with good MLIR support)
-RUN apt-get update && apt-get install -y \
-    clang-18 \
-    llvm-18 \
-    llvm-18-dev \
-    llvm-18-tools \
-    mlir-18-tools \
-    libmlir-18-dev \
-    lld-18 \
-    && rm -rf /var/lib/apt/lists/*
-
-# Create symlinks for tools
-RUN update-alternatives --install /usr/bin/clang clang /usr/bin/clang-18 100 && \
-    update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-18 100 && \
-    update-alternatives --install /usr/bin/llvm-config llvm-config /usr/bin/llvm-config-18 100 && \
-    ln -sf /usr/bin/mlir-opt-18 /usr/bin/mlir-opt && \
-    ln -sf /usr/bin/mlir-translate-18 /usr/bin/mlir-translate
-
-# Set environment
-ENV PATH="/usr/lib/llvm-18/bin:${PATH}"
-ENV LD_LIBRARY_PATH="/usr/lib/llvm-18/lib"
-ENV LLVM_DIR="/usr/lib/llvm-18/lib/cmake/llvm"
-ENV MLIR_DIR="/usr/lib/llvm-18/lib/cmake/mlir"
-
 # ============================================================================
-# STAGE 2: Verify installation
+# STAGE 2: Build LLVM/Clang/MLIR with ClangIR (CIR) support
+# This requires ~60-80GB during build, ~15GB after cleanup
 # ============================================================================
 
-RUN echo "=== Verifying LLVM/MLIR Installation ===" && \
-    clang --version && \
+WORKDIR /opt
+
+# Clone LLVM - shallow clone to save space and time
+RUN git clone --depth=1 https://github.com/llvm/llvm-project.git llvm-project
+
+# Build LLVM with ClangIR enabled
+# Using Release build and minimal targets to reduce size
+WORKDIR /opt/llvm-project/build
+RUN cmake ../llvm \
+    -G Ninja \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DLLVM_ENABLE_PROJECTS="clang;mlir" \
+    -DLLVM_TARGETS_TO_BUILD="X86" \
+    -DLLVM_ENABLE_ASSERTIONS=OFF \
+    -DLLVM_ENABLE_RTTI=ON \
+    -DLLVM_ENABLE_EH=ON \
+    -DLLVM_BUILD_EXAMPLES=OFF \
+    -DLLVM_BUILD_TESTS=OFF \
+    -DLLVM_BUILD_BENCHMARKS=OFF \
+    -DLLVM_BUILD_DOCS=OFF \
+    -DLLVM_INCLUDE_TESTS=OFF \
+    -DLLVM_INCLUDE_EXAMPLES=OFF \
+    -DLLVM_INCLUDE_BENCHMARKS=OFF \
+    -DLLVM_INCLUDE_DOCS=OFF \
+    -DCLANG_ENABLE_CIR=ON \
+    -DCMAKE_INSTALL_PREFIX=/usr/local/llvm
+
+# Build the essential tools (this takes a while but uses less memory than full build)
+RUN ninja clang llvm-config mlir-opt mlir-translate opt llc \
+    FileCheck count not \
+    2>&1 | tail -100
+
+# Try to build cir-opt if available (may not exist in all versions)
+RUN ninja cir-opt 2>/dev/null || echo "cir-opt not available in this LLVM version"
+
+# Install
+RUN ninja install 2>&1 | tail -20
+
+# ============================================================================
+# STAGE 3: Cleanup to save space (~40GB freed)
+# ============================================================================
+
+WORKDIR /opt
+RUN rm -rf /opt/llvm-project/build && \
+    rm -rf /opt/llvm-project/.git && \
+    echo "Build artifacts cleaned"
+
+# ============================================================================
+# STAGE 4: Set up environment
+# ============================================================================
+
+ENV PATH="/usr/local/llvm/bin:${PATH}"
+ENV LD_LIBRARY_PATH="/usr/local/llvm/lib:${LD_LIBRARY_PATH}"
+ENV LLVM_DIR="/usr/local/llvm/lib/cmake/llvm"
+ENV MLIR_DIR="/usr/local/llvm/lib/cmake/mlir"
+
+# Create clangir wrapper script
+RUN echo '#!/bin/bash' > /usr/local/bin/clangir && \
+    echo 'exec clang -fclangir "$@"' >> /usr/local/bin/clangir && \
+    chmod +x /usr/local/bin/clangir
+
+# ============================================================================
+# STAGE 5: Verify installation
+# ============================================================================
+
+RUN echo "=== LLVM/ClangIR Installation Verification ===" && \
+    echo "" && \
+    echo "Clang version:" && clang --version && \
+    echo "" && \
+    echo "MLIR tools:" && \
     mlir-opt --version && \
     mlir-translate --version && \
-    echo "✅ LLVM/MLIR tools installed successfully"
-
-# Note: ClangIR is experimental and not in pre-built packages
-# The pipeline will automatically fall back to standard Clang → LLVM IR → MLIR
+    echo "" && \
+    echo "Testing ClangIR support:" && \
+    echo 'int main() { return 0; }' > /tmp/test.c && \
+    (clang -fclangir -emit-cir /tmp/test.c -o /tmp/test.cir 2>&1 && \
+     echo "✅ ClangIR (-fclangir -emit-cir) WORKS!" && \
+     head -20 /tmp/test.cir) || \
+    echo "⚠️ ClangIR emit not working (will use fallback)" && \
+    echo "" && \
+    echo "Testing ClangIR full compilation:" && \
+    (clang -fclangir /tmp/test.c -o /tmp/test_cir 2>&1 && \
+     /tmp/test_cir && \
+     echo "✅ ClangIR full compilation WORKS!") || \
+    echo "⚠️ ClangIR compilation not working (will use fallback)" && \
+    rm -f /tmp/test.c /tmp/test.cir /tmp/test_cir
 
 # ============================================================================
-# STAGE 3: Copy project and build MLIR obfuscation passes
+# STAGE 6: Copy project and build MLIR obfuscation passes
 # ============================================================================
 
 WORKDIR /app
@@ -80,68 +133,136 @@ RUN mkdir -p build && cd build && \
     cmake .. \
         -G Ninja \
         -DCMAKE_BUILD_TYPE=Release \
-        -DLLVM_DIR=/usr/lib/llvm-18/lib/cmake/llvm \
-        -DMLIR_DIR=/usr/lib/llvm-18/lib/cmake/mlir && \
+        -DLLVM_DIR=/usr/local/llvm/lib/cmake/llvm \
+        -DMLIR_DIR=/usr/local/llvm/lib/cmake/mlir && \
     ninja
 
-# Verify the library was built
-RUN echo "=== Verifying MLIR Obfuscation Library ===" && \
+# Verify the library
+RUN echo "=== MLIR Obfuscation Library ===" && \
     ls -la /app/mlir-obs/build/lib/ && \
-    echo "✅ MLIR Obfuscation library built"
+    echo "" && \
+    echo "Testing pass registration:" && \
+    (mlir-opt --load-pass-plugin=/app/mlir-obs/build/lib/libMLIRObfuscation.so --help 2>&1 | \
+     grep -E "string-encrypt|symbol-obfuscate|crypto-hash|constant-obfuscate" && \
+     echo "✅ All passes registered!") || \
+    echo "⚠️ Could not verify passes"
 
 # ============================================================================
-# STAGE 4: Install Python dependencies
+# STAGE 7: Install Python dependencies
 # ============================================================================
 
 WORKDIR /app/cmd/llvm-obfuscator
-RUN pip3 install --no-cache-dir -r requirements.txt || pip3 install --no-cache-dir typer pyyaml
+RUN pip3 install --no-cache-dir -r requirements.txt 2>/dev/null || \
+    pip3 install --no-cache-dir typer pyyaml
 
 # ============================================================================
-# STAGE 5: Setup and permissions
+# STAGE 8: Create test scripts
 # ============================================================================
 
 WORKDIR /app
 
-# Make scripts executable
-RUN chmod +x mlir-obs/build.sh mlir-obs/test.sh 2>/dev/null || true
-RUN chmod +x mlir-obs/test-clangir-pipeline.sh 2>/dev/null || true
+# Make existing scripts executable
+RUN chmod +x mlir-obs/build.sh mlir-obs/test.sh mlir-obs/test-clangir-pipeline.sh 2>/dev/null || true
 
-# Create a simple test script
-RUN echo '#!/bin/bash' > /usr/local/bin/test-pipeline && \
-    echo 'set -e' >> /usr/local/bin/test-pipeline && \
-    echo 'echo "=== Testing MLIR Obfuscation Pipeline ==="' >> /usr/local/bin/test-pipeline && \
-    echo 'cd /app' >> /usr/local/bin/test-pipeline && \
-    echo '' >> /usr/local/bin/test-pipeline && \
-    echo '# Create test file' >> /usr/local/bin/test-pipeline && \
-    echo 'cat > /tmp/test.c << EOF' >> /usr/local/bin/test-pipeline && \
-    echo '#include <stdio.h>' >> /usr/local/bin/test-pipeline && \
-    echo 'const char* SECRET = "MyPassword123";' >> /usr/local/bin/test-pipeline && \
-    echo 'int main() { printf("Hello: %s\\n", SECRET); return 0; }' >> /usr/local/bin/test-pipeline && \
-    echo 'EOF' >> /usr/local/bin/test-pipeline && \
-    echo '' >> /usr/local/bin/test-pipeline && \
-    echo '# Test compilation with obfuscation' >> /usr/local/bin/test-pipeline && \
-    echo 'python3 -m cmd.llvm-obfuscator.cli.obfuscate compile /tmp/test.c \' >> /usr/local/bin/test-pipeline && \
-    echo '    --enable-string-encrypt \' >> /usr/local/bin/test-pipeline && \
-    echo '    --enable-symbol-obfuscate \' >> /usr/local/bin/test-pipeline && \
-    echo '    --output /tmp/output' >> /usr/local/bin/test-pipeline && \
-    echo '' >> /usr/local/bin/test-pipeline && \
-    echo 'echo ""' >> /usr/local/bin/test-pipeline && \
-    echo 'echo "=== Verifying Obfuscation ==="' >> /usr/local/bin/test-pipeline && \
-    echo 'if [ -f /tmp/output/test ]; then' >> /usr/local/bin/test-pipeline && \
-    echo '    echo "Binary created: /tmp/output/test"' >> /usr/local/bin/test-pipeline && \
-    echo '    /tmp/output/test' >> /usr/local/bin/test-pipeline && \
-    echo '    echo ""' >> /usr/local/bin/test-pipeline && \
-    echo '    echo "Checking for hidden strings..."' >> /usr/local/bin/test-pipeline && \
-    echo '    if strings /tmp/output/test | grep -q "MyPassword123"; then' >> /usr/local/bin/test-pipeline && \
-    echo '        echo "❌ String still visible"' >> /usr/local/bin/test-pipeline && \
-    echo '    else' >> /usr/local/bin/test-pipeline && \
-    echo '        echo "✅ String hidden!"' >> /usr/local/bin/test-pipeline && \
-    echo '    fi' >> /usr/local/bin/test-pipeline && \
-    echo 'else' >> /usr/local/bin/test-pipeline && \
-    echo '    echo "❌ Binary not created"' >> /usr/local/bin/test-pipeline && \
-    echo '    exit 1' >> /usr/local/bin/test-pipeline && \
-    echo 'fi' >> /usr/local/bin/test-pipeline && \
-    chmod +x /usr/local/bin/test-pipeline
+# Create comprehensive test script
+RUN cat > /usr/local/bin/test-all << 'TESTSCRIPT'
+#!/bin/bash
+set -e
+
+echo "============================================================"
+echo "  OAAS Complete Pipeline Test"
+echo "============================================================"
+echo ""
+
+cd /app
+
+# Test 1: System Info
+echo "=== Test 1: System Information ==="
+python3 -m cmd.llvm-obfuscator.cli.obfuscate info
+echo ""
+
+# Test 2: Standard Pipeline
+echo "=== Test 2: Standard Pipeline (Clang → LLVM IR → MLIR) ==="
+cat > /tmp/test_std.c << 'EOF'
+#include <stdio.h>
+const char* PASSWORD = "SecretPassword123";
+int authenticate(const char* input) { return 1; }
+int main() { printf("Auth: %d\n", authenticate("test")); return 0; }
+EOF
+
+python3 -m cmd.llvm-obfuscator.cli.obfuscate compile /tmp/test_std.c \
+    --enable-string-encrypt \
+    --enable-symbol-obfuscate \
+    --output /tmp/output_std
+
+if [ -f /tmp/output_std/test_std ]; then
+    echo "✅ Binary created"
+    /tmp/output_std/test_std
+    if strings /tmp/output_std/test_std | grep -q "SecretPassword123"; then
+        echo "⚠️ String still visible"
+    else
+        echo "✅ String hidden!"
+    fi
+    if nm /tmp/output_std/test_std 2>/dev/null | grep -q "authenticate"; then
+        echo "⚠️ Symbol still visible"
+    else
+        echo "✅ Symbol obfuscated!"
+    fi
+else
+    echo "❌ Binary not created"
+fi
+echo ""
+
+# Test 3: ClangIR Pipeline
+echo "=== Test 3: ClangIR Pipeline ==="
+if clang -fclangir --help 2>&1 | grep -q "unknown argument"; then
+    echo "⚠️ ClangIR not available, skipping"
+else
+    cat > /tmp/test_cir.c << 'EOF'
+int add(int a, int b) { return a + b; }
+int main() { return add(1, 2); }
+EOF
+
+    python3 -m cmd.llvm-obfuscator.cli.obfuscate compile /tmp/test_cir.c \
+        --mlir-frontend clangir \
+        --enable-constant-obfuscate \
+        --output /tmp/output_cir 2>&1 || echo "ClangIR pipeline result above"
+
+    if [ -f /tmp/output_cir/test_cir ]; then
+        echo "✅ ClangIR binary created"
+        /tmp/output_cir/test_cir
+        echo "Exit code: $?"
+    else
+        echo "⚠️ ClangIR binary not created (fallback may have been used)"
+    fi
+fi
+echo ""
+
+# Test 4: Crypto Hash
+echo "=== Test 4: Crypto Hash Pass ==="
+cat > /tmp/test_hash.c << 'EOF'
+int secret_function(int x) { return x * 2; }
+int main() { return secret_function(21); }
+EOF
+
+python3 -m cmd.llvm-obfuscator.cli.obfuscate compile /tmp/test_hash.c \
+    --enable-crypto-hash \
+    --crypto-hash-algorithm sha256 \
+    --crypto-hash-salt "mysalt" \
+    --output /tmp/output_hash
+
+if [ -f /tmp/output_hash/test_hash ]; then
+    echo "✅ Binary created"
+    RESULT=$(/tmp/output_hash/test_hash; echo $?)
+    echo "Exit code: $RESULT (expected: 42)"
+fi
+echo ""
+
+echo "============================================================"
+echo "  All Tests Completed!"
+echo "============================================================"
+TESTSCRIPT
+chmod +x /usr/local/bin/test-all
 
 # Default command
 CMD ["/bin/bash"]

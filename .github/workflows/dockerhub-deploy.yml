@@ -4,6 +4,8 @@ on:
   push:
     branches: [ main, develop ]
     tags: [ 'v*' ]
+  pull_request:
+    branches: [ main ]
 
 env:
   DOCKERHUB_REGISTRY: docker.io

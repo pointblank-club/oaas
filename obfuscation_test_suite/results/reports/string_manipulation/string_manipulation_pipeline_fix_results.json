@@ -1,0 +1,244 @@
+{
+  "metadata": {
+    "timestamp": "2025-12-01T23:27:41.310017",
+    "program": "string_manipulation_pipeline_fix",
+    "baseline": "/tmp/string_test/string_baseline",
+    "obfuscated": "/tmp/string_test/string_obfuscated"
+  },
+  "test_results": {
+    "functional": {
+      "test_count": 1,
+      "passed": 0,
+      "failed": 1,
+      "same_behavior": false,
+      "details": []
+    },
+    "strings": {
+      "baseline_strings": 175,
+      "obf_strings": 150,
+      "reduction_percent": 14.29,
+      "sample_baseline": [
+        "/lib64/ld-linux-x86-64.so.2",
+        "__gmon_start__",
+        "_ITM_deregisterTMCloneTable",
+        "_ITM_registerTMCloneTable",
+        "_ZNSolsEi"
+      ],
+      "sample_obf": [
+        "/lib64/ld-linux-x86-64.so.2",
+        "__gmon_start__",
+        "_ITM_deregisterTMCloneTable",
+        "_ITM_registerTMCloneTable",
+        "_ZdlPvm"
+      ]
+    },
+    "binary_properties": {
+      "baseline_size_bytes": 22480,
+      "obf_size_bytes": 18832,
+      "size_increase_percent": -16.23,
+      "baseline_entropy": 3.2418,
+      "obf_entropy": 4.5158,
+      "entropy_increase": 1.274
+    },
+    "symbols": {
+      "baseline_symbol_count": 33,
+      "obf_symbol_count": 0,
+      "symbols_reduced": true,
+      "sample_baseline_symbols": [
+        "__abi_tag",
+        "__bss_start",
+        "completed.0",
+        "__data_start",
+        "data_start"
+      ],
+      "sample_obf_symbols": []
+    },
+    "performance": {
+      "baseline_ms": 4.21,
+      "obf_ms": 1.28,
+      "overhead_percent": -69.54,
+      "acceptable": true
+    },
+    "debuggability": {
+      "baseline_has_debug_info": true,
+      "obf_has_debug_info": false,
+      "debug_info_preserved": false,
+      "difficulty_estimate": "HIGH"
+    },
+    "re_difficulty": {
+      "re_difficulty_score": 50,
+      "re_difficulty_level": "MEDIUM",
+      "factors": {
+        "complexity_increase": 20,
+        "string_obfuscation": 15,
+        "entropy_increase": 15,
+        "symbol_obfuscation": 15,
+        "performance_acceptable": 20
+      }
+    },
+    "advanced_analysis": {
+      "ghidra": {
+        "decompilation": {
+          "status": "success",
+          "method": "objdump_fallback",
+          "branch_instructions": 177,
+          "call_instructions": 110,
+          "total_instructions": 1587,
+          "branch_density": 0.11153119092627599,
+          "complexity_estimate": "medium"
+        },
+        "cfg_analysis": {
+          "status": "success",
+          "cfg_edges": 0,
+          "basic_blocks": 0,
+          "branch_density": 0.0
+        }
+      },
+      "binja": {
+        "status": "not_installed"
+      },
+      "ida": {
+        "status": "not_installed"
+      },
+      "angr": {
+        "symbolic_execution": {
+          "status": "success",
+          "entry_point": "0x401170",
+          "arch": "<Arch AMD64 (LE)>",
+          "reachable_paths": 1,
+          "discovered_functions": 0,
+          "memory_accesses": 0
+        },
+        "vulnerabilities": {
+          "status": "success",
+          "vulnerable_patterns": {
+            "format_string_vulns": 0,
+            "buffer_overflow_patterns": 0,
+            "use_after_free_patterns": 0,
+            "integer_overflow_patterns": 0
+          },
+          "overall_risk": "low"
+        }
+      }
+    },
+    "string_obfuscation_advanced": {
+      "obfuscation_techniques": {
+        "complete_removal": false,
+        "character_encoding": false,
+        "string_splitting": false,
+        "xor_encryption": false,
+        "stack_strings": false
+      },
+      "baseline_string_count": 175,
+      "obfuscated_string_count": 150,
+      "reduction_percentage": 14.28571428571429,
+      "detection_confidence": 0.0
+    },
+    "debuggability_advanced": {
+      "baseline": {
+        "debuggability_score": 80.0,
+        "details": {
+          "debug_symbols": true,
+          "debug_info_sections": [],
+          "anti_debug_patterns": false,
+          "ptrace_resistance": false,
+          "debugger_detection": false
+        }
+      },
+      "obfuscated": {
+        "debuggability_score": 100.0,
+        "details": {
+          "debug_symbols": false,
+          "debug_info_sections": [],
+          "anti_debug_patterns": false,
+          "ptrace_resistance": false,
+          "debugger_detection": false
+        }
+      }
+    },
+    "code_coverage": {
+      "baseline": {
+        "estimated_coverage": 70.0,
+        "reachable_code_percentage": 85.0,
+        "dead_code_percentage": 5.0,
+        "unreachable_functions": 0
+      },
+      "obfuscated": {
+        "estimated_coverage": 70.0,
+        "reachable_code_percentage": 85.0,
+        "dead_code_percentage": 5.0,
+        "unreachable_functions": 0
+      }
+    },
+    "patchability": {
+      "baseline": {
+        "position_independent": true,
+        "relocation_entries": 36,
+        "patch_difficulty": "MEDIUM",
+        "binary_hardening": {
+          "checksec_output": ""
+        }
+      },
+      "obfuscated": {
+        "position_independent": true,
+        "relocation_entries": 29,
+        "patch_difficulty": "MEDIUM",
+        "binary_hardening": {
+          "checksec_output": ""
+        }
+      }
+    }
+  },
+  "metrics": {
+    "cfg_metrics": {
+      "baseline": {
+        "indirect_jumps": 28,
+        "branch_instructions": 91,
+        "basic_blocks_estimate": 45,
+        "call_instructions": 66,
+        "nop_instructions": 69
+      },
+      "obfuscated": {
+        "indirect_jumps": 23,
+        "branch_instructions": 166,
+        "basic_blocks_estimate": 83,
+        "call_instructions": 110,
+        "nop_instructions": 17
+      },
+      "comparison": {
+        "indirect_jumps_ratio": 0.82,
+        "basic_blocks_ratio": 1.84,
+        "control_flow_complexity_increase": 1.82
+      }
+    },
+    "complexity": {
+      "baseline": {
+        "size_bytes": 22480,
+        "section_count": 57,
+        "symbol_count": 64
+      },
+      "obfuscated": {
+        "size_bytes": 18832,
+        "section_count": 55,
+        "symbol_count": 0
+      },
+      "changes": {
+        "size_increase_percent": -16.23,
+        "section_increase": -2,
+        "symbol_reduction": 64,
+        "symbol_reduction_percent": 100.0
+      }
+    },
+    "coverage": {
+      "baseline": {
+        "estimated_coverage": "N/A",
+        "reachable_code": "~0%"
+      },
+      "obfuscated": {
+        "estimated_coverage": "N/A",
+        "reachable_code": "~10%"
+      },
+      "analysis_note": "Coverage analysis requires runtime instrumentation or binary analysis tools"
+    }
+  }
+}

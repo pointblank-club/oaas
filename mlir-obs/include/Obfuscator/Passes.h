@@ -9,7 +9,7 @@ namespace mlir {
 namespace obs {
 
 // ======================= STRING ENCRYPTION PASS ============================
-struct StringEncryptPass 
+struct StringEncryptPass
     : public PassWrapper<StringEncryptPass, OperationPass<ModuleOp>> {
 
   StringEncryptPass() = default;
@@ -27,6 +27,26 @@ struct StringEncryptPass
 };
 
 std::unique_ptr<Pass> createStringEncryptPass(llvm::StringRef key);
+
+
+// =================== CONSTANT OBFUSCATION PASS =============================
+struct ConstantObfuscationPass
+    : public PassWrapper<ConstantObfuscationPass, OperationPass<ModuleOp>> {
+
+  ConstantObfuscationPass() = default;
+  ConstantObfuscationPass(const std::string &key) : key(key) {}
+
+  StringRef getArgument() const override { return "constant-obfuscate"; }
+  StringRef getDescription() const override {
+    return "Obfuscate all constants: strings, integers, floats (Func Dialect compatible)";
+  }
+
+  void runOnOperation() override;
+
+  std::string key = "default_key";
+};
+
+std::unique_ptr<Pass> createConstantObfuscationPass(llvm::StringRef key);
 
 
 // ======================== SYMBOL OBFUSCATION PASS ==========================
@@ -47,6 +67,39 @@ struct SymbolObfuscatePass
 };
 
 std::unique_ptr<Pass> createSymbolObfuscatePass(llvm::StringRef key);
+
+
+// ===================== CRYPTOGRAPHIC HASH PASS =============================
+struct CryptoHashPass
+    : public PassWrapper<CryptoHashPass, OperationPass<ModuleOp>> {
+
+  enum class HashAlgorithm {
+    SHA256,
+    BLAKE2B,
+    SIPHASH
+  };
+
+  CryptoHashPass() = default;
+  CryptoHashPass(HashAlgorithm algo, const std::string &salt, unsigned hashLength)
+      : algorithm(algo), salt(salt), hashLength(hashLength) {}
+
+  StringRef getArgument() const override { return "crypto-hash"; }
+  StringRef getDescription() const override {
+    return "Cryptographically hash symbol names using SHA256/BLAKE2B/SipHash";
+  }
+
+  void runOnOperation() override;
+
+  HashAlgorithm algorithm = HashAlgorithm::SHA256;
+  std::string salt = "";
+  unsigned hashLength = 12;  // Truncate hash to N characters
+};
+
+std::unique_ptr<Pass> createCryptoHashPass(
+    CryptoHashPass::HashAlgorithm algo = CryptoHashPass::HashAlgorithm::SHA256,
+    llvm::StringRef salt = "",
+    unsigned hashLength = 12
+);
 
 
 } // namespace obs

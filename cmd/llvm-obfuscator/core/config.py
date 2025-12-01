@@ -24,12 +24,45 @@ class Platform(str, Enum):
             raise ValueError(f"Unsupported platform: {value}") from exc
 
 
+class MLIRFrontend(str, Enum):
+    """
+    MLIR Frontend Selection (ClangIR Pipeline)
+
+    CLANG: Default - Current working pipeline (C/C++ → Clang → LLVM IR → MLIR)
+    CLANGIR: New - ClangIR frontend (C/C++ → ClangIR → High-level MLIR) [LLVM 22 native]
+    """
+    CLANG = "clang"          # DEFAULT - existing pipeline (SAFE)
+    CLANGIR = "clangir"      # NEW - ClangIR frontend (LLVM 22 compatible)
+
+    @classmethod
+    def from_string(cls, value: str) -> "MLIRFrontend":
+        normalized = value.lower()
+        try:
+            return cls(normalized)
+        except ValueError as exc:
+            raise ValueError(f"Unsupported MLIR frontend: {value}. Use 'clang' or 'clangir'.") from exc
+
+
 class ObfuscationLevel(int, Enum):
     MINIMAL = 1
     LOW = 2
     MEDIUM = 3
     HIGH = 4
     MAXIMUM = 5
+
+
+class CryptoHashAlgorithm(str, Enum):
+    SHA256 = "sha256"
+    BLAKE2B = "blake2b"
+    SIPHASH = "siphash"
+
+
+@dataclass
+class CryptoHashConfiguration:
+    enabled: bool = False
+    algorithm: CryptoHashAlgorithm = CryptoHashAlgorithm.SHA256
+    salt: str = ""
+    hash_length: int = 12
 
 
 @dataclass
@@ -41,6 +74,8 @@ class PassConfiguration:
     linear_mba: bool = False
     string_encrypt: bool = False
     symbol_obfuscate: bool = False
+    constant_obfuscate: bool = False
+    crypto_hash: Optional[CryptoHashConfiguration] = None
 
     def enabled_passes(self) -> List[str]:
         mapping = {
@@ -51,8 +86,15 @@ class PassConfiguration:
             "linear-mba": self.linear_mba,
             "string-encrypt": self.string_encrypt,
             "symbol-obfuscate": self.symbol_obfuscate,
+            "constant-obfuscate": self.constant_obfuscate,
         }
-        return [name for name, enabled in mapping.items() if enabled]
+        passes = [name for name, enabled in mapping.items() if enabled]
+
+        # Add crypto-hash if enabled (replaces symbol-obfuscate)
+        if self.crypto_hash and self.crypto_hash.enabled:
+            passes.append("crypto-hash")
+
+        return passes
 
 @dataclass
 class IndirectCallConfiguration:
@@ -103,6 +145,7 @@ class ObfuscationConfig:
     entrypoint_command: Optional[str] = None  # Build command for compile flag extraction
     project_root: Optional[Path] = None  # Root directory for multi-file projects (where entrypoint runs)
     custom_compiler_wrapper: Optional[str] = None  # Path to compiler wrapper (obf-clang) for transparent build interception
+    mlir_frontend: MLIRFrontend = MLIRFrontend.CLANG  # DEFAULT to existing pipeline (SAFE)
 
     @classmethod
     def from_dict(cls, data: Dict) -> "ObfuscationConfig":
@@ -110,6 +153,18 @@ class ObfuscationConfig:
         platform = Platform.from_string(data.get("platform", Platform.LINUX.value))
         compiler_flags = data.get("compiler_flags", [])
         passes_data = data.get("passes", {})
+
+        # Parse crypto_hash configuration
+        crypto_hash_data = passes_data.get("crypto_hash", {})
+        crypto_hash = None
+        if crypto_hash_data:
+            crypto_hash = CryptoHashConfiguration(
+                enabled=crypto_hash_data.get("enabled", False),
+                algorithm=CryptoHashAlgorithm(crypto_hash_data.get("algorithm", "sha256")),
+                salt=crypto_hash_data.get("salt", ""),
+                hash_length=crypto_hash_data.get("hash_length", 12),
+            )
+
         passes = PassConfiguration(
             flattening=passes_data.get("flattening", False),
             substitution=passes_data.get("substitution", False),
@@ -118,6 +173,8 @@ class ObfuscationConfig:
             linear_mba=passes_data.get("linear_mba", False),
             string_encrypt=passes_data.get("string_encrypt", False),
             symbol_obfuscate=passes_data.get("symbol_obfuscate", False),
+            constant_obfuscate=passes_data.get("constant_obfuscate", False),
+            crypto_hash=crypto_hash,
         )
         adv_data = data.get("advanced", {})
 
@@ -165,6 +222,11 @@ class ObfuscationConfig:
         if project_root:
             project_root = Path(project_root)
         custom_compiler_wrapper = data.get("custom_compiler_wrapper")
+
+        # Parse mlir_frontend (optional, defaults to CLANG for backward compatibility)
+        mlir_frontend_str = data.get("mlir_frontend", "clang")
+        mlir_frontend = MLIRFrontend.from_string(mlir_frontend_str)
+
         return cls(
             level=level,
             platform=platform,
@@ -176,6 +238,7 @@ class ObfuscationConfig:
             entrypoint_command=entrypoint_command,
             project_root=project_root,
             custom_compiler_wrapper=custom_compiler_wrapper,
+            mlir_frontend=mlir_frontend,
         )
 
 

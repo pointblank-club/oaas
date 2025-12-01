@@ -4,6 +4,8 @@ add_llvm_library(MLIRObfuscation
   Passes.cpp
   PassRegistrations.cpp
   SymbolPass.cpp
+  CryptoHashPass.cpp
+  ConstantObfuscationPass.cpp
 
   PLUGIN_TOOL
   mlir-opt
@@ -12,9 +14,11 @@ add_llvm_library(MLIRObfuscation
   MLIRIR
   MLIRPass
   MLIRFuncDialect
+  MLIRLLVMDialect
   MLIRTransforms
   MLIRSupport
   MLIROptLib
+  OpenSSL::Crypto
 )
 
 target_include_directories(MLIRObfuscation

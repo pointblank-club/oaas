@@ -11,7 +11,7 @@ services:
       - ./test_results:/app/test_results
     environment:
       - PYTHONPATH=/app/cmd/llvm-obfuscator
-      - LD_LIBRARY_PATH=/opt/llvm/lib:/app/mlir-obs/build/lib
+      - LD_LIBRARY_PATH=/usr/lib/llvm-22/lib:/app/mlir-obs/build/lib
     command: bash -c "cd /app/tests && ./run_integration_tests.sh"
     
   # Interactive development container
@@ -25,7 +25,7 @@ services:
     working_dir: /app
     environment:
       - PYTHONPATH=/app/cmd/llvm-obfuscator
-      - LD_LIBRARY_PATH=/opt/llvm/lib:/app/mlir-obs/build/lib
+      - LD_LIBRARY_PATH=/usr/lib/llvm-22/lib:/app/mlir-obs/build/lib
     stdin_open: true
     tty: true
     command: /bin/bash
@@ -39,5 +39,5 @@ services:
       - ./tests:/app/tests
       - ./test_results:/app/test_results
     environment:
-      - LD_LIBRARY_PATH=/opt/llvm/lib:/app/mlir-obs/build/lib
+      - LD_LIBRARY_PATH=/usr/lib/llvm-22/lib:/app/mlir-obs/build/lib
     command: bash -c "cd /app/tests && ./test_mlir_passes_only.sh"

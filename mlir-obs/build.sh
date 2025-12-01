@@ -33,6 +33,7 @@ echo "Configuring with CMake..."
 
 # Try to find MLIR automatically
 MLIR_DIRS=(
+  "/usr/lib/llvm-22/lib/cmake/mlir"
   "/usr/lib/cmake/mlir"
   "/usr/local/lib/cmake/mlir"
   "$HOME/llvm-project/build/lib/cmake/mlir"

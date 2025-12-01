@@ -42,16 +42,16 @@ Obfuscated Binary
 
 Before building, ensure you have:
 
-- **LLVM/MLIR 15+** installed with development headers
+- **LLVM/MLIR 22** installed with development headers
 - **CMake 3.13+**
-- **Clang 15+**
+- **Clang 22**
 - **C++17 compatible compiler**
 
 ### Installing LLVM/MLIR on Linux
 
 ```bash
 # Ubuntu/Debian
-sudo apt-get install llvm-19 llvm-19-dev mlir-19-tools libmlir-19-dev clang-19
+sudo apt-get install llvm-22 llvm-22-dev mlir-22-tools libmlir-22-dev clang-22
 
 # Verify installation
 mlir-opt --version
@@ -253,14 +253,14 @@ cd mlir-obs
 find /usr -name "mlir-opt" 2>/dev/null
 
 # Add to PATH
-export PATH="/usr/lib/llvm-19/bin:$PATH"
+export PATH="/usr/lib/llvm-22/bin:$PATH"
 ```
 
 ### CMake can't find MLIR
 
 **Solution:** Specify MLIR_DIR explicitly:
 ```bash
-cmake .. -DMLIR_DIR=/usr/lib/llvm-19/lib/cmake/mlir
+cmake .. -DMLIR_DIR=/usr/lib/llvm-22/lib/cmake/mlir
 ```
 
 ### Pass not loading

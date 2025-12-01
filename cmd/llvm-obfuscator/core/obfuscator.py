@@ -48,6 +48,8 @@ class LLVMObfuscator:
         "split",
         "string-encrypt",
         "symbol-obfuscate",
+        "crypto-hash",
+        "constant-obfuscate",
     ]
 
     def __init__(self, reporter: Optional[ObfuscationReport] = None) -> None:
@@ -554,6 +556,36 @@ class LLVMObfuscator:
         compiler_flags: List[str],
         enabled_passes: List[str],
     ) -> Dict:
+        """
+        Main compilation dispatcher - routes to appropriate frontend.
+
+        DEFAULT (config.mlir_frontend == CLANG): Existing pipeline (SAFE)
+        NEW (config.mlir_frontend == CLANGIR): ClangIR pipeline
+        """
+        from .config import MLIRFrontend
+
+        # Route to appropriate pipeline based on frontend choice
+        if config.mlir_frontend == MLIRFrontend.CLANGIR:
+            # NEW: ClangIR pipeline
+            return self._compile_with_clangir(source, destination, config, compiler_flags, enabled_passes)
+        else:
+            # DEFAULT: Existing Clang → LLVM IR → MLIR pipeline (UNCHANGED)
+            return self._compile_with_clang_llvm(source, destination, config, compiler_flags, enabled_passes)
+
+    def _compile_with_clang_llvm(
+        self,
+        source: Path,
+        destination: Path,
+        config: ObfuscationConfig,
+        compiler_flags: List[str],
+        enabled_passes: List[str],
+    ) -> Dict:
+        """
+        EXISTING PIPELINE (UNCHANGED) - Clang → LLVM IR → MLIR
+
+        This is the original working implementation, extracted into its own method.
+        NO LOGIC CHANGES - just code moved for better organization.
+        """
         # Use absolute paths to avoid path resolution issues
         source_abs = source.resolve()
         destination_abs = destination.resolve()
@@ -572,7 +604,7 @@ class LLVMObfuscator:
 
         compiler = base_compiler
 
-        mlir_passes = [p for p in enabled_passes if p in ["string-encrypt", "symbol-obfuscate"]]
+        mlir_passes = [p for p in enabled_passes if p in ["string-encrypt", "symbol-obfuscate", "crypto-hash", "constant-obfuscate"]]
         ollvm_passes = [p for p in enabled_passes if p not in mlir_passes]
 
         # The input for the current stage of the pipeline
@@ -761,6 +793,167 @@ class LLVMObfuscator:
         run_command(final_cmd, cwd=source_abs.parent)
 
         # Cleanup any remaining intermediate files
+        if current_input != source_abs and current_input.exists():
+            current_input.unlink()
+
+        return {
+            "applied_passes": actually_applied_passes,
+            "warnings": warnings,
+            "disabled_passes": []
+        }
+
+    def _compile_with_clangir(
+        self,
+        source: Path,
+        destination: Path,
+        config: ObfuscationConfig,
+        compiler_flags: List[str],
+        enabled_passes: List[str],
+    ) -> Dict:
+        """
+        NEW PIPELINE - ClangIR → High-level MLIR → Obfuscation Passes
+
+        Pipeline: C/C++ → ClangIR → MLIR (CIR dialect) → Lower to LLVM → MLIR passes → Binary
+        """
+        from .config import Platform
+
+        # Use absolute paths
+        source_abs = source.resolve()
+        destination_abs = destination.resolve()
+
+        warnings = []
+        actually_applied_passes = list(enabled_passes)
+
+        # Detect compiler
+        if source_abs.suffix in ['.cpp', '.cxx', '.cc', '.c++']:
+            base_compiler = "clang++"
+            compiler_flags = compiler_flags + ["-lstdc++"]
+        else:
+            base_compiler = "clang"
+
+        compiler = base_compiler
+
+        mlir_passes = [p for p in enabled_passes if p in ["string-encrypt", "symbol-obfuscate", "crypto-hash", "constant-obfuscate"]]
+        ollvm_passes = [p for p in enabled_passes if p not in mlir_passes]
+
+        current_input = source_abs
+
+        # Stage 1: ClangIR Frontend (C/C++ → ClangIR MLIR)
+        self.logger.info("Running ClangIR frontend...")
+
+        # Check if clangir is available
+        import shutil
+        if not shutil.which("clangir"):
+            raise ObfuscationError(
+                "ClangIR frontend requested but 'clangir' command not found. "
+                "Please ensure ClangIR is built and available in PATH."
+            )
+
+        # 1a: Compile source to ClangIR MLIR (CIR dialect)
+        cir_mlir_file = destination_abs.parent / f"{destination_abs.stem}_cir.mlir"
+        clangir_cmd = ["clangir", str(current_input), "-emit-cir", "-o", str(cir_mlir_file)]
+        if config.platform == Platform.WINDOWS:
+            clangir_cmd.extend(["--target=x86_64-w64-mingw32"])
+        run_command(clangir_cmd, cwd=source_abs.parent)
+
+        # 1b: Lower ClangIR to LLVM dialect MLIR
+        llvm_mlir_file = destination_abs.parent / f"{destination_abs.stem}_llvm.mlir"
+        lower_cmd = ["mlir-opt", str(cir_mlir_file), "--cir-to-llvm", "-o", str(llvm_mlir_file)]
+        run_command(lower_cmd, cwd=source_abs.parent)
+
+        current_input = llvm_mlir_file
+
+        # Stage 2: Apply MLIR Obfuscation Passes
+        if mlir_passes:
+            self.logger.info("Applying MLIR obfuscation passes: %s", ", ".join(mlir_passes))
+
+            mlir_plugin = self._get_mlir_plugin_path()
+            if not mlir_plugin:
+                raise ObfuscationError("MLIR passes requested but plugin not found.")
+
+            obfuscated_mlir = destination_abs.parent / f"{destination_abs.stem}_obfuscated.mlir"
+            passes_str = ",".join(mlir_passes)
+            pass_pipeline = f"builtin.module({passes_str})"
+
+            opt_cmd = [
+                "mlir-opt",
+                str(current_input),
+                f"--load-pass-plugin={str(mlir_plugin)}",
+                f"--pass-pipeline={pass_pipeline}",
+                "-o", str(obfuscated_mlir)
+            ]
+            run_command(opt_cmd, cwd=source_abs.parent)
+
+            current_input = obfuscated_mlir
+
+        # Stage 3: Convert MLIR to LLVM IR
+        llvm_ir_file = destination_abs.parent / f"{destination_abs.stem}_from_clangir.ll"
+        translate_cmd = ["mlir-translate", "--mlir-to-llvmir", str(current_input), "-o", str(llvm_ir_file)]
+        run_command(translate_cmd, cwd=source_abs.parent)
+
+        # Fix target triple and data layout
+        import re
+        target_triple = "x86_64-unknown-linux-gnu"
+        data_layout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128"
+
+        if config.platform == Platform.WINDOWS:
+            target_triple = "x86_64-w64-mingw32"
+            data_layout = "e-m:w-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128"
+
+        with open(str(llvm_ir_file), 'r') as f:
+            ir_content = f.read()
+
+        ir_content = re.sub(r'target triple = ".*"', f'target triple = "{target_triple}"', ir_content)
+        ir_content = re.sub(r'target datalayout = ".*"', f'target datalayout = "{data_layout}"', ir_content)
+        ir_content = re.sub(r'"target-cpu"="[^"]*"', '', ir_content)
+        ir_content = re.sub(r'"target-features"="[^"]*"', '', ir_content)
+        ir_content = re.sub(r'"tune-cpu"="[^"]*"', '', ir_content)
+        ir_content = re.sub(r'attributes #\d+ = \{\s*\}', '', ir_content)
+
+        with open(str(llvm_ir_file), 'w') as f:
+            f.write(ir_content)
+
+        current_input = llvm_ir_file
+
+        # Stage 4: OLLVM Obfuscation (optional)
+        if ollvm_passes:
+            self.logger.info("Running OLLVM pipeline with passes: %s", ", ".join(ollvm_passes))
+
+            plugin_path = config.custom_pass_plugin or self._get_bundled_plugin_path(config.platform)
+            if not plugin_path or not plugin_path.exists():
+                raise ObfuscationError("OLLVM passes requested but no plugin found.")
+
+            if self._has_exception_handling(current_input):
+                warnings.append("C++ exception handling detected; some OLLVM passes may be unstable.")
+
+            obfuscated_ir = destination_abs.parent / f"{destination_abs.stem}_obfuscated.bc"
+            opt_binary = plugin_path.parent / "opt"
+            if not opt_binary.exists():
+                raise ObfuscationError(f"OLLVM opt binary not found at {opt_binary}")
+
+            passes_pipeline = ",".join(ollvm_passes)
+            opt_cmd = [
+                str(opt_binary),
+                "-load-pass-plugin=" + str(plugin_path),
+                f"-passes={passes_pipeline}",
+                str(current_input),
+                "-o", str(obfuscated_ir)
+            ]
+            run_command(opt_cmd, cwd=source_abs.parent)
+            current_input = obfuscated_ir
+
+        # Stage 5: Compile to binary
+        self.logger.info("Compiling final IR to binary...")
+        final_cmd = [compiler, str(current_input), "-o", str(destination_abs)] + compiler_flags
+        if config.platform == Platform.WINDOWS:
+            final_cmd.extend(["--target=x86_64-w64-mingw32"])
+        run_command(final_cmd, cwd=source_abs.parent)
+
+        # Cleanup intermediate files
+        if cir_mlir_file.exists():
+            cir_mlir_file.unlink()
+        if llvm_mlir_file.exists():
+            llvm_mlir_file.unlink()
         if current_input != source_abs and current_input.exists():
             current_input.unlink()
 

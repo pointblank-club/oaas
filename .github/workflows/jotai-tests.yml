@@ -16,85 +16,89 @@ on:
       - '*/*/*'
       - '*/*/*/*'
 
-
   workflow_dispatch:
     inputs:
       limit:
-        description: 'Number of benchmarks to test (20-30)'
+        description: "Number of benchmarks to test (20-30)"
         required: false
-        default: '25'
+        default: "25"
       level:
-        description: 'Obfuscation level (1-5)'
+        description: "Obfuscation level (1-5)"
         required: false
-        default: '3'
-
-# This workflow:
-# 1. Gets C source files from Jotai
-# 2. Compiles sources → baseline binaries (normal compilation, no obfuscation)
-# 3. Uses LLVM obfuscator on sources → produces obfuscated binaries
-# 4. Runs both binaries (baseline and obfuscated) with same inputs
-# 5. Verifies functional equivalence (outputs must match)
+        default: "3"
 
 jobs:
   test-jotai:
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    
+
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
       with:
         lfs: true
-    
+
     - name: Pull Git LFS files
       run: git lfs pull
-    
+
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
-        python-version: '3.10'
-    
+        python-version: "3.10"
+
     - name: Install system dependencies
       run: |
         sudo apt-get update
         sudo apt-get install -y clang git
-    
+
     - name: Install Python dependencies
       working-directory: cmd/llvm-obfuscator
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
-    
+
     - name: Run Jotai CI Tests
       working-directory: cmd/llvm-obfuscator
       env:
-        # Randomly select 20-30 benchmarks (using run number for variation)
-        # Formula: (run_number % 11) + 20 gives range 20-30
-        RANDOM_LIMIT: ${{ github.event.inputs.limit || format('{0}', (github.run_number % 11) + 20) }}
+        INPUT_LIMIT: ${{ github.event.inputs.limit }}
         LEVEL: ${{ github.event.inputs.level || '3' }}
-        # Use run number as seed for reproducible random selection
         RANDOM_SEED: ${{ github.run_number }}
       run: |
         echo "=========================================="
-        echo "Jotai Benchmark Test Workflow:"
+        echo "Computing test parameters..."
+        echo "=========================================="
+
+        # If user gave a limit (workflow_dispatch), use it.
+        # Otherwise generate limit = (run_number % 11) + 20
+        if [ -z "$INPUT_LIMIT" ]; then
+          RANDOM_LIMIT=$(( (RANDOM_SEED % 11) + 20 ))
+        else
+          RANDOM_LIMIT="$INPUT_LIMIT"
+        fi
+
+        echo "Benchmark limit: $RANDOM_LIMIT"
+        echo "Obfuscation level: $LEVEL"
+        echo "Random seed: $RANDOM_SEED"
+        echo ""
+
+        echo "=========================================="
+        echo "Executing Jotai Benchmark Test Workflow:"
         echo "  1. Get C source files from Jotai"
-        echo "  2. Compile sources → baseline binaries (normal compilation)"
-        echo "  3. Use LLVM obfuscator on sources → obfuscated binaries"
-        echo "  4. Run both binaries with same inputs"
-        echo "  5. Verify functional equivalence (outputs must match)"
+        echo "  2. Compile baseline binaries"
+        echo "  3. Apply LLVM obfuscation"
+        echo "  4. Run baseline vs obfuscated"
+        echo "  5. Validate functional equivalence"
         echo "=========================================="
         echo ""
-        echo "Testing with ${RANDOM_LIMIT} randomly selected benchmarks"
-        echo "Random seed: ${RANDOM_SEED} (for reproducibility)"
-        echo ""
+
         python3 tests/test_jotai_ci.py \
-          --limit ${RANDOM_LIMIT} \
-          --level ${LEVEL} \
+          --limit "$RANDOM_LIMIT" \
+          --level "$LEVEL" \
           --min-success-rate 0.6 \
-          --random-seed ${RANDOM_SEED} \
+          --random-seed "$RANDOM_SEED" \
           --output ./jotai_ci_results \
           --json-report ./jotai_ci_summary.json
-    
+
     - name: Upload test results
       if: always()
       uses: actions/upload-artifact@v4
@@ -104,7 +108,7 @@ jobs:
           cmd/llvm-obfuscator/jotai_ci_results/**
           cmd/llvm-obfuscator/jotai_ci_summary.json
         retention-days: 7
-    
+
     - name: Display summary
       if: always()
       working-directory: cmd/llvm-obfuscator
@@ -112,16 +116,15 @@ jobs:
         if [ -f jotai_ci_summary.json ]; then
           echo "## Jotai Test Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          python3 -c "
-          import json
-          with open('jotai_ci_summary.json') as f:
-              data = json.load(f)
-          s = data['summary']
-          print(f\"- **Total benchmarks:** {s['total_benchmarks']}\")
-          print(f\"- **Tested:** {s['tested']}\")
-          print(f\"- **Skipped:** {s['skipped']}\")
-          print(f\"- **Success rate:** {s['success_rate']*100:.1f}%\")
-          print(f\"- **Functional tests passed:** {s['functional_success']}/{s['tested']}\")
-          " >> $GITHUB_STEP_SUMMARY
+          python3 << 'PYEOF' >> $GITHUB_STEP_SUMMARY
+        import json
+        with open("jotai_ci_summary.json") as f:
+            data = json.load(f)
+        s = data["summary"]
+        print(f"- **Total benchmarks:** {s['total_benchmarks']}")
+        print(f"- **Tested:** {s['tested']}")
+        print(f"- **Skipped:** {s['skipped']}")
+        print(f"- **Success rate:** {s['success_rate']*100:.1f}%")
+        print(f"- **Functional tests passed:** {s['functional_success']}/{s['tested']}")
+        PYEOF
         fi
-

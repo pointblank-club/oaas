@@ -43,6 +43,6 @@ include_directories(${MLIR_INCLUDE_DIRS})
 # Build library from sources in lib/
 add_subdirectory(lib)
 
-# Build standalone tool (mlir-obfuscate)
-add_subdirectory(tools)
+# NOTE: mlir-obfuscate tool disabled - use mlir-opt --load-pass-plugin instead
+# add_subdirectory(tools)
 

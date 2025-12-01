@@ -33,7 +33,7 @@ from test_functional import FunctionalTester
 from advanced_analysis import (
     GhidraAnalyzer, BinaryNinjaAnalyzer, AngrAnalyzer,
     StringObfuscationAnalyzer, DebuggabilityAnalyzer,
-    CodeCoverageAnalyzer, PatchabilityAnalyzer
+    CodeCoverageAnalyzer, PatchabilityAnalyzer, IDAProAnalyzer
 )
 
 
@@ -424,12 +424,13 @@ class ObfuscationTestSuite:
         logger.info(f"✓ Reports generated in {self.reports_dir}")
 
     def _run_advanced_analysis(self) -> Dict[str, Any]:
-        """Run Ghidra, Binary Ninja, and Angr analysis"""
-        logger.info("  Running advanced analysis with Ghidra/BinaryNinja/Angr...")
+        """Run Ghidra, Binary Ninja, IDA Pro, and Angr analysis"""
+        logger.info("  Running advanced analysis with Ghidra/BinaryNinja/IDA Pro/Angr...")
 
         results = {
             "ghidra": {},
             "binja": {},
+            "ida": {},
             "angr": {}
         }
 
@@ -449,9 +450,23 @@ class ObfuscationTestSuite:
             if binja.has_binja():
                 logger.info("    [Binary Ninja] Extracting HLIL...")
                 results["binja"]["hlil"] = binja.extract_hlil(str(self.obfuscated))
+                results["binja"]["baseline_hlil"] = binja.extract_hlil(str(self.baseline))
             else:
                 logger.warning("    [Binary Ninja] Not installed, skipping")
                 results["binja"]["status"] = "not_installed"
+
+            # IDA Pro analysis
+            ida = IDAProAnalyzer()
+            if ida.has_ida():
+                logger.info("    [IDA Pro] Analyzing binary...")
+                results["ida"]["analysis"] = ida.analyze_binary(str(self.obfuscated))
+                logger.info("    [IDA Pro] Comparing decompilation...")
+                results["ida"]["decompilation_comparison"] = ida.compare_decompilation(
+                    str(self.baseline), str(self.obfuscated)
+                )
+            else:
+                logger.warning("    [IDA Pro] Not installed, skipping")
+                results["ida"]["status"] = "not_installed"
 
             # Angr analysis
             angr_analyzer = AngrAnalyzer()

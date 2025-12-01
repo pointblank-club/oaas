@@ -2,10 +2,12 @@ name: Jotai Benchmark Tests
 
 on:
   push:
-    branches: ['**']  
+    branches:
+      - '**'
   pull_request:
-    branches: ['**']  
-    
+    branches:
+      - '**'
+      
   workflow_dispatch:
     inputs:
       limit:

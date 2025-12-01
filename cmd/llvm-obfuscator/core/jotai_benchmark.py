@@ -304,8 +304,8 @@ class JotaiBenchmarkManager:
                 # Update config output directory
                 config.output.directory = obfuscated_dir
                 
-                # Run obfuscation (result not used directly, binary is retrieved from disk)
-                obfuscator.obfuscate(
+                # Run obfuscation (result intentionally unused, binary is retrieved from disk)
+                _ = obfuscator.obfuscate(
                     source_file=benchmark_path,
                     config=config
                 )

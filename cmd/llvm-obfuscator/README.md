@@ -86,6 +86,31 @@ Encrypts all string literals at compile time.
 
 **Result:** 100% string hiding (secrets not visible in `strings` output)
 
+## Testing with Jotai Benchmarks
+
+Test obfuscation effectiveness on real-world C code using the [Jotai benchmark collection](https://github.com/lac-dcc/jotai-benchmarks):
+
+```bash
+# Run Jotai benchmarks through obfuscator
+python -m cli.obfuscate jotai --limit 10 --level 3
+
+# Full obfuscation test
+python -m cli.obfuscate jotai \
+    --limit 20 \
+    --level 4 \
+    --enable-symbol-obfuscation \
+    --string-encryption \
+    --enable-flattening
+```
+
+**Quick test:**
+```bash
+cd cmd/llvm-obfuscator
+python3 test_jotai_simple.py
+```
+
+See [JOTAI_BENCHMARKS.md](JOTAI_BENCHMARKS.md) for detailed documentation.
+
 ## Supported Platforms
 
 ✅ **Bundled plugins for:**

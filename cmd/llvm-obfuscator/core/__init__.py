@@ -20,6 +20,7 @@ from .obfuscator import LLVMObfuscator
 from .reporter import ObfuscationReport
 from .symbol_obfuscator import SymbolObfuscator
 from .upx_packer import UPXPacker
+from .jotai_benchmark import JotaiBenchmarkManager, BenchmarkCategory, BenchmarkResult
 
 __all__ = [
     "LLVMObfuscator",
@@ -37,6 +38,9 @@ __all__ = [
     "SymbolObfuscationConfiguration",
     "UPXConfiguration",
     "UPXPacker",
+    "JotaiBenchmarkManager",
+    "BenchmarkCategory",
+    "BenchmarkResult",
     "analyze_binary",
     "compare_binaries",
 ]

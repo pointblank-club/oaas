@@ -189,6 +189,7 @@ class ObfuscateRequest(BaseModel):
     build_system: str = Field(default="simple", pattern="^(simple|cmake|make|autotools|custom)$")
     build_command: Optional[str] = None  # Custom build command (for "custom" mode)
     output_binary_path: Optional[str] = None  # Hint for where to find output binary
+    cmake_options: Optional[str] = None  # Extra cmake flags like "-DBUILD_TESTING=OFF"
 
 
 class GitHubCloneRequest(BaseModel):
@@ -648,6 +649,7 @@ def _run_custom_build(
     build_command: Optional[str],
     env: Dict[str, str],
     logger: logging.Logger,
+    cmake_options: Optional[str] = None,
     timeout: int = 600  # 10 minute timeout
 ) -> Tuple[bool, str]:
     """Run the project's native build system with our hijacked CC/CXX."""
@@ -658,6 +660,16 @@ def _run_custom_build(
         if not build_command:
             return False, "Custom build system selected but no build command provided"
         cmd = build_command
+    elif build_system == "cmake":
+        # For cmake, inject user-provided cmake options (e.g., -DBUILD_TESTING=OFF)
+        base_cmd = BUILD_COMMANDS.get("cmake")
+        if cmake_options:
+            # Insert cmake options before -B build
+            # cmake -B build ... -> cmake <options> -B build ...
+            cmd = base_cmd.replace("cmake -B build", f"cmake {cmake_options} -B build")
+            logger.info(f"CMake options injected: {cmake_options}")
+        else:
+            cmd = base_cmd
     else:
         cmd = BUILD_COMMANDS.get(build_system)
         if not cmd:
@@ -800,7 +812,8 @@ async def api_obfuscate_sync(
                     payload.build_system,
                     payload.build_command,
                     build_env,
-                    logger
+                    logger,
+                    cmake_options=payload.cmake_options
                 )
 
                 if not build_success:

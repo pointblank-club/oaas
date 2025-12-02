@@ -446,10 +446,58 @@ def compile_multifile_ir_workflow(
     if not llvm_link_binary:
         # Try to find llvm-link in PATH
         import shutil
+        import subprocess
         llvm_link_path = shutil.which("llvm-link")
         if llvm_link_path:
             llvm_link_binary = Path(llvm_link_path)
             logger.info(f"Using llvm-link from PATH: {llvm_link_binary}")
+
+            # Check for version mismatch between clang and llvm-link
+            # LLVM 22 bitcode is incompatible with LLVM 19 llvm-link
+            try:
+                result = subprocess.run([str(llvm_link_binary), '--version'], capture_output=True, text=True, timeout=5)
+                llvm_link_version = result.stdout if result.stdout else result.stderr
+                if 'LLVM version 19' in llvm_link_version or 'version 19' in llvm_link_version:
+                    if '/usr/local/llvm-obfuscator' in str(compiler) or '/app/plugins' in str(compiler):
+                        logger.warning("=" * 80)
+                        logger.warning("⚠ LLVM VERSION MISMATCH DETECTED!")
+                        logger.warning("=" * 80)
+                        logger.warning(f"  Compiler (clang): LLVM 22 at {compiler}")
+                        logger.warning(f"  Linker (llvm-link): LLVM 19 at {llvm_link_binary}")
+                        logger.warning("")
+                        logger.warning("LLVM 22 bitcode is incompatible with LLVM 19 llvm-link.")
+                        logger.warning("OLLVM passes will be DISABLED for this multi-file build.")
+                        logger.warning("Falling back to direct compilation without IR workflow.")
+                        logger.warning("=" * 80)
+
+                        # Fall back to direct compilation without OLLVM
+                        warnings.append(
+                            "LLVM version mismatch: llvm-link (v19) cannot read LLVM 22 bitcode. "
+                            "OLLVM passes disabled. Add bundled llvm-link (LLVM 22) to fix."
+                        )
+                        enabled_passes = []
+                        actually_applied_passes = []
+
+                        # Compile all sources directly without IR workflow
+                        all_source_paths = [str(src) for src in all_sources]
+                        direct_compile_cmd = [compiler] + all_source_paths + ["-o", str(destination_abs)]
+                        direct_compile_cmd.extend([f for f in compiler_flags if not f.endswith(('.c', '.cpp', '.cc', '.cxx'))])
+                        if resource_dir_flags:
+                            direct_compile_cmd.extend(resource_dir_flags)
+
+                        logger.info("Direct compilation command:")
+                        logger.info(f"  {' '.join(direct_compile_cmd[:10])} ...")
+                        run_command(direct_compile_cmd, cwd=project_root)
+
+                        logger.info("✓ Direct compilation completed (without OLLVM)")
+
+                        return {
+                            "applied_passes": [],
+                            "warnings": warnings,
+                            "disabled_passes": list(enabled_passes) if enabled_passes else [],
+                        }
+            except Exception as e:
+                logger.warning(f"Could not check llvm-link version: {e}")
         else:
             logger.error("llvm-link not found. Required for multi-file obfuscation.")
             raise ObfuscationError("llvm-link binary not found")

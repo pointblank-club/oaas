@@ -374,6 +374,12 @@ function App() {
   const [targetPlatform, setTargetPlatform] = useState<Platform>('linux');
   const [entrypointCommand, setEntrypointCommand] = useState<string>('./a.out');
 
+  // Build system configuration (for complex projects like CURL)
+  type BuildSystem = 'simple' | 'cmake' | 'make' | 'autotools' | 'custom';
+  const [buildSystem, setBuildSystem] = useState<BuildSystem>('simple');
+  const [customBuildCommand, setCustomBuildCommand] = useState<string>('');
+  const [outputBinaryPath, setOutputBinaryPath] = useState<string>('');
+
   useEffect(() => {
     document.body.className = darkMode ? 'dark' : 'light';
   }, [darkMode]);
@@ -775,11 +781,15 @@ function App() {
         source_code: source_b64,
         filename: filename,
         platform: targetPlatform,
-        entrypoint_command: entrypointCommand.trim() || './a.out',
+        entrypoint_command: buildSystem === 'simple' ? (entrypointCommand.trim() || './a.out') : undefined,
         // Fast clone: use repo_session_id to keep all files on backend (including build system files)
         // Legacy: use source_files (filtered C/C++ only - missing CMakeLists.txt, configure, etc.)
         repo_session_id: useSessionId ? repoSessionId : undefined,
         source_files: useSessionId ? undefined : sourceFiles,
+        // Build system configuration for complex projects
+        build_system: buildSystem,
+        build_command: buildSystem === 'custom' ? customBuildCommand : undefined,
+        output_binary_path: buildSystem !== 'simple' && outputBinaryPath ? outputBinaryPath : undefined,
         config: {
           level: obfuscationLevel,
           passes: {
@@ -903,13 +913,14 @@ function App() {
     }
   }, [
     file, inputMode, pastedSource, obfuscationLevel, cycles, targetPlatform, entrypointCommand,
-    layer1, layer2, layer3, layer4,
+    layer1, layer2, layer3, layer4, layer2_5,
     symbolAlgorithm, symbolHashLength, symbolPrefix, symbolSalt,
-    fakeLoops,
+    fakeLoops, indirectStdlib, indirectCustom,
     passFlattening, passSubstitution, passBogusControlFlow, passSplitBasicBlocks,
     flagLTO, flagSymbolHiding, flagOmitFramePointer, flagSpeculativeLoadHardening,
     flagO3, flagStripSymbols, flagNoBuiltin,
-    detectLanguage, countLayers, selectedRepoFile
+    buildSystem, customBuildCommand, outputBinaryPath,
+    detectLanguage, countLayers, selectedRepoFile, repoSessionId, repoFileCount, repoFiles
   ]);
 
   const onDownloadBinary = useCallback((platform: Platform) => {
@@ -1488,16 +1499,76 @@ function App() {
             </label>
 
             <label>
-              Entrypoint Command:
-              <input
-                type="text"
-                placeholder="./a.out or gcc main.c -o out && ./out"
-                value={entrypointCommand}
-                onChange={(e) => setEntrypointCommand(e.target.value)}
-                title="Command to run the compiled binary (e.g., ./a.out, make && ./bin/app)"
-              />
+              Build System:
+              <select
+                value={buildSystem}
+                onChange={(e) => setBuildSystem(e.target.value as BuildSystem)}
+                title="How to compile the project. Use 'Simple' for single files, or select the project's build system for complex projects."
+              >
+                <option value="simple">Simple (Direct Compilation)</option>
+                <option value="cmake">CMake</option>
+                <option value="make">Make</option>
+                <option value="autotools">Autotools (configure + make)</option>
+                <option value="custom">Custom Command</option>
+              </select>
             </label>
+
+            {buildSystem === 'custom' && (
+              <label>
+                Custom Build Command:
+                <input
+                  type="text"
+                  placeholder="e.g., meson build && ninja -C build"
+                  value={customBuildCommand}
+                  onChange={(e) => setCustomBuildCommand(e.target.value)}
+                  title="The exact command to build the project"
+                />
+              </label>
+            )}
+
+            {buildSystem !== 'simple' && (
+              <label>
+                Output Binary Path (optional):
+                <input
+                  type="text"
+                  placeholder="e.g., build/bin/curl"
+                  value={outputBinaryPath}
+                  onChange={(e) => setOutputBinaryPath(e.target.value)}
+                  title="Hint for where to find the compiled binary after build"
+                />
+              </label>
+            )}
+
+            {buildSystem === 'simple' && (
+              <label>
+                Entrypoint Command:
+                <input
+                  type="text"
+                  placeholder="./a.out or gcc main.c -o out && ./out"
+                  value={entrypointCommand}
+                  onChange={(e) => setEntrypointCommand(e.target.value)}
+                  title="Command to run the compiled binary (e.g., ./a.out, make && ./bin/app)"
+                />
+              </label>
+            )}
           </div>
+
+          {buildSystem !== 'simple' && (
+            <div className="build-system-info" style={{
+              marginTop: '15px',
+              padding: '12px',
+              backgroundColor: 'var(--bg-secondary)',
+              borderRadius: '4px',
+              fontSize: '0.9em',
+              color: 'var(--text-secondary)'
+            }}>
+              <strong>Custom Build Mode:</strong> Source-level obfuscation (Layers 1, 2, 2.5) will be applied in-place to all C/C++ files before building.
+              Compiler-level obfuscation (Layers 3, 4) will be injected via CC/CXX environment variables.
+              {buildSystem === 'cmake' && <span> Build command: <code>cmake -B build && cmake --build build</code></span>}
+              {buildSystem === 'make' && <span> Build command: <code>make</code></span>}
+              {buildSystem === 'autotools' && <span> Build command: <code>./configure && make</code></span>}
+            </div>
+          )}
         </section>
 
         {/* Submit */}

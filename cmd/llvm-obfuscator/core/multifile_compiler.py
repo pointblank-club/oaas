@@ -368,10 +368,15 @@ def compile_multifile_ir_workflow(
     elif Path("/usr/local/llvm-obfuscator/bin/opt").exists():
         opt_binary = Path("/usr/local/llvm-obfuscator/bin/opt")
         logger.info(f"Using opt from Docker installation: {opt_binary}")
-        
-        # Use system clang for final compilation (Docker clang doesn't have LLVMgold.so)
-        compiler = "/usr/bin/clang++" if base_compiler == "clang++" else "/usr/bin/clang"
-        logger.info(f"Using Docker opt for OLLVM passes, system clang ({compiler}) for final compilation")
+
+        # Use bundled clang from Docker installation (LLVM 22) for version compatibility
+        docker_clang = Path("/usr/local/llvm-obfuscator/bin/clang")
+        if docker_clang.exists():
+            compiler = str(docker_clang)
+            logger.info(f"Using bundled clang from Docker installation (LLVM 22): {compiler}")
+        else:
+            compiler = "/usr/bin/clang++" if base_compiler == "clang++" else "/usr/bin/clang"
+            logger.warning(f"Bundled clang not found, falling back to system clang ({compiler}) - may have version mismatch")
         
     elif "/llvm-project/build/lib/" in str(plugin_path_resolved):
         # Plugin is from LLVM build directory

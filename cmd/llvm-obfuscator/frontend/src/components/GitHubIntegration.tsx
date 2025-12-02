@@ -106,10 +106,12 @@ export const GitHubIntegration: React.FC<GitHubIntegrationProps> = ({ onFilesLoa
         // Redirect to GitHub OAuth
         window.location.href = data.auth_url;
       } else {
-        onError('Failed to initiate GitHub authentication');
+        const detail = data.detail || `HTTP ${response.status}`;
+        onError(`Failed to initiate GitHub authentication: ${detail}`);
       }
     } catch (err) {
-      onError('Failed to connect to GitHub');
+      const errMsg = err instanceof Error ? err.message : String(err);
+      onError(`Failed to connect to GitHub: ${errMsg}`);
     } finally {
       setLoading(false);
     }
@@ -126,7 +128,8 @@ export const GitHubIntegration: React.FC<GitHubIntegrationProps> = ({ onFilesLoa
       setSelectedRepo(null);
       setBranches([]);
     } catch (err) {
-      onError('Failed to disconnect GitHub');
+      const errMsg = err instanceof Error ? err.message : String(err);
+      onError(`Failed to disconnect GitHub: ${errMsg}`);
     }
   };
 
@@ -144,10 +147,12 @@ export const GitHubIntegration: React.FC<GitHubIntegrationProps> = ({ onFilesLoa
         setIsAuthenticated(false);
         onError('GitHub session expired. Please reconnect.');
       } else {
-        onError('Failed to load repositories');
+        const detail = data.detail || `HTTP ${response.status}`;
+        onError(`Failed to load repositories: ${detail}`);
       }
     } catch (err) {
-      onError('Failed to load repositories');
+      const errMsg = err instanceof Error ? err.message : String(err);
+      onError(`Failed to load repositories: ${errMsg}`);
     } finally {
       setLoading(false);
     }
@@ -169,10 +174,12 @@ export const GitHubIntegration: React.FC<GitHubIntegrationProps> = ({ onFilesLoa
         setIsAuthenticated(false);
         onError('GitHub session expired. Please reconnect.');
       } else {
-        onError('Failed to load branches');
+        const detail = data.detail || `HTTP ${response.status}`;
+        onError(`Failed to load branches: ${detail}`);
       }
     } catch (err) {
-      onError('Failed to load branches');
+      const errMsg = err instanceof Error ? err.message : String(err);
+      onError(`Failed to load branches: ${errMsg}`);
     } finally {
       setLoading(false);
     }
@@ -193,18 +200,20 @@ export const GitHubIntegration: React.FC<GitHubIntegrationProps> = ({ onFilesLoa
         credentials: useAuth ? 'include' : 'omit'
       });
 
-      const data: RepoData = await response.json();
+      const data = await response.json();
 
       if (response.ok) {
-        onFilesLoaded(data.files, data.repo_name, data.branch);
+        onFilesLoaded((data as RepoData).files, (data as RepoData).repo_name, (data as RepoData).branch);
       } else if (response.status === 401 && useAuth) {
         setIsAuthenticated(false);
         onError('GitHub session expired. Please reconnect.');
       } else {
-        onError('Failed to load repository files');
+        const detail = data.detail || `HTTP ${response.status}`;
+        onError(`Failed to load repository files: ${detail}`);
       }
     } catch (err) {
-      onError('Failed to load repository files');
+      const errMsg = err instanceof Error ? err.message : String(err);
+      onError(`Failed to load repository files: ${errMsg}`);
     } finally {
       setLoading(false);
     }
@@ -226,18 +235,21 @@ export const GitHubIntegration: React.FC<GitHubIntegrationProps> = ({ onFilesLoa
         credentials: useAuth ? 'include' : 'omit'
       });
 
-      const data: CloneResponse = await response.json();
+      const data = await response.json();
 
       if (response.ok) {
-        onRepoCloned(data.session_id, data.repo_name, data.branch, data.file_count);
+        const cloneData = data as CloneResponse;
+        onRepoCloned(cloneData.session_id, cloneData.repo_name, cloneData.branch, cloneData.file_count);
       } else if (response.status === 401 && useAuth) {
         setIsAuthenticated(false);
         onError('GitHub session expired. Please reconnect.');
       } else {
-        onError('Failed to clone repository');
+        const detail = data.detail || `HTTP ${response.status}`;
+        onError(`Failed to clone repository: ${detail}`);
       }
     } catch (err) {
-      onError('Failed to clone repository');
+      const errMsg = err instanceof Error ? err.message : String(err);
+      onError(`Failed to clone repository: ${errMsg}`);
     } finally {
       setLoading(false);
     }

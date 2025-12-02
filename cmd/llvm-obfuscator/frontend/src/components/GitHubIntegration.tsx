@@ -219,7 +219,7 @@ export const GitHubIntegration: React.FC<GitHubIntegrationProps> = ({ onFilesLoa
         branch: branch,
       };
 
-      const response = await fetch('/api/github/repo/clone-fast', {
+      const response = await fetch('/api/github/repo/clone', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),

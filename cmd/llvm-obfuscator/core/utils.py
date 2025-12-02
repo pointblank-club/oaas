@@ -1229,7 +1229,6 @@ def ensure_generated_headers_exist(project_root: Path) -> List[Path]:
         result = generate_config_header_stub(project_root / "lib", "curl_config.h")
         if result:
             generated_headers.append(result)
-
     if generated_headers:
         logger.info(f"Generated {len(generated_headers)} stub config headers")
         for header in generated_headers:

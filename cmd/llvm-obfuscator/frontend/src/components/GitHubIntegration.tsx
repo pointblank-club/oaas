@@ -23,12 +23,22 @@ interface RepoData {
   branch: string;
 }
 
+// Response from fast clone endpoint
+interface CloneResponse {
+  session_id: string;
+  repo_name: string;
+  branch: string;
+  file_count: number;
+  expires_in: number;
+}
+
 interface GitHubIntegrationProps {
   onFilesLoaded: (files: RepoFile[], repoName: string, branch: string) => void;
+  onRepoCloned: (sessionId: string, repoName: string, branch: string, fileCount: number) => void;
   onError: (error: string) => void;
 }
 
-export const GitHubIntegration: React.FC<GitHubIntegrationProps> = ({ onFilesLoaded, onError }) => {
+export const GitHubIntegration: React.FC<GitHubIntegrationProps> = ({ onFilesLoaded, onRepoCloned, onError }) => {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [authState, setAuthState] = useState<string | null>(null);
   const [repositories, setRepositories] = useState<Repository[]>([]);
@@ -175,16 +185,16 @@ export const GitHubIntegration: React.FC<GitHubIntegrationProps> = ({ onFilesLoa
         repo_url: repoUrl,
         branch: branch,
       };
-      
+
       const response = await fetch('/api/github/repo/files', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
         credentials: useAuth ? 'include' : 'omit'
       });
-      
+
       const data: RepoData = await response.json();
-      
+
       if (response.ok) {
         onFilesLoaded(data.files, data.repo_name, data.branch);
       } else if (response.status === 401 && useAuth) {
@@ -195,6 +205,39 @@ export const GitHubIntegration: React.FC<GitHubIntegrationProps> = ({ onFilesLoa
       }
     } catch (err) {
       onError('Failed to load repository files');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Fast clone: keeps all files on backend (including build system files like CMakeLists.txt)
+  const cloneRepoFast = async (repoUrl: string, branch: string, useAuth: boolean = true) => {
+    try {
+      setLoading(true);
+      const payload = {
+        repo_url: repoUrl,
+        branch: branch,
+      };
+
+      const response = await fetch('/api/github/repo/clone-fast', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        credentials: useAuth ? 'include' : 'omit'
+      });
+
+      const data: CloneResponse = await response.json();
+
+      if (response.ok) {
+        onRepoCloned(data.session_id, data.repo_name, data.branch, data.file_count);
+      } else if (response.status === 401 && useAuth) {
+        setIsAuthenticated(false);
+        onError('GitHub session expired. Please reconnect.');
+      } else {
+        onError('Failed to clone repository');
+      }
+    } catch (err) {
+      onError('Failed to clone repository');
     } finally {
       setLoading(false);
     }
@@ -222,13 +265,15 @@ export const GitHubIntegration: React.FC<GitHubIntegrationProps> = ({ onFilesLoa
   const handleLoadFiles = async () => {
     const repoUrl = selectedRepo ? selectedRepo.html_url : publicRepoUrl;
     const useAuth = !!selectedRepo; // Use auth only for OAuth repos
-    
+
     if (!repoUrl || !selectedBranch) {
       onError('Please select a repository and branch');
       return;
     }
-    
-    await loadRepoFiles(repoUrl, selectedBranch, useAuth);
+
+    // Use fast clone - keeps all files on backend including build system files
+    // This is essential for projects with CMakeLists.txt, configure, etc.
+    await cloneRepoFast(repoUrl, selectedBranch, useAuth);
   };
 
   // if (!githubEnabled) {

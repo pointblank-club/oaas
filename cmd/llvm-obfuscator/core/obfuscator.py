@@ -18,6 +18,7 @@ from .utils import (
     create_logger,
     detect_binary_format,
     ensure_directory,
+    ensure_generated_headers_exist,
     get_file_size,
     get_timestamp,
     list_sections,
@@ -940,6 +941,23 @@ class LLVMObfuscator:
             source_abs = source_file.resolve()
             baseline_abs = baseline_binary.resolve()
 
+            # Determine project root for multi-file projects
+            # Look for a 'project' directory in parent hierarchy or use source parent
+            project_root = source_abs.parent
+            if project_root.name != "project":
+                for parent in source_abs.parents:
+                    if parent.name == "project":
+                        project_root = parent
+                        break
+
+            # Generate stub config headers if needed (e.g., curl_config.h for curl projects)
+            try:
+                generated_headers = ensure_generated_headers_exist(project_root)
+                if generated_headers:
+                    self.logger.info(f"Generated {len(generated_headers)} stub config headers for baseline")
+            except Exception as e:
+                self.logger.debug(f"Stub header generation skipped: {e}")
+
             # Detect compiler
             if source_file.suffix in ['.cpp', '.cxx', '.cc', '.c++']:
                 compiler = "clang++"
@@ -954,6 +972,27 @@ class LLVMObfuscator:
             # Platform-specific flags
             if config.platform == Platform.WINDOWS:
                 compile_flags.append("--target=x86_64-w64-mingw32")
+
+            # Add include paths for common directories in the project
+            include_dirs = set()
+            include_dirs.add(str(project_root))
+
+            # Add common subdirectories as include paths
+            for subdir in ['include', 'lib', 'src', 'build']:
+                subdir_path = project_root / subdir
+                if subdir_path.exists():
+                    include_dirs.add(str(subdir_path))
+
+            # Add generated header directories (from stub headers)
+            try:
+                for header_path in ensure_generated_headers_exist(project_root):
+                    include_dirs.add(str(header_path.parent))
+            except Exception:
+                pass
+
+            # Add include flags
+            for include_dir in include_dirs:
+                compile_flags.append(f"-I{include_dir}")
 
             # Add additional source files from compiler_flags (for multi-file projects)
             # Filter out source files from compiler flags

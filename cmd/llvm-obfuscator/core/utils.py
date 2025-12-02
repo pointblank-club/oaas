@@ -1218,6 +1218,17 @@ def ensure_generated_headers_exist(project_root: Path) -> List[Path]:
                     generated_headers.append(result)
                 break
 
+    # Special case: Detect curl projects and generate curl_config.h
+    # Curl doesn't use .h.in templates - config is generated entirely by CMake
+    curl_setup = project_root / "lib" / "curl_setup.h"
+    curl_header = project_root / "include" / "curl" / "curl.h"
+    curl_config = project_root / "lib" / "curl_config.h"
+
+    if (curl_setup.exists() or curl_header.exists()) and not curl_config.exists():
+        logger.info("Detected curl project without curl_config.h - generating stub")
+        result = generate_config_header_stub(project_root / "lib", "curl_config.h")
+        if result:
+            generated_headers.append(result)
     if generated_headers:
         logger.info(f"Generated {len(generated_headers)} stub config headers")
         for header in generated_headers:

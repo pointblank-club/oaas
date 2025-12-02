@@ -379,6 +379,7 @@ function App() {
   const [buildSystem, setBuildSystem] = useState<BuildSystem>('simple');
   const [customBuildCommand, setCustomBuildCommand] = useState<string>('');
   const [outputBinaryPath, setOutputBinaryPath] = useState<string>('');
+  const [cmakeOptions, setCmakeOptions] = useState<string>('');  // Extra cmake flags like -DFOO=OFF
 
   useEffect(() => {
     document.body.className = darkMode ? 'dark' : 'light';
@@ -790,6 +791,7 @@ function App() {
         build_system: buildSystem,
         build_command: buildSystem === 'custom' ? customBuildCommand : undefined,
         output_binary_path: buildSystem !== 'simple' && outputBinaryPath ? outputBinaryPath : undefined,
+        cmake_options: buildSystem === 'cmake' && cmakeOptions ? cmakeOptions : undefined,
         config: {
           level: obfuscationLevel,
           passes: {
@@ -919,7 +921,7 @@ function App() {
     passFlattening, passSubstitution, passBogusControlFlow, passSplitBasicBlocks,
     flagLTO, flagSymbolHiding, flagOmitFramePointer, flagSpeculativeLoadHardening,
     flagO3, flagStripSymbols, flagNoBuiltin,
-    buildSystem, customBuildCommand, outputBinaryPath,
+    buildSystem, customBuildCommand, outputBinaryPath, cmakeOptions,
     detectLanguage, countLayers, selectedRepoFile, repoSessionId, repoFileCount, repoFiles
   ]);
 
@@ -1535,6 +1537,19 @@ function App() {
                   value={outputBinaryPath}
                   onChange={(e) => setOutputBinaryPath(e.target.value)}
                   title="Hint for where to find the compiled binary after build"
+                />
+              </label>
+            )}
+
+            {buildSystem === 'cmake' && (
+              <label>
+                CMake Options (optional):
+                <input
+                  type="text"
+                  placeholder="e.g., -DBUILD_TESTING=OFF -DCURL_USE_LIBPSL=OFF"
+                  value={cmakeOptions}
+                  onChange={(e) => setCmakeOptions(e.target.value)}
+                  title="Extra CMake flags to disable features or customize the build"
                 />
               </label>
             )}

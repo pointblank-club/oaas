@@ -29,6 +29,22 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # Common development libraries (for projects like curl, openssl, etc.)
     libssl-dev \
     zlib1g-dev \
+    # Additional libraries commonly needed by C/C++ projects
+    libpsl-dev \
+    libbrotli-dev \
+    libzstd-dev \
+    libnghttp2-dev \
+    libldap-dev \
+    libidn2-dev \
+    libssh2-1-dev \
+    librtmp-dev \
+    libcurl4-openssl-dev \
+    libxml2-dev \
+    libjson-c-dev \
+    libpcre2-dev \
+    libsqlite3-dev \
+    libreadline-dev \
+    libncurses-dev \
     git \
     && rm -rf /var/lib/apt/lists/*
 

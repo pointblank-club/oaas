@@ -1,0 +1,113 @@
+name: Store LLVM Binaries as Artifacts
+
+# This workflow stores LLVM binaries as GitHub Actions artifacts
+# Run this manually when binaries need to be updated
+# Artifacts are stored indefinitely and don't count against LFS quota
+
+on:
+  workflow_dispatch:
+    inputs:
+      source:
+        description: "Source of binaries (lfs, local)"
+        required: true
+        default: "lfs"
+        type: choice
+        options:
+          - lfs
+          - local
+
+jobs:
+  store-binaries:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        lfs: ${{ github.event.inputs.source == 'lfs' }}
+
+    - name: Pull Git LFS files (if using LFS source)
+      if: github.event.inputs.source == 'lfs'
+      continue-on-error: true
+      run: |
+        echo "Attempting to pull from LFS..."
+        git lfs pull || echo "LFS pull failed, will use existing files if available"
+
+    - name: Prepare binaries for upload
+      run: |
+        echo "=========================================="
+        echo "Preparing LLVM binaries for artifact storage"
+        echo "=========================================="
+        
+        mkdir -p binaries-artifact/linux-x86_64
+        mkdir -p binaries-artifact/linux-x86_64/lib
+        
+        # Copy Linux binaries if they exist
+        if [ -f "cmd/llvm-obfuscator/plugins/linux-x86_64/clang" ]; then
+          file cmd/llvm-obfuscator/plugins/linux-x86_64/clang | grep -q "ELF" && {
+            cp cmd/llvm-obfuscator/plugins/linux-x86_64/clang binaries-artifact/linux-x86_64/clang
+            echo "✅ Copied clang binary"
+          } || echo "⚠️  clang exists but is LFS pointer"
+        else
+          echo "⚠️  clang binary not found"
+        fi
+        
+        if [ -f "cmd/llvm-obfuscator/plugins/linux-x86_64/opt" ]; then
+          file cmd/llvm-obfuscator/plugins/linux-x86_64/opt | grep -q "ELF" && {
+            cp cmd/llvm-obfuscator/plugins/linux-x86_64/opt binaries-artifact/linux-x86_64/opt
+            echo "✅ Copied opt binary"
+          } || echo "⚠️  opt exists but is LFS pointer"
+        else
+          echo "⚠️  opt binary not found"
+        fi
+        
+        if [ -f "cmd/llvm-obfuscator/plugins/linux-x86_64/LLVMObfuscationPlugin.so" ]; then
+          file cmd/llvm-obfuscator/plugins/linux-x86_64/LLVMObfuscationPlugin.so | grep -q "shared object" && {
+            cp cmd/llvm-obfuscator/plugins/linux-x86_64/LLVMObfuscationPlugin.so binaries-artifact/linux-x86_64/LLVMObfuscationPlugin.so
+            echo "✅ Copied plugin binary"
+          } || echo "⚠️  plugin exists but is LFS pointer"
+        else
+          echo "⚠️  plugin binary not found"
+        fi
+        
+        # Copy library files if they exist
+        if [ -d "cmd/llvm-obfuscator/plugins/linux-x86_64/lib" ]; then
+          cp -r cmd/llvm-obfuscator/plugins/linux-x86_64/lib/* binaries-artifact/linux-x86_64/lib/ 2>/dev/null || true
+          echo "✅ Copied library files"
+        fi
+        
+        echo ""
+        echo "Binary sizes:"
+        ls -lh binaries-artifact/linux-x86_64/ 2>/dev/null || echo "No binaries found"
+        
+        # Verify we have the required binaries
+        if [ ! -f "binaries-artifact/linux-x86_64/clang" ] || \
+           [ ! -f "binaries-artifact/linux-x86_64/opt" ] || \
+           [ ! -f "binaries-artifact/linux-x86_64/LLVMObfuscationPlugin.so" ]; then
+          echo ""
+          echo "❌ ERROR: Required binaries are missing!"
+          echo "   Please ensure binaries are available before running this workflow"
+          exit 1
+        fi
+
+    - name: Upload binaries as artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: llvm-binaries-linux-x86_64
+        path: binaries-artifact/
+        retention-days: 0  # Keep forever (no expiration)
+        compression-level: 1  # Fast compression (binaries are already compressed)
+
+    - name: Summary
+      run: |
+        echo "=========================================="
+        echo "✅ Binaries stored as artifact successfully"
+        echo "=========================================="
+        echo ""
+        echo "Artifact name: llvm-binaries-linux-x86_64"
+        echo "Binaries can now be downloaded in other workflows using:"
+        echo "  actions/download-artifact@v4"
+        echo ""
+        echo "This bypasses Git LFS quota limits!"
+

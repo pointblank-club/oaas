@@ -318,6 +318,8 @@ function App() {
   const [selectedRepoFile, setSelectedRepoFile] = useState<RepoFile | null>(null);
   const [repoName, setRepoName] = useState<string>('');
   const [repoBranch, setRepoBranch] = useState<string>('');
+  const [repoSessionId, setRepoSessionId] = useState<string | null>(null);  // Fast clone session
+  const [repoFileCount, setRepoFileCount] = useState<number>(0);  // File count from fast clone
   const [showGitHubModal, setShowGitHubModal] = useState(false);
   const [downloadUrls, setDownloadUrls] = useState<Record<Platform, string | null>>({
     linux: null,
@@ -438,6 +440,17 @@ function App() {
       setDetectedLanguage(lang);
     }
   }, [detectLanguage]);
+
+  // Callback for fast clone - repo stays on backend with all files (including build system files)
+  const onRepoCloned = useCallback((sessionId: string, name: string, branch: string, fileCount: number) => {
+    setRepoSessionId(sessionId);
+    setRepoName(name);
+    setRepoBranch(branch);
+    setRepoFileCount(fileCount);
+    setRepoFiles([]);  // Clear any old files - we don't need them for fast clone
+    setInputMode('github');
+    setShowGitHubModal(false);
+  }, []);
 
   const onGitHubError = useCallback((error: string) => {
     setModal({
@@ -569,7 +582,8 @@ function App() {
       return;
     }
 
-    if (inputMode === 'github' && repoFiles.length === 0) {
+    // For GitHub mode: require either repoSessionId (fast clone) or repoFiles (legacy)
+    if (inputMode === 'github' && !repoSessionId && repoFiles.length === 0) {
       setModal({
         type: 'error',
         title: 'No Repository Loaded',
@@ -611,16 +625,28 @@ function App() {
         filename = language === 'cpp' ? 'pasted_source.cpp' : 'pasted_source.c';
       } else {
         // GitHub mode - for multi-file projects, we don't need a specific file selected
-        // Just use first C/C++ file for language detection, or default values
-        const firstCppFile = repoFiles.find(f => {
-          const ext = f.path.toLowerCase().split('.').pop();
-          return ext && ['c', 'cpp', 'cc', 'cxx', 'c++'].includes(ext);
-        });
+        if (repoSessionId) {
+          // Fast clone mode: files are on backend, we can't inspect them locally
+          // Use placeholder values - backend will find the main file
+          sourceCode = '// Fast clone mode - files on server';
+          filename = 'main.c';  // Placeholder - backend finds actual main file
+          language = 'c';
+        } else if (repoFiles.length > 0) {
+          // Legacy mode: use first C/C++ file for language detection
+          const firstCppFile = repoFiles.find(f => {
+            const ext = f.path.toLowerCase().split('.').pop();
+            return ext && ['c', 'cpp', 'cc', 'cxx', 'c++'].includes(ext);
+          });
 
-        if (firstCppFile) {
-          sourceCode = firstCppFile.content;
-          filename = firstCppFile.path.split('/').pop() || 'repo_file.c';
-          language = detectLanguage(filename, sourceCode);
+          if (firstCppFile) {
+            sourceCode = firstCppFile.content;
+            filename = firstCppFile.path.split('/').pop() || 'repo_file.c';
+            language = detectLanguage(filename, sourceCode);
+          } else {
+            sourceCode = '';
+            filename = 'repo_file.c';
+            language = 'c';
+          }
         } else {
           // Fallback
           sourceCode = '';
@@ -631,38 +657,42 @@ function App() {
 
       // Validate code syntax
       if (inputMode === 'github') {
-        // For GitHub mode (multi-file projects), validate that at least one file has main()
-        const hasMainFunction = repoFiles.some(f => {
-          const ext = f.path.toLowerCase().split('.').pop();
-          if (ext && ['c', 'cpp', 'cc', 'cxx', 'c++'].includes(ext)) {
-            return /\bmain\s*\(/.test(f.content);
+        // Skip validation for fast clone mode - backend handles it
+        if (!repoSessionId) {
+          // Legacy mode: validate that at least one file has main()
+          const hasMainFunction = repoFiles.some(f => {
+            const ext = f.path.toLowerCase().split('.').pop();
+            if (ext && ['c', 'cpp', 'cc', 'cxx', 'c++'].includes(ext)) {
+              return /\bmain\s*\(/.test(f.content);
+            }
+            return false;
+          });
+
+          if (!hasMainFunction) {
+            setModal({
+              type: 'error',
+              title: 'Invalid Repository',
+              message: 'No main() function found in any C/C++ source file. The repository must contain at least one file with a main() function.'
+            });
+            return;
           }
-          return false;
-        });
 
-        if (!hasMainFunction) {
-          setModal({
-            type: 'error',
-            title: 'Invalid Repository',
-            message: 'No main() function found in any C/C++ source file. The repository must contain at least one file with a main() function.'
+          // Basic validation: check for C/C++ files
+          const hasCppFiles = repoFiles.some(f => {
+            const ext = f.path.toLowerCase().split('.').pop();
+            return ext && ['c', 'cpp', 'cc', 'cxx', 'c++', 'h', 'hpp', 'hxx', 'h++'].includes(ext);
           });
-          return;
-        }
 
-        // Basic validation: check for C/C++ files
-        const hasCppFiles = repoFiles.some(f => {
-          const ext = f.path.toLowerCase().split('.').pop();
-          return ext && ['c', 'cpp', 'cc', 'cxx', 'c++', 'h', 'hpp', 'hxx', 'h++'].includes(ext);
-        });
-
-        if (!hasCppFiles) {
-          setModal({
-            type: 'error',
-            title: 'Invalid Repository',
-            message: 'No C/C++ source files found in repository.'
-          });
-          return;
+          if (!hasCppFiles) {
+            setModal({
+              type: 'error',
+              title: 'Invalid Repository',
+              message: 'No C/C++ source files found in repository.'
+            });
+            return;
+          }
         }
+        // For fast clone, backend will validate (it already checks file count > 0)
       } else {
         // For single file mode, validate the file itself
         const validation = validateCode(sourceCode, language);
@@ -692,9 +722,13 @@ function App() {
     setProgress({ message: 'Initializing...', percent: 0 });
 
     // Prepare source files for multi-file projects (GitHub mode)
+    // Priority: 1) repoSessionId (fast clone, keeps all files on backend)
+    //           2) repoFiles (legacy, only C/C++ files)
     let sourceFiles = null;
-    if (inputMode === 'github' && repoFiles.length > 0) {
-      // Filter only C/C++ source and header files
+    const useSessionId = inputMode === 'github' && repoSessionId;
+
+    if (inputMode === 'github' && repoFiles.length > 0 && !repoSessionId) {
+      // Legacy mode: filter only C/C++ source and header files
       const validExtensions = ['c', 'cpp', 'cc', 'cxx', 'c++', 'h', 'hpp', 'hxx', 'h++'];
       sourceFiles = repoFiles
         .filter(f => {
@@ -708,8 +742,9 @@ function App() {
     }
 
     try {
+      const fileCountDisplay = useSessionId ? repoFileCount : (sourceFiles ? sourceFiles.length : 1);
       setProgress({
-        message: inputMode === 'file' ? 'Uploading file...' : inputMode === 'github' ? `Processing ${sourceFiles ? sourceFiles.length : 1} repository file${sourceFiles && sourceFiles.length > 1 ? 's' : ''}...` : 'Encoding source...',
+        message: inputMode === 'file' ? 'Uploading file...' : inputMode === 'github' ? `Processing ${fileCountDisplay} repository file${fileCountDisplay > 1 ? 's' : ''}...` : 'Encoding source...',
         percent: 10
       });
       const source_b64 = inputMode === 'file' ? await fileToBase64(file as File) : stringToBase64(sourceCode);
@@ -741,7 +776,10 @@ function App() {
         filename: filename,
         platform: targetPlatform,
         entrypoint_command: entrypointCommand.trim() || './a.out',
-        source_files: sourceFiles,  // Include all files for GitHub mode
+        // Fast clone: use repo_session_id to keep all files on backend (including build system files)
+        // Legacy: use source_files (filtered C/C++ only - missing CMakeLists.txt, configure, etc.)
+        repo_session_id: useSessionId ? repoSessionId : undefined,
+        source_files: useSessionId ? undefined : sourceFiles,
         config: {
           level: obfuscationLevel,
           passes: {
@@ -934,6 +972,7 @@ function App() {
             <div className="modal-body">
               <GitHubIntegration
                 onFilesLoaded={onGitHubFilesLoaded}
+                onRepoCloned={onRepoCloned}
                 onError={onGitHubError}
               />
             </div>
@@ -1009,7 +1048,34 @@ function App() {
             />
           ) : (
             <div className="github-input">
-              {repoFiles.length > 0 ? (
+              {/* Fast clone mode: files are on backend */}
+              {repoSessionId ? (
+                <div className="github-repo-loaded">
+                  <div className="repo-info">
+                    <h4>📁 {repoName} ({repoBranch})</h4>
+                    <p>{repoFileCount} C/C++ source files ready</p>
+                    <p style={{ fontSize: '0.9em', color: 'var(--text-secondary)', marginTop: '5px' }}>
+                      ✓ Repository cloned to server (includes build system files: CMakeLists.txt, configure, etc.)
+                    </p>
+                    <p style={{ fontSize: '0.9em', color: 'var(--text-secondary)', marginTop: '3px' }}>
+                      ℹ️ All C/C++ files will be compiled together into a single obfuscated binary
+                    </p>
+                  </div>
+                  <div className="github-content">
+                    <div className="file-preview" style={{ width: '100%' }}>
+                      <div className="file-preview-header">
+                        <h5>🚀 Ready to obfuscate</h5>
+                      </div>
+                      <div style={{ padding: '20px', textAlign: 'center', color: 'var(--text-secondary)' }}>
+                        <p>Repository is cloned and ready for obfuscation.</p>
+                        <p style={{ fontSize: '0.9em', marginTop: '10px' }}>
+                          Select your obfuscation layers above and click "Obfuscate" to begin.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ) : repoFiles.length > 0 ? (
                 <div className="github-repo-loaded">
                   <div className="repo-info">
                     <h4>📁 {repoName} ({repoBranch})</h4>
@@ -1443,7 +1509,7 @@ function App() {
             disabled={loading || (
               inputMode === 'file' ? !file :
               inputMode === 'paste' ? pastedSource.trim().length === 0 :
-              inputMode === 'github' ? repoFiles.length === 0 : true
+              inputMode === 'github' ? (!repoSessionId && repoFiles.length === 0) : true
             )}
           >
             {loading ? 'PROCESSING...' : '► OBFUSCATE'}

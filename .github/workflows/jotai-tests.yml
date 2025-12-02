@@ -31,15 +31,77 @@ jobs:
   test-jotai:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    permissions:
+      contents: read
+      actions: read
 
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
       with:
-        lfs: true
+        lfs: false
 
-    - name: Pull Git LFS files
-      run: git lfs pull
+    - name: Download LLVM binaries from artifacts
+      id: download-binaries
+      uses: actions/download-artifact@v4
+      with:
+        name: llvm-binaries-linux-x86_64
+        path: cmd/llvm-obfuscator/plugins/
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+      continue-on-error: true
+
+    - name: Check if binaries were downloaded
+      if: steps.download-binaries.outcome == 'failure'
+      run: |
+        echo "❌ ERROR: Could not download binaries from artifacts"
+        echo ""
+        echo "To fix:"
+        echo "  1. Go to Actions → 'Store LLVM Binaries as Artifacts'"
+        echo "  2. Run the workflow manually (select 'lfs' as source if you have LFS access)"
+        echo "  3. This will upload binaries as artifacts (bypasses LFS quota)"
+        echo ""
+        exit 1
+
+    - name: Verify binaries are present (REQUIRED)
+      run: |
+        echo "=========================================="
+        echo "Verifying custom LLVM binaries (REQUIRED)"
+        echo "=========================================="
+        echo ""
+        
+        MISSING_BINARIES=0
+        
+        # Check if binaries exist and are actual files
+        if [ ! -f "cmd/llvm-obfuscator/plugins/linux-x86_64/clang" ] || \
+           ! file cmd/llvm-obfuscator/plugins/linux-x86_64/clang | grep -q "ELF"; then
+          echo "❌ ERROR: clang binary missing or invalid"
+          echo "   Run the 'Store LLVM Binaries as Artifacts' workflow first"
+          MISSING_BINARIES=1
+        else
+          echo "✅ Custom clang binary verified"
+        fi
+        
+        if [ ! -f "cmd/llvm-obfuscator/plugins/linux-x86_64/opt" ] || \
+           ! file cmd/llvm-obfuscator/plugins/linux-x86_64/opt | grep -q "ELF"; then
+          echo "❌ ERROR: opt binary missing or invalid"
+          echo "   Run the 'Store LLVM Binaries as Artifacts' workflow first"
+          MISSING_BINARIES=1
+        else
+          echo "✅ Custom opt binary verified"
+        fi
+        
+        if [ $MISSING_BINARIES -eq 1 ]; then
+          echo ""
+          echo "❌ ERROR: Required custom LLVM binaries are missing"
+          echo ""
+          echo "To fix:"
+          echo "  1. Go to Actions → 'Store LLVM Binaries as Artifacts'"
+          echo "  2. Run the workflow manually"
+          echo "  3. This bypasses Git LFS quota limits"
+          exit 1
+        fi
+        
+        echo "✅ All required binaries verified"
 
     - name: Set up Python
       uses: actions/setup-python@v5

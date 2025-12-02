@@ -14,28 +14,99 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      actions: read
 
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
       with:
-        lfs: true
+        lfs: false
 
-    - name: Pull Git LFS files
-      run: git lfs pull
+    - name: Download LLVM binaries from artifacts
+      id: download-binaries
+      uses: actions/download-artifact@v4
+      with:
+        name: llvm-binaries-linux-x86_64
+        path: cmd/llvm-obfuscator/plugins/
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+      continue-on-error: false
 
-    - name: Verify LFS binaries are present
+    - name: Check if binaries were downloaded
+      if: steps.download-binaries.outcome == 'failure'
       run: |
-        echo "Verifying LFS binaries are present..."
-        # Check main binaries
-        ls -lh cmd/llvm-obfuscator/plugins/linux-x86_64/clang || exit 1
-        ls -lh cmd/llvm-obfuscator/plugins/linux-x86_64/opt || exit 1
-        ls -lh cmd/llvm-obfuscator/plugins/linux-x86_64/LLVMObfuscationPlugin.so || exit 1
-        # Verify they are actual ELF binaries (not LFS pointer files)
-        file cmd/llvm-obfuscator/plugins/linux-x86_64/clang | grep -q "ELF" || exit 1
-        file cmd/llvm-obfuscator/plugins/linux-x86_64/opt | grep -q "ELF" || exit 1
-        file cmd/llvm-obfuscator/plugins/linux-x86_64/LLVMObfuscationPlugin.so | grep -q "shared object" || exit 1
-        echo "✅ All LFS binaries verified successfully"
+        echo "❌ ERROR: Could not download binaries from artifacts"
+        echo ""
+        echo "To fix:"
+        echo "  1. Go to Actions → 'Store LLVM Binaries as Artifacts'"
+        echo "  2. Run the workflow manually (select 'lfs' as source if you have LFS access)"
+        echo "  3. This will upload binaries as artifacts (bypasses LFS quota)"
+        echo ""
+        exit 1
+
+    - name: Verify binaries are present (REQUIRED)
+      run: |
+        echo "=========================================="
+        echo "Verifying custom LLVM binaries (REQUIRED)"
+        echo "=========================================="
+        echo ""
+        
+        MISSING_BINARIES=0
+        
+        # Check clang
+        if [ ! -f "cmd/llvm-obfuscator/plugins/linux-x86_64/clang" ]; then
+          echo "❌ ERROR: clang binary not found"
+          echo "   Run the 'Store LLVM Binaries as Artifacts' workflow first"
+          MISSING_BINARIES=1
+        elif ! file cmd/llvm-obfuscator/plugins/linux-x86_64/clang | grep -q "ELF"; then
+          echo "❌ ERROR: clang file exists but is not a valid ELF binary"
+          MISSING_BINARIES=1
+        else
+          echo "✅ Custom clang binary verified"
+        fi
+        
+        # Check opt
+        if [ ! -f "cmd/llvm-obfuscator/plugins/linux-x86_64/opt" ]; then
+          echo "❌ ERROR: opt binary not found"
+          echo "   Run the 'Store LLVM Binaries as Artifacts' workflow first"
+          MISSING_BINARIES=1
+        elif ! file cmd/llvm-obfuscator/plugins/linux-x86_64/opt | grep -q "ELF"; then
+          echo "❌ ERROR: opt file exists but is not a valid ELF binary"
+          MISSING_BINARIES=1
+        else
+          echo "✅ Custom opt binary verified"
+        fi
+        
+        # Check plugin
+        if [ ! -f "cmd/llvm-obfuscator/plugins/linux-x86_64/LLVMObfuscationPlugin.so" ]; then
+          echo "❌ ERROR: LLVMObfuscationPlugin.so not found"
+          echo "   Run the 'Store LLVM Binaries as Artifacts' workflow first"
+          MISSING_BINARIES=1
+        elif ! file cmd/llvm-obfuscator/plugins/linux-x86_64/LLVMObfuscationPlugin.so | grep -q "shared object"; then
+          echo "❌ ERROR: plugin file exists but is not a valid shared object"
+          MISSING_BINARIES=1
+        else
+          echo "✅ Custom obfuscation plugin verified"
+        fi
+        
+        echo ""
+        if [ $MISSING_BINARIES -eq 1 ]; then
+          echo "=========================================="
+          echo "❌ BUILD FAILED: Required binaries missing"
+          echo "=========================================="
+          echo ""
+          echo "To fix:"
+          echo "  1. Go to Actions → 'Store LLVM Binaries as Artifacts'"
+          echo "  2. Run the workflow manually"
+          echo "  3. This will upload binaries as artifacts (bypasses LFS quota)"
+          echo ""
+          exit 1
+        else
+          echo "✅ All required custom binaries verified successfully"
+          echo ""
+          ls -lh cmd/llvm-obfuscator/plugins/linux-x86_64/clang
+          ls -lh cmd/llvm-obfuscator/plugins/linux-x86_64/opt
+          ls -lh cmd/llvm-obfuscator/plugins/linux-x86_64/LLVMObfuscationPlugin.so
+        fi
 
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3

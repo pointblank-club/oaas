@@ -1,5 +1,6 @@
-import { useState, useCallback, useEffect, useMemo } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import './App.css';
+import { GitHubIntegration, FileTree } from './components';
 
 type Platform = 'linux' | 'windows' | 'macos';
 
@@ -297,14 +298,27 @@ interface Modal {
   message: string;
 }
 
+interface RepoFile {
+  path: string;
+  content: string;
+  is_binary: boolean;
+}
+
 function App() {
   const [darkMode, setDarkMode] = useState(true);
   const [serverStatus, setServerStatus] = useState<'checking' | 'online' | 'offline'>('checking');
   const [file, setFile] = useState<File | null>(null);
-  const [inputMode, setInputMode] = useState<'file' | 'paste'>('file');
+  const [inputMode, setInputMode] = useState<'file' | 'paste' | 'github'>('file');
   const [pastedSource, setPastedSource] = useState('');
   const [selectedDemo, setSelectedDemo] = useState<string>('');
   const [jobId, setJobId] = useState<string | null>(null);
+  
+  // GitHub integration state
+  const [repoFiles, setRepoFiles] = useState<RepoFile[]>([]);
+  const [selectedRepoFile, setSelectedRepoFile] = useState<RepoFile | null>(null);
+  const [repoName, setRepoName] = useState<string>('');
+  const [repoBranch, setRepoBranch] = useState<string>('');
+  const [showGitHubModal, setShowGitHubModal] = useState(false);
   const [downloadUrls, setDownloadUrls] = useState<Record<Platform, string | null>>({
     linux: null,
     windows: null,
@@ -349,10 +363,14 @@ function App() {
   const [flagSymbolHiding, setFlagSymbolHiding] = useState(false);
   const [flagOmitFramePointer, setFlagOmitFramePointer] = useState(false);
   const [flagSpeculativeLoadHardening, setFlagSpeculativeLoadHardening] = useState(false);
+  const [flagO3, setFlagO3] = useState(false);
+  const [flagStripSymbols, setFlagStripSymbols] = useState(false);
+  const [flagNoBuiltin, setFlagNoBuiltin] = useState(false);
 
   // Configuration states
   const [obfuscationLevel, setObfuscationLevel] = useState(5);
   const [targetPlatform, setTargetPlatform] = useState<Platform>('linux');
+  const [entrypointCommand, setEntrypointCommand] = useState<string>('./a.out');
 
   useEffect(() => {
     document.body.className = darkMode ? 'dark' : 'light';
@@ -391,6 +409,44 @@ function App() {
     }
   }, [detectLanguage]);
 
+  const onGitHubFilesLoaded = useCallback((files: RepoFile[], repoName: string, branch: string) => {
+    setRepoFiles(files);
+    setRepoName(repoName);
+    setRepoBranch(branch);
+    setInputMode('github');
+    setShowGitHubModal(false);
+
+    // Auto-select file containing main() function
+    const mainFile = files.find(f => {
+      const ext = f.path.toLowerCase().split('.').pop();
+      if (ext && ['c', 'cpp', 'cc', 'cxx', 'c++'].includes(ext)) {
+        // Check if file contains main function
+        return /\bmain\s*\(/.test(f.content);
+      }
+      return false;
+    });
+
+    // If no main file found, select first C/C++ file
+    const sourceFile = mainFile || files.find(f => {
+      const ext = f.path.toLowerCase().split('.').pop();
+      return ext && ['c', 'cpp', 'cc', 'cxx', 'c++'].includes(ext);
+    });
+
+    if (sourceFile) {
+      setSelectedRepoFile(sourceFile);
+      const lang = detectLanguage(sourceFile.path, sourceFile.content);
+      setDetectedLanguage(lang);
+    }
+  }, [detectLanguage]);
+
+  const onGitHubError = useCallback((error: string) => {
+    setModal({
+      type: 'error',
+      title: 'GitHub Error',
+      message: error
+    });
+  }, []);
+
   const onSelectDemo = useCallback((demoKey: string) => {
     if (!demoKey) {
       setSelectedDemo('');
@@ -415,9 +471,9 @@ function App() {
     if (layer2) count++; // String encryption
     if (layer2_5) count++; // Indirect calls
     if (layer3 && (passFlattening || passSubstitution || passBogusControlFlow || passSplitBasicBlocks)) count++; // OLLVM passes
-    if (layer4 && (flagLTO || flagSymbolHiding || flagOmitFramePointer || flagSpeculativeLoadHardening)) count++; // Compiler flags
+    if (layer4 && (flagLTO || flagSymbolHiding || flagOmitFramePointer || flagSpeculativeLoadHardening || flagO3 || flagStripSymbols || flagNoBuiltin)) count++; // Compiler flags
     return count;
-  }, [layer1, layer2, layer2_5, layer3, layer4, passFlattening, passSubstitution, passBogusControlFlow, passSplitBasicBlocks, flagLTO, flagSymbolHiding, flagOmitFramePointer, flagSpeculativeLoadHardening]);
+  }, [layer1, layer2, layer2_5, layer3, layer4, passFlattening, passSubstitution, passBogusControlFlow, passSplitBasicBlocks, flagLTO, flagSymbolHiding, flagOmitFramePointer, flagSpeculativeLoadHardening, flagO3, flagStripSymbols, flagNoBuiltin]);
 
   // Validate source code syntax
   const validateCode = (code: string, language: 'c' | 'cpp'): { valid: boolean; error?: string } => {
@@ -513,6 +569,15 @@ function App() {
       return;
     }
 
+    if (inputMode === 'github' && repoFiles.length === 0) {
+      setModal({
+        type: 'error',
+        title: 'No Repository Loaded',
+        message: 'Please load a GitHub repository first.'
+      });
+      return;
+    }
+
     // Validation: Check if at least one layer is selected
     const layerCount = countLayers();
     if (layerCount === 0) {
@@ -539,22 +604,76 @@ function App() {
         });
         filename = (file as File).name;
         language = detectLanguage(filename, sourceCode);
-      } else {
+      } else if (inputMode === 'paste') {
         sourceCode = pastedSource;
         language = detectLanguage('pasted_source', pastedSource);
         setDetectedLanguage(language);
         filename = language === 'cpp' ? 'pasted_source.cpp' : 'pasted_source.c';
+      } else {
+        // GitHub mode - for multi-file projects, we don't need a specific file selected
+        // Just use first C/C++ file for language detection, or default values
+        const firstCppFile = repoFiles.find(f => {
+          const ext = f.path.toLowerCase().split('.').pop();
+          return ext && ['c', 'cpp', 'cc', 'cxx', 'c++'].includes(ext);
+        });
+
+        if (firstCppFile) {
+          sourceCode = firstCppFile.content;
+          filename = firstCppFile.path.split('/').pop() || 'repo_file.c';
+          language = detectLanguage(filename, sourceCode);
+        } else {
+          // Fallback
+          sourceCode = '';
+          filename = 'repo_file.c';
+          language = 'c';
+        }
       }
 
       // Validate code syntax
-      const validation = validateCode(sourceCode, language);
-      if (!validation.valid) {
-        setModal({
-          type: 'error',
-          title: 'Invalid Source Code',
-          message: validation.error || 'The provided source code contains syntax errors.'
+      if (inputMode === 'github') {
+        // For GitHub mode (multi-file projects), validate that at least one file has main()
+        const hasMainFunction = repoFiles.some(f => {
+          const ext = f.path.toLowerCase().split('.').pop();
+          if (ext && ['c', 'cpp', 'cc', 'cxx', 'c++'].includes(ext)) {
+            return /\bmain\s*\(/.test(f.content);
+          }
+          return false;
         });
-        return;
+
+        if (!hasMainFunction) {
+          setModal({
+            type: 'error',
+            title: 'Invalid Repository',
+            message: 'No main() function found in any C/C++ source file. The repository must contain at least one file with a main() function.'
+          });
+          return;
+        }
+
+        // Basic validation: check for C/C++ files
+        const hasCppFiles = repoFiles.some(f => {
+          const ext = f.path.toLowerCase().split('.').pop();
+          return ext && ['c', 'cpp', 'cc', 'cxx', 'c++', 'h', 'hpp', 'hxx', 'h++'].includes(ext);
+        });
+
+        if (!hasCppFiles) {
+          setModal({
+            type: 'error',
+            title: 'Invalid Repository',
+            message: 'No C/C++ source files found in repository.'
+          });
+          return;
+        }
+      } else {
+        // For single file mode, validate the file itself
+        const validation = validateCode(sourceCode, language);
+        if (!validation.valid) {
+          setModal({
+            type: 'error',
+            title: 'Invalid Source Code',
+            message: validation.error || 'The provided source code contains syntax errors.'
+          });
+          return;
+        }
       }
 
     } catch (err) {
@@ -572,21 +691,41 @@ function App() {
     setBinaryName(null);
     setProgress({ message: 'Initializing...', percent: 0 });
 
+    // Prepare source files for multi-file projects (GitHub mode)
+    let sourceFiles = null;
+    if (inputMode === 'github' && repoFiles.length > 0) {
+      // Filter only C/C++ source and header files
+      const validExtensions = ['c', 'cpp', 'cc', 'cxx', 'c++', 'h', 'hpp', 'hxx', 'h++'];
+      sourceFiles = repoFiles
+        .filter(f => {
+          const ext = f.path.toLowerCase().split('.').pop();
+          return ext && validExtensions.includes(ext);
+        })
+        .map(f => ({
+          path: f.path,
+          content: f.content
+        }));
+    }
+
     try {
-      setProgress({ message: inputMode === 'file' ? 'Uploading file...' : 'Encoding source...', percent: 10 });
-      const source_b64 = inputMode === 'file' ? await fileToBase64(file as File) : stringToBase64(pastedSource);
+      setProgress({
+        message: inputMode === 'file' ? 'Uploading file...' : inputMode === 'github' ? `Processing ${sourceFiles ? sourceFiles.length : 1} repository file${sourceFiles && sourceFiles.length > 1 ? 's' : ''}...` : 'Encoding source...',
+        percent: 10
+      });
+      const source_b64 = inputMode === 'file' ? await fileToBase64(file as File) : stringToBase64(sourceCode);
 
       // Build compiler flags based on Layer 4 (Compiler Flags) - only selected flags
       const flags: string[] = [];
       if (layer4) {
-        if (flagLTO) flags.push('-flto', '-flto=thin');
+        // Add non-LTO flags first
+        if (flagO3) flags.push('-O3');
+        if (flagNoBuiltin) flags.push('-fno-builtin');
+        if (flagStripSymbols) flags.push('-Wl,-s');
         if (flagSymbolHiding) flags.push('-fvisibility=hidden');
         if (flagOmitFramePointer) flags.push('-fomit-frame-pointer');
         if (flagSpeculativeLoadHardening) flags.push('-mspeculative-load-hardening');
-        // Add optimization flags if any Layer 4 flag is selected
-        if (flagLTO || flagSymbolHiding || flagOmitFramePointer || flagSpeculativeLoadHardening) {
-          flags.push('-O3', '-fno-builtin', '-O1');
-        }
+        // Add LTO at the end (as requested by user)
+        if (flagLTO) flags.push('-flto', '-flto=thin');
       }
 
       // Build OLLVM pass flags based on Layer 3 - only selected passes
@@ -601,6 +740,8 @@ function App() {
         source_code: source_b64,
         filename: filename,
         platform: targetPlatform,
+        entrypoint_command: entrypointCommand.trim() || './a.out',
+        source_files: sourceFiles,  // Include all files for GitHub mode
         config: {
           level: obfuscationLevel,
           passes: {
@@ -723,13 +864,14 @@ function App() {
       setProgress(null); 
     }
   }, [
-    file, inputMode, pastedSource, obfuscationLevel, cycles, targetPlatform,
+    file, inputMode, pastedSource, obfuscationLevel, cycles, targetPlatform, entrypointCommand,
     layer1, layer2, layer3, layer4,
     symbolAlgorithm, symbolHashLength, symbolPrefix, symbolSalt,
     fakeLoops,
     passFlattening, passSubstitution, passBogusControlFlow, passSplitBasicBlocks,
     flagLTO, flagSymbolHiding, flagOmitFramePointer, flagSpeculativeLoadHardening,
-    detectLanguage, countLayers
+    flagO3, flagStripSymbols, flagNoBuiltin,
+    detectLanguage, countLayers, selectedRepoFile
   ]);
 
   const onDownloadBinary = useCallback((platform: Platform) => {
@@ -781,22 +923,56 @@ function App() {
         </div>
       )}
 
+      {/* GitHub Modal */}
+      {showGitHubModal && (
+        <div className="modal-overlay" onClick={() => setShowGitHubModal(false)}>
+          <div className="modal github-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3>GitHub Repository</h3>
+              <button className="modal-close" onClick={() => setShowGitHubModal(false)}>×</button>
+            </div>
+            <div className="modal-body">
+              <GitHubIntegration
+                onFilesLoaded={onGitHubFilesLoaded}
+                onError={onGitHubError}
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
       <main className="main-content">
         {/* Input Section */}
         <section className="section">
           <h2 className="section-title">[1] SOURCE INPUT</h2>
-          <div className="input-mode-toggle">
+          <div className="input-section-header">
+            <div className="input-mode-toggle">
+              <button
+                className={inputMode === 'file' ? 'active' : ''}
+                onClick={() => setInputMode('file')}
+              >
+                FILE
+              </button>
+              <button
+                className={inputMode === 'paste' ? 'active' : ''}
+                onClick={() => setInputMode('paste')}
+              >
+                PASTE
+              </button>
+              <button
+                className={inputMode === 'github' ? 'active' : ''}
+                onClick={() => setInputMode('github')}
+              >
+                GITHUB
+              </button>
+            </div>
             <button
-              className={inputMode === 'file' ? 'active' : ''}
-              onClick={() => setInputMode('file')}
+              className="github-btn"
+              onClick={() => setShowGitHubModal(true)}
+              title="Load from GitHub Repository"
             >
-              FILE
-            </button>
-            <button
-              className={inputMode === 'paste' ? 'active' : ''}
-              onClick={() => setInputMode('paste')}
-            >
-              PASTE
+              <span className="github-logo">GitHub Logo</span>
+              GitHub
             </button>
           </div>
 
@@ -822,7 +998,7 @@ function App() {
               </label>
               {file && <span className="file-name">{file.name}</span>}
             </div>
-          ) : (
+          ) : inputMode === 'paste' ? (
             <textarea
               className="code-input"
               placeholder="// Paste your C/C++ source code here..."
@@ -831,6 +1007,52 @@ function App() {
               rows={20}
               style={{ minHeight: '400px', fontFamily: 'monospace', fontSize: '14px' }}
             />
+          ) : (
+            <div className="github-input">
+              {repoFiles.length > 0 ? (
+                <div className="github-repo-loaded">
+                  <div className="repo-info">
+                    <h4>📁 {repoName} ({repoBranch})</h4>
+                    <p>{repoFiles.length} files loaded</p>
+                    <p style={{ fontSize: '0.9em', color: 'var(--text-secondary)', marginTop: '5px' }}>
+                      ℹ️ All C/C++ files will be compiled together into a single obfuscated binary
+                    </p>
+                  </div>
+                  <div className="github-content">
+                    <div className="file-tree-container">
+                      <FileTree
+                        files={repoFiles}
+                        selectedFile={selectedRepoFile?.path || null}
+                        onFileSelect={setSelectedRepoFile}
+                      />
+                    </div>
+                    {selectedRepoFile && (
+                      <div className="file-preview">
+                        <div className="file-preview-header">
+                          <h5>📄 {selectedRepoFile.path}</h5>
+                        </div>
+                        <textarea
+                          className="code-input"
+                          value={selectedRepoFile.content}
+                          readOnly
+                          rows={12}
+                        />
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <div className="github-empty">
+                  <p>No repository loaded. Click the GitHub button to load a repository.</p>
+                  <button
+                    className="load-github-btn"
+                    onClick={() => setShowGitHubModal(true)}
+                  >
+                    Load GitHub Repository
+                  </button>
+                </div>
+              )}
+            </div>
           )}
         </section>
 
@@ -846,7 +1068,8 @@ function App() {
               onClick={() => {
                 const allSelected = layer1 && layer2 && layer2_5 && layer3 && layer4 &&
                   passFlattening && passSubstitution && passBogusControlFlow && passSplitBasicBlocks &&
-                  flagLTO && flagSymbolHiding && flagOmitFramePointer && flagSpeculativeLoadHardening;
+                  flagLTO && flagSymbolHiding && flagOmitFramePointer && flagSpeculativeLoadHardening &&
+                  flagO3 && flagStripSymbols && flagNoBuiltin;
 
                 const newValue = !allSelected;
                 setLayer1(newValue);
@@ -862,11 +1085,15 @@ function App() {
                 setFlagSymbolHiding(newValue);
                 setFlagOmitFramePointer(newValue);
                 setFlagSpeculativeLoadHardening(newValue);
+                setFlagO3(newValue);
+                setFlagStripSymbols(newValue);
+                setFlagNoBuiltin(newValue);
               }}
             >
               {layer1 && layer2 && layer2_5 && layer3 && layer4 &&
                 passFlattening && passSubstitution && passBogusControlFlow && passSplitBasicBlocks &&
-                flagLTO && flagSymbolHiding && flagOmitFramePointer && flagSpeculativeLoadHardening
+                flagLTO && flagSymbolHiding && flagOmitFramePointer && flagSpeculativeLoadHardening &&
+                flagO3 && flagStripSymbols && flagNoBuiltin
                 ? 'Deselect All' : 'Select All'}
             </button>
           </div>
@@ -1072,35 +1299,23 @@ function App() {
                   className="select-all-btn"
                   style={{ marginBottom: '10px', fontSize: '0.9em' }}
                   onClick={() => {
-                    const allFlagsSelected = flagLTO && flagSymbolHiding &&
-                      flagOmitFramePointer && flagSpeculativeLoadHardening;
+                    const allFlagsSelected = flagSymbolHiding &&
+                      flagOmitFramePointer && flagSpeculativeLoadHardening &&
+                      flagO3 && flagStripSymbols && flagNoBuiltin && flagLTO;
                     const newValue = !allFlagsSelected;
-                    setFlagLTO(newValue);
                     setFlagSymbolHiding(newValue);
                     setFlagOmitFramePointer(newValue);
                     setFlagSpeculativeLoadHardening(newValue);
+                    setFlagO3(newValue);
+                    setFlagStripSymbols(newValue);
+                    setFlagNoBuiltin(newValue);
+                    setFlagLTO(newValue);
                   }}
                 >
-                  {flagLTO && flagSymbolHiding && flagOmitFramePointer && flagSpeculativeLoadHardening
+                  {flagSymbolHiding && flagOmitFramePointer && flagSpeculativeLoadHardening &&
+                    flagO3 && flagStripSymbols && flagNoBuiltin && flagLTO
                     ? 'Deselect All' : 'Select All'}
                 </button>
-                <label
-                  className="sub-option"
-                  title={layer3 ? "LTO is incompatible with OLLVM passes (LLVM version mismatch: bundled v22 vs system v19)" : ""}
-                  style={{
-                    opacity: layer3 ? 0.5 : 1,
-                    cursor: layer3 ? 'not-allowed' : 'pointer'
-                  }}
-                >
-                  <input
-                    type="checkbox"
-                    checked={flagLTO}
-                    onChange={(e) => setFlagLTO(e.target.checked)}
-                    disabled={layer3}
-                  />
-                  Link-Time Optimization (-flto)
-                  {layer3 && <span style={{ marginLeft: '8px', color: '#ff6b6b', fontSize: '0.85em' }}>⚠ Incompatible with Layer 3</span>}
-                </label>
                 <label className="sub-option">
                   <input
                     type="checkbox"
@@ -1124,6 +1339,52 @@ function App() {
                     onChange={(e) => setFlagSpeculativeLoadHardening(e.target.checked)}
                   />
                   Speculative Load Hardening
+                </label>
+                <label className="sub-option">
+                  <input
+                    type="checkbox"
+                    checked={flagO3}
+                    onChange={(e) => setFlagO3(e.target.checked)}
+                  />
+                  Maximum Optimization (-O3)
+                </label>
+                <label className="sub-option">
+                  <input
+                    type="checkbox"
+                    checked={flagStripSymbols}
+                    onChange={(e) => setFlagStripSymbols(e.target.checked)}
+                  />
+                  Strip Symbols (-Wl,-s)
+                </label>
+                <label className="sub-option">
+                  <input
+                    type="checkbox"
+                    checked={flagNoBuiltin}
+                    onChange={(e) => setFlagNoBuiltin(e.target.checked)}
+                  />
+                  Disable Built-in Functions (-fno-builtin)
+                </label>
+                <label
+                  className="sub-option"
+                  title={layer3 ? "LTO is incompatible with OLLVM passes (LLVM version mismatch: bundled v22 vs system v19)" : ""}
+                  style={{
+                    opacity: layer3 ? 0.5 : 1,
+                    cursor: layer3 ? 'not-allowed' : 'pointer',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '4px'
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center' }}>
+                    <input
+                      type="checkbox"
+                      checked={flagLTO}
+                      onChange={(e) => setFlagLTO(e.target.checked)}
+                      disabled={layer3}
+                    />
+                    Link-Time Optimization (-flto)
+                  </div>
+                  {layer3 && <span style={{ color: '#ff6b6b', fontSize: '0.8em', marginLeft: '20px' }}>⚠ Incompatible with Layer 3</span>}
                 </label>
               </div>
             )}
@@ -1159,6 +1420,17 @@ function App() {
                 <option value="macos">macOS</option>
               </select>
             </label>
+
+            <label>
+              Entrypoint Command:
+              <input
+                type="text"
+                placeholder="./a.out or gcc main.c -o out && ./out"
+                value={entrypointCommand}
+                onChange={(e) => setEntrypointCommand(e.target.value)}
+                title="Command to run the compiled binary (e.g., ./a.out, make && ./bin/app)"
+              />
+            </label>
           </div>
         </section>
 
@@ -1168,7 +1440,11 @@ function App() {
           <button
             className="submit-btn"
             onClick={onSubmit}
-            disabled={loading || (inputMode === 'file' ? !file : pastedSource.trim().length === 0)}
+            disabled={loading || (
+              inputMode === 'file' ? !file :
+              inputMode === 'paste' ? pastedSource.trim().length === 0 :
+              inputMode === 'github' ? repoFiles.length === 0 : true
+            )}
           >
             {loading ? 'PROCESSING...' : '► OBFUSCATE'}
           </button>

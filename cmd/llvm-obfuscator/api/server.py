@@ -3,11 +3,19 @@ from __future__ import annotations
 import base64
 import logging
 import os
+import secrets
+import shutil
+import tempfile
+import zipfile
 from pathlib import Path
-from typing import Dict, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
+from urllib.parse import urlencode
 
+import requests
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
+from github import Github
 from pydantic import BaseModel, Field
 
 from core import (
@@ -24,6 +32,22 @@ from core.exceptions import JobNotFoundError, ValidationError
 from core.job_manager import JobManager
 from core.progress import ProgressEvent, ProgressTracker
 from core.utils import create_logger, ensure_directory, normalize_flags_and_passes
+
+from .multifile_pipeline import (
+    GitHubRepoRequest,
+    RepoData,
+    RepoFile,
+    SourceFile,
+    cleanup_old_sessions,
+    cleanup_repo_session,
+    clone_repo_to_temp,
+    create_multi_file_project,
+    extract_repo_files,
+    find_main_file,
+    get_repo_branches,
+    get_repo_session,
+    get_session_token,
+)
 
 # Load flags database for the /api/flags endpoint. Prefer importing from the
 # repo's scripts module; fall back to loading the file directly, and finally to
@@ -45,7 +69,30 @@ DEFAULT_API_KEY = os.environ.get("OBFUSCATOR_API_KEY", "change-me")
 DISABLE_AUTH = os.environ.get("OBFUSCATOR_DISABLE_AUTH", "false").lower() == "true"
 MAX_SOURCE_SIZE = 100 * 1024 * 1024  # 100MB
 
+# GitHub OAuth Configuration
+GITHUB_CLIENT_ID = os.environ.get("GITHUB_CLIENT_ID", "")
+GITHUB_CLIENT_SECRET = os.environ.get("GITHUB_CLIENT_SECRET", "")
+GITHUB_REDIRECT_URI = os.environ.get("GITHUB_REDIRECT_URI", "http://localhost:4666/api/github/callback")
+FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:4666")
+
+# In-memory storage for OAuth states and tokens (use Redis/DB in production)
+# Maps state -> {"token": access_token, "timestamp": created_at}
+oauth_states: Dict[str, str] = {}
+user_sessions: Dict[str, Dict[str, object]] = {}
+SESSION_COOKIE_NAME = "gh_session"
+TOKEN_TTL = 3600  # 1 hour
+
 app = FastAPI(title="LLVM Obfuscator API", version="1.0.0")
+
+# Add CORS middleware to support cookies
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[FRONTEND_URL] if FRONTEND_URL else ["http://localhost:4666"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 logger = create_logger("api", logging.INFO)
 job_manager = JobManager()
 progress_tracker = ProgressTracker()
@@ -118,20 +165,32 @@ class ConfigModel(BaseModel):
     symbol_obfuscation: SymbolObfuscationModel = SymbolObfuscationModel()
 
 
+
+
 class ObfuscateRequest(BaseModel):
-    source_code: str
+    source_code: str  # For backward compatibility - single file content
     filename: str
     platform: Platform = Platform.LINUX
+    entrypoint_command: Optional[str] = Field(default="./a.out")
     config: ConfigModel = ConfigModel()
     report_formats: Optional[list[str]] = Field(default_factory=lambda: ["json", "markdown"])
     custom_flags: Optional[list[str]] = None
     custom_pass_plugin: Optional[str] = None
+    source_files: Optional[List[SourceFile]] = None  # For multi-file projects (GitHub repos)
+    repo_session_id: Optional[str] = None  # For GitHub repos cloned to backend
+
+
+class GitHubCloneRequest(BaseModel):
+    repo_url: str
+    branch: str = "main"
 
 
 class CompareRequest(BaseModel):
     original_b64: str
     obfuscated_b64: str
     filename: str = "comparison"
+
+
 
 
 def check_api_key(request: Request) -> None:
@@ -175,6 +234,36 @@ def _sanitize_filename(name: str) -> str:
     return safe or "source.c"
 
 
+def _validate_entrypoint_command(command: str) -> str:
+    """Validate and sanitize entrypoint command for security."""
+    if not command or not command.strip():
+        return "./a.out"
+
+    # Limit length
+    if len(command) > 500:
+        raise HTTPException(status_code=400, detail="Entrypoint command too long (max 500 characters)")
+
+    # Basic validation - allow common characters for shell commands
+    # Block potentially dangerous patterns
+    dangerous_patterns = [
+        r'\brm\s+-rf\b',  # rm -rf
+        r'\bcurl\s+.*\|\s*sh\b',  # curl | sh
+        r'\bwget\s+.*\|\s*sh\b',  # wget | sh
+        r'>\s*/dev/',  # writing to /dev/
+        r'\bdd\s+if=',  # dd commands
+        r'\bmkfs\b',  # filesystem formatting
+        r'\bformat\b',  # format command (Windows)
+        r':\(\)\{.*;\};:',  # fork bomb
+    ]
+
+    import re
+    for pattern in dangerous_patterns:
+        if re.search(pattern, command, re.IGNORECASE):
+            raise HTTPException(status_code=400, detail="Entrypoint command contains potentially dangerous operations")
+
+    return command.strip()
+
+
 def _decode_source(source_b64: str, destination: Path) -> None:
     decoded = base64.b64decode(source_b64)
     # Ensure the decoded content is valid UTF-8
@@ -188,9 +277,18 @@ def _decode_source(source_b64: str, destination: Path) -> None:
         destination.write_bytes(decoded)
 
 
-def _build_config_from_request(payload: ObfuscateRequest, destination_dir: Path) -> ObfuscationConfig:
+
+
+def _build_config_from_request(payload: ObfuscateRequest, destination_dir: Path, additional_sources: Optional[List[Path]] = None, project_root: Optional[Path] = None) -> ObfuscationConfig:
     detected_flags: list[str] = payload.custom_flags or []
     sanitized_flags, detected_passes = normalize_flags_and_passes(detected_flags)
+
+    # For multi-file projects, add all additional source files to compiler flags
+    # This ensures all source files are compiled and linked together
+    if additional_sources:
+        for src_path in additional_sources:
+            sanitized_flags.append(str(src_path))
+            logger.debug(f"Added source file to compilation: {src_path}")
     passes = PassConfiguration(
         flattening=payload.config.passes.flattening or detected_passes.get("flattening", False),
         substitution=payload.config.passes.substitution or detected_passes.get("substitution", False),
@@ -246,6 +344,8 @@ def _build_config_from_request(payload: ObfuscateRequest, destination_dir: Path)
             },
             "compiler_flags": sanitized_flags,
             "custom_pass_plugin": chosen_plugin,
+            "entrypoint_command": payload.entrypoint_command,
+            "project_root": str(project_root) if project_root else None,
         }
     )
     return output_config
@@ -265,27 +365,154 @@ def _run_obfuscation(job_id: str, source_path: Path, config: ObfuscationConfig) 
         progress_tracker.publish_sync(ProgressEvent(job_id=job_id, stage="failed", progress=1.0, message=str(exc)))
 
 
+
+
 @app.post("/api/obfuscate/sync")
 async def api_obfuscate_sync(
     payload: ObfuscateRequest,
 ):
     """Synchronous obfuscation - process immediately and return binary."""
-    _validate_source_size(payload.source_code)
+    # Determine if this is a multi-file project
+    # Can be from: 1) source_files (legacy), 2) repo_session_id (new backend storage)
+    is_multi_file = (payload.source_files is not None and len(payload.source_files) > 0) or \
+                    (payload.repo_session_id is not None)
+
+    if not is_multi_file:
+        # Single file mode - validate source size
+        _validate_source_size(payload.source_code)
+
+    # Validate and sanitize entrypoint command
+    entrypoint_cmd = _validate_entrypoint_command(payload.entrypoint_command or "./a.out")
 
     # Always compile for Linux, regardless of what user selected
     payload.platform = Platform.LINUX
 
-    job = job_manager.create_job({"filename": payload.filename, "platform": payload.platform.value})
+    job = job_manager.create_job({
+        "filename": payload.filename,
+        "platform": payload.platform.value,
+        "entrypoint_command": entrypoint_cmd,
+        "is_multi_file": is_multi_file,
+        "file_count": len(payload.source_files) if payload.source_files else 1,
+        "repo_session_id": payload.repo_session_id  # Track session for cleanup
+    })
     working_dir = report_base / job.job_id
     ensure_directory(working_dir)
-    source_filename = _sanitize_filename(payload.filename)
-    source_path = (working_dir / source_filename).resolve()
-    _decode_source(payload.source_code, source_path)
-    config = _build_config_from_request(payload, working_dir)
 
     try:
         job_manager.update_job(job.job_id, status="running")
-        result = obfuscator.obfuscate(source_path, config, job_id=job.job_id)
+
+        if payload.repo_session_id:
+            # Multi-file project from backend ephemeral storage (new method)
+            logger.info(f"Processing repository from backend session: {payload.repo_session_id}")
+            
+            # Get repository session
+            repo_session = get_repo_session(payload.repo_session_id)
+            if not repo_session:
+                raise HTTPException(
+                    status_code=404,
+                    detail="Repository session not found or expired. Please clone the repository again."
+                )
+            
+            repo_path = repo_session["repo_path"]
+            logger.info(f"Using repository from: {repo_path}")
+            
+            # Find all C/C++ source files
+            source_extensions = ['*.c', '*.cpp', '*.cc', '*.cxx', '*.c++']
+            all_source_paths = []
+            for ext in source_extensions:
+                all_source_paths.extend(repo_path.rglob(ext))
+            
+            if not all_source_paths:
+                raise HTTPException(
+                    status_code=400,
+                    detail="No valid C/C++ source files found in repository"
+                )
+            
+            logger.info(f"Found {len(all_source_paths)} source files")
+            
+            # Find main file (file containing main() function)
+            main_file_path = None
+            main_pattern = re.compile(r'\bint\s+main\s*\(|\bvoid\s+main\s*\(')
+            
+            for src_file in all_source_paths:
+                try:
+                    content = src_file.read_text(encoding='utf-8', errors='ignore')
+                    if main_pattern.search(content):
+                        main_file_path = src_file
+                        logger.info(f"Found main file: {main_file_path.name}")
+                        break
+                except Exception as e:
+                    logger.warning(f"Could not read {src_file}: {e}")
+            
+            if not main_file_path:
+                # Use first source file if no main found
+                main_file_path = all_source_paths[0]
+                logger.warning(f"No main() found, using first source file: {main_file_path.name}")
+            
+            # Build config with additional source files (excluding main file)
+            # Pass repo_path as project_root so entrypoint command runs in the correct directory
+            additional_sources = [src for src in all_source_paths if src != main_file_path]
+            config = _build_config_from_request(payload, working_dir, additional_sources=additional_sources, project_root=repo_path)
+            
+            # Run obfuscation
+            result = obfuscator.obfuscate(main_file_path, config, job_id=job.job_id)
+            
+            # Clean up repository session after successful obfuscation
+            # This cleans up the repo_path directory (e.g., /tmp/oaas_repo_xxx/owner-repo-sha/)
+            cleanup_repo_session(payload.repo_session_id)
+            logger.info(f"Cleaned up repository session: {payload.repo_session_id}")
+            
+            # Also clean up the parent temp directory if it's empty
+            # The repo_path is something like /tmp/oaas_repo_xxx/owner-repo-sha/
+            # We want to also delete /tmp/oaas_repo_xxx/ if it's now empty
+            try:
+                parent_temp_dir = repo_path.parent
+                if parent_temp_dir.exists() and parent_temp_dir.name.startswith("oaas_repo_"):
+                    # Check if directory is empty or only has the repo dir
+                    remaining = list(parent_temp_dir.iterdir())
+                    if not remaining:
+                        shutil.rmtree(parent_temp_dir)
+                        logger.info(f"Cleaned up parent temp directory: {parent_temp_dir}")
+            except Exception as e:
+                logger.warning(f"Failed to cleanup parent temp directory: {e}")
+
+        elif is_multi_file:
+            # Multi-file project (GitHub repo - legacy method with source_files)
+            logger.info(f"Processing multi-file project with {len(payload.source_files)} files")
+
+            # Create project structure
+            project_dir = working_dir / "project"
+            main_file_path, all_source_paths = create_multi_file_project(
+                payload.source_files,
+                project_dir
+            )
+
+            if not all_source_paths:
+                raise HTTPException(
+                    status_code=400,
+                    detail="No valid C/C++ source files found in repository"
+                )
+
+            logger.info(f"Found {len(all_source_paths)} source files, main file: {main_file_path.name}")
+
+            # Build config with additional source files (excluding main file)
+            # Additional sources will be added to compiler flags for multi-file compilation
+            additional_sources = [src for src in all_source_paths if src != main_file_path]
+            config = _build_config_from_request(payload, working_dir, additional_sources=additional_sources)
+
+            # For multi-file projects, we compile all files together
+            # The main file is passed to the obfuscator, and additional sources are in compiler flags
+            result = obfuscator.obfuscate(main_file_path, config, job_id=job.job_id)
+
+        else:
+            # Single file mode (original behavior)
+            source_filename = _sanitize_filename(payload.filename)
+            source_path = (working_dir / source_filename).resolve()
+            _decode_source(payload.source_code, source_path)
+            config = _build_config_from_request(payload, working_dir)
+
+            result = obfuscator.obfuscate(source_path, config, job_id=job.job_id)
+
         job_manager.update_job(job.job_id, status="completed", result=result)
         job_manager.attach_reports(job.job_id, result.get("report_paths", {}))
 
@@ -302,6 +529,28 @@ async def api_obfuscate_sync(
     except Exception as exc:
         logger.exception("Job %s failed", job.job_id)
         job_manager.update_job(job.job_id, status="failed", error=str(exc))
+        
+        # Clean up repository session on failure
+        if payload.repo_session_id:
+            # Get repo_path before cleanup to delete parent temp dir
+            repo_session = get_repo_session(payload.repo_session_id)
+            repo_path = repo_session["repo_path"] if repo_session else None
+            
+            cleanup_repo_session(payload.repo_session_id)
+            logger.info(f"Cleaned up repository session after failure: {payload.repo_session_id}")
+            
+            # Also clean up the parent temp directory if it's empty
+            if repo_path:
+                try:
+                    parent_temp_dir = repo_path.parent
+                    if parent_temp_dir.exists() and parent_temp_dir.name.startswith("oaas_repo_"):
+                        remaining = list(parent_temp_dir.iterdir())
+                        if not remaining:
+                            shutil.rmtree(parent_temp_dir)
+                            logger.info(f"Cleaned up parent temp directory after failure: {parent_temp_dir}")
+                except Exception as e:
+                    logger.warning(f"Failed to cleanup parent temp directory: {e}")
+        
         raise HTTPException(status_code=500, detail=str(exc))
 
 
@@ -312,7 +561,15 @@ async def api_obfuscate(
 ):
     """Async obfuscation - queue job and process in background."""
     _validate_source_size(payload.source_code)
-    job = job_manager.create_job({"filename": payload.filename, "platform": payload.platform.value})
+
+    # Validate and sanitize entrypoint command
+    entrypoint_cmd = _validate_entrypoint_command(payload.entrypoint_command or "./a.out")
+
+    job = job_manager.create_job({
+        "filename": payload.filename,
+        "platform": payload.platform.value,
+        "entrypoint_command": entrypoint_cmd
+    })
     await progress_tracker.publish(ProgressEvent(job.job_id, "queued", 0.0, "Job queued"))
     working_dir = report_base / job.job_id
     ensure_directory(working_dir)
@@ -468,6 +725,38 @@ async def api_health():
     return {"status": "ok"}
 
 
+@app.get("/api/github/repo/session/{session_id}")
+async def github_repo_session_status(session_id: str):
+    """Check status of a repository session."""
+    session = get_repo_session(session_id)
+    
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found or expired")
+    
+    import time
+    age = time.time() - session["timestamp"]
+    
+    return JSONResponse({
+        "session_id": session_id,
+        "repo_name": session["repo_name"],
+        "branch": session["branch"],
+        "age_seconds": int(age),
+        "expires_in": max(0, 3600 - int(age)),
+        "status": "active"
+    })
+
+
+@app.delete("/api/github/repo/session/{session_id}")
+async def github_repo_session_delete(session_id: str):
+    """Manually delete a repository session."""
+    success = cleanup_repo_session(session_id)
+    
+    if not success:
+        raise HTTPException(status_code=404, detail="Session not found")
+    
+    return JSONResponse({"success": True, "message": "Session deleted"})
+
+
 @app.get("/api/flags")
 async def api_flags():
     # Expose the comprehensive flag list for UI selection
@@ -486,6 +775,214 @@ async def api_capabilities():
             "pass_plugin": {
                 "available": DEFAULT_PASS_PLUGIN_EXISTS,
                 "path": DEFAULT_PASS_PLUGIN_PATH,
+            },
+            "github_oauth": {
+                "enabled": bool(GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET),
+                "client_id": GITHUB_CLIENT_ID if GITHUB_CLIENT_ID else None,
             }
         }
     )
+
+
+@app.get("/api/github/login")
+async def github_login():
+    """Initiate GitHub OAuth flow - returns redirect URL."""
+    if not GITHUB_CLIENT_ID or not GITHUB_CLIENT_SECRET:
+        raise HTTPException(status_code=501, detail="GitHub OAuth not configured")
+    
+    # Generate state for CSRF protection
+    state = secrets.token_urlsafe(32)
+    oauth_states[state] = "pending"
+    
+    # Build GitHub OAuth URL
+    params = {
+        "client_id": GITHUB_CLIENT_ID,
+        "redirect_uri": GITHUB_REDIRECT_URI,
+        "scope": "repo",
+        "state": state,
+    }
+    
+    auth_url = f"https://github.com/login/oauth/authorize?{urlencode(params)}"
+    
+    return JSONResponse({
+        "auth_url": auth_url
+    })
+
+
+@app.get("/api/github/callback")
+async def github_callback(code: str, state: str):
+    """Handle GitHub OAuth callback - exchanges code for token and redirects to frontend."""
+    if not GITHUB_CLIENT_ID or not GITHUB_CLIENT_SECRET:
+        return RedirectResponse(url=f"{FRONTEND_URL}?error=oauth_not_configured")
+    
+    # Verify state
+    if state not in oauth_states:
+        return RedirectResponse(url=f"{FRONTEND_URL}?error=invalid_state")
+    
+    try:
+        # Exchange code for access token
+        token_data = {
+            "client_id": GITHUB_CLIENT_ID,
+            "client_secret": GITHUB_CLIENT_SECRET,
+            "code": code,
+        }
+        
+        headers = {"Accept": "application/json"}
+        response = requests.post("https://github.com/login/oauth/access_token", data=token_data, headers=headers)
+        
+        if response.status_code != 200:
+            return RedirectResponse(url=f"{FRONTEND_URL}?error=token_exchange_failed")
+        
+        token_info = response.json()
+        access_token = token_info.get("access_token")
+        
+        if not access_token:
+            return RedirectResponse(url=f"{FRONTEND_URL}?error=no_token")
+        
+        # Create session ID
+        import time
+        session_id = secrets.token_urlsafe(32)
+        user_sessions[session_id] = {
+            "token": access_token,
+            "timestamp": time.time()
+        }
+        
+        # Clean up state
+        del oauth_states[state]
+        
+        # Redirect to frontend with session cookie
+        response = RedirectResponse(url=f"{FRONTEND_URL}?github_auth=success")
+        response.set_cookie(
+            key=SESSION_COOKIE_NAME,
+            value=session_id,
+            httponly=True,
+            max_age=TOKEN_TTL,
+            samesite="lax"
+        )
+        return response
+        
+    except Exception as e:
+        logger.error(f"OAuth callback error: {e}")
+        return RedirectResponse(url=f"{FRONTEND_URL}?error=callback_failed")
+
+
+
+
+@app.get("/api/github/status")
+async def github_status(request: Request):
+    """Check if user has active GitHub session."""
+    token = get_session_token(request, SESSION_COOKIE_NAME, user_sessions, TOKEN_TTL)
+    return JSONResponse({"authenticated": token is not None})
+
+
+@app.post("/api/github/disconnect")
+async def github_disconnect(request: Request):
+    """Disconnect GitHub - delete stored token."""
+    session_id = request.cookies.get(SESSION_COOKIE_NAME)
+    if session_id and session_id in user_sessions:
+        del user_sessions[session_id]
+    
+    response = JSONResponse({"success": True})
+    response.delete_cookie(SESSION_COOKIE_NAME)
+    return response
+
+
+@app.get("/api/github/repos")
+async def github_repos(request: Request):
+    """Get user's accessible repositories."""
+    access_token = get_session_token(request, SESSION_COOKIE_NAME, user_sessions, TOKEN_TTL)
+    if not access_token:
+        raise HTTPException(status_code=401, detail="Not authenticated with GitHub")
+    
+    try:
+        g = Github(access_token)
+        user = g.get_user()
+        
+        repos = []
+        for repo in user.get_repos():
+            repos.append({
+                "name": repo.name,
+                "full_name": repo.full_name,
+                "html_url": repo.html_url,
+                "private": repo.private,
+                "default_branch": repo.default_branch,
+                "language": repo.language,
+                "description": repo.description,
+            })
+        
+        return JSONResponse({"repositories": repos})
+        
+    except Exception as e:
+        logger.error(f"Failed to fetch repositories: {e}")
+        raise HTTPException(status_code=400, detail="Failed to fetch repositories")
+
+
+@app.get("/api/github/repo/branches")
+async def github_repo_branches(request: Request, repo_url: str):
+    """Get branches for a specific repository."""
+    # Try to get token, but allow public access if not authenticated
+    access_token = get_session_token(request, SESSION_COOKIE_NAME, user_sessions, TOKEN_TTL)
+
+    branches = get_repo_branches(repo_url, access_token)
+    return JSONResponse({"branches": branches})
+
+
+@app.post("/api/github/repo/files")
+async def github_repo_files(request: Request, payload: GitHubRepoRequest):
+    """Extract files from a GitHub repository (legacy - returns files to frontend)."""
+    # Try to get token, but allow public access if not authenticated
+    access_token = get_session_token(request, SESSION_COOKIE_NAME, user_sessions, TOKEN_TTL)
+
+    # Validate repo URL
+    if "github.com" not in payload.repo_url:
+        raise HTTPException(status_code=400, detail="Only GitHub repositories are supported")
+
+    repo_data = extract_repo_files(payload.repo_url, payload.branch, access_token)
+    return JSONResponse(repo_data.dict())
+
+
+@app.post("/api/github/repo/clone")
+async def github_repo_clone(request: Request, payload: GitHubCloneRequest):
+    """Clone GitHub repository to backend ephemeral storage.
+    
+    This endpoint clones the repository to a temporary directory on the backend
+    and returns a session ID that can be used for obfuscation. This is more
+    efficient for large repositories than sending all files to the frontend.
+    
+    The temporary repository will be automatically cleaned up after obfuscation
+    or after 1 hour of inactivity.
+    """
+    # Clean up old sessions first
+    cleanup_old_sessions(max_age_seconds=3600)
+    
+    # Try to get token, but allow public access if not authenticated
+    access_token = get_session_token(request, SESSION_COOKIE_NAME, user_sessions, TOKEN_TTL)
+    
+    # Validate repo URL
+    if "github.com" not in payload.repo_url:
+        raise HTTPException(status_code=400, detail="Only GitHub repositories are supported")
+    
+    try:
+        session_id, repo_path = clone_repo_to_temp(
+            payload.repo_url,
+            payload.branch,
+            access_token
+        )
+        
+        # Count files
+        c_cpp_files = list(repo_path.rglob("*.c")) + list(repo_path.rglob("*.cpp")) + \
+                      list(repo_path.rglob("*.cc")) + list(repo_path.rglob("*.cxx"))
+        
+        return JSONResponse({
+            "session_id": session_id,
+            "repo_name": payload.repo_url.split("/")[-1],
+            "branch": payload.branch,
+            "file_count": len(c_cpp_files),
+            "expires_in": 3600,  # 1 hour
+        })
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to clone repository: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to clone repository: {str(e)}")

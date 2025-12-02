@@ -212,6 +212,15 @@ class XORStringEncryptor:
                         # Also skip if string contains format specifiers or seems like output text
                         skip_patterns = ['%', 'Usage:', '===', 'ERROR:', 'FAIL:', 'SUCCESS:', 'Validating', 'Database', '#include', '<', '>', 'std::', 'cout', 'endl']
 
+                        # Check if this string is part of an include directive
+                        # Look backwards from the string position to find #include
+                        is_include_directive = False
+                        # Check the line containing this string
+                        line_start = source.rfind('\n', 0, start) + 1
+                        line_before_string = source[line_start:start].strip()
+                        if line_before_string.startswith('#include'):
+                            is_include_directive = True
+
                         # Check if this string is part of a global const declaration
                         is_const_global = self._is_const_global_initializer(source, start)
                         should_encrypt = (
@@ -222,7 +231,8 @@ class XORStringEncryptor:
                             not text.startswith('<') and  # Skip system headers
                             not text.startswith('std::') and  # Skip standard library references
                             text.replace('!', '').replace('.', '').replace(',', '').replace(' ', '').isalnum() and  # Only encrypt simple alphanumeric secrets
-                            not is_const_global  # Don't encrypt const global initializers
+                            not is_const_global and  # Don't encrypt const global initializers
+                            not is_include_directive  # Don't encrypt include directives
                         )
 
                         if should_encrypt:

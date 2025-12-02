@@ -112,6 +112,9 @@ class ObfuscationConfig:
     advanced: AdvancedConfiguration = field(default_factory=AdvancedConfiguration)
     output: OutputConfiguration = field(default_factory=lambda: OutputConfiguration(Path("./obfuscated")))
     custom_pass_plugin: Optional[Path] = None
+    entrypoint_command: Optional[str] = None  # Build command for compile flag extraction
+    project_root: Optional[Path] = None  # Root directory for multi-file projects (where entrypoint runs)
+    custom_compiler_wrapper: Optional[str] = None  # Path to compiler wrapper (obf-clang) for transparent build interception
 
     @classmethod
     def from_dict(cls, data: Dict) -> "ObfuscationConfig":
@@ -168,6 +171,11 @@ class ObfuscationConfig:
         custom_pass_plugin = data.get("custom_pass_plugin")
         if custom_pass_plugin:
             custom_pass_plugin = Path(custom_pass_plugin)
+        entrypoint_command = data.get("entrypoint_command")
+        project_root = data.get("project_root")
+        if project_root:
+            project_root = Path(project_root)
+        custom_compiler_wrapper = data.get("custom_compiler_wrapper")
         return cls(
             level=level,
             platform=platform,
@@ -176,6 +184,9 @@ class ObfuscationConfig:
             advanced=advanced,
             output=output,
             custom_pass_plugin=custom_pass_plugin,
+            entrypoint_command=entrypoint_command,
+            project_root=project_root,
+            custom_compiler_wrapper=custom_compiler_wrapper,
         )
 
 

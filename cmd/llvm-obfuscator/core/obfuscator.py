@@ -7,6 +7,7 @@ from typing import Dict, List, Optional
 from .config import ObfuscationConfig, Platform
 from .exceptions import ObfuscationError
 from .fake_loop_inserter import FakeLoopGenerator
+from .multifile_compiler import compile_multifile_ir_workflow
 from .reporter import ObfuscationReport
 from .string_encryptor import StringEncryptionResult, XORStringEncryptor
 from .symbol_obfuscator import SymbolObfuscator
@@ -178,8 +179,9 @@ class LLVMObfuscator:
                 current_source_content = working_source.read_text(encoding="utf-8", errors="replace")
                 string_result = self.encryptor.encrypt_strings(current_source_content)
 
-                # Write the transformed source to a new file
-                string_encrypted_file = output_directory / f"{source_file.stem}_string_encrypted{source_file.suffix}"
+                # Write the transformed source to a new file IN THE SAME DIRECTORY as the source
+                # This ensures relative #include paths still work for multi-file projects
+                string_encrypted_file = working_source.parent / f"{source_file.stem}_string_encrypted{source_file.suffix}"
                 string_encrypted_file.write_text(string_result.transformed_source, encoding="utf-8", errors="replace")
                 working_source = string_encrypted_file
                 self.logger.info(f"String encryption complete: {string_result.encrypted_strings}/{string_result.total_strings} strings encrypted")
@@ -468,9 +470,47 @@ class LLVMObfuscator:
 
         Returns True if the IR uses exception handling, which is incompatible
         with the OLLVM flattening pass.
+
+        Supports both .ll (text IR) and .bc (bitcode) files.
         """
         try:
-            ir_content = ir_file.read_text(encoding='utf-8', errors='ignore')
+            # If it's a .bc file, try to use llvm-dis to convert to text
+            # Otherwise, read directly as text
+            if ir_file.suffix == '.bc':
+                # Try to find llvm-dis
+                import shutil
+                import subprocess
+
+                llvm_dis = shutil.which("llvm-dis")
+                if llvm_dis:
+                    # Use llvm-dis to convert .bc to .ll temporarily
+                    temp_ll = ir_file.parent / f"{ir_file.stem}_temp.ll"
+                    try:
+                        subprocess.run(
+                            [llvm_dis, str(ir_file), "-o", str(temp_ll)],
+                            check=True,
+                            capture_output=True,
+                            timeout=30
+                        )
+                        ir_content = temp_ll.read_text(encoding='utf-8', errors='ignore')
+                        temp_ll.unlink()  # Clean up
+                    except Exception as e:
+                        self.logger.warning(f"Failed to convert .bc to .ll: {e}")
+                        # Try to read as binary and search for patterns
+                        ir_bytes = ir_file.read_bytes()
+                        # Search for "invoke" and "landingpad" in binary
+                        has_invoke = b'invoke' in ir_bytes
+                        has_landingpad = b'landingpad' in ir_bytes
+                        return has_invoke or has_landingpad
+                else:
+                    # No llvm-dis, try to read as binary
+                    ir_bytes = ir_file.read_bytes()
+                    has_invoke = b'invoke' in ir_bytes
+                    has_landingpad = b'landingpad' in ir_bytes
+                    return has_invoke or has_landingpad
+            else:
+                # Text IR file (.ll)
+                ir_content = ir_file.read_text(encoding='utf-8', errors='ignore')
 
             # Check for invoke instructions (exception-aware function calls)
             has_invoke = ' invoke ' in ir_content
@@ -611,7 +651,29 @@ class LLVMObfuscator:
                     "disabled_passes": list(config.passes.enabled_passes())  # Original requested passes
                 }
 
-            if enabled_passes:  # Re-check after potential cross-compilation skip
+            # Check if this is a multi-file project
+            additional_sources = [flag for flag in compiler_flags if flag.endswith(('.c', '.cpp', '.cc', '.cxx', '.c++'))]
+            is_multi_file = len(additional_sources) > 0
+
+            if is_multi_file and enabled_passes:
+                # Use the extracted multi-file IR workflow
+                return compile_multifile_ir_workflow(
+                    source_abs=source_abs,
+                    destination_abs=destination_abs,
+                    config=config,
+                    compiler_flags=compiler_flags,
+                    enabled_passes=enabled_passes,
+                    plugin_path=plugin_path,
+                    compiler=compiler,
+                    symbol_obfuscator=self.symbol_obfuscator,
+                    encryptor=self.encryptor,
+                    get_resource_dir_flag_fn=self._get_resource_dir_flag,
+                    has_exception_handling_fn=self._has_exception_handling,
+                    entrypoint_command=config.entrypoint_command,
+                    project_root_override=config.project_root,
+                )
+
+            if enabled_passes:  # Re-check after potential multi-file skip
                 self.logger.info("Using opt-based workflow for OLLVM passes: %s", ", ".join(enabled_passes))
 
                 # Determine opt and clang binary paths early
@@ -852,6 +914,8 @@ class LLVMObfuscator:
 
             if config.platform == Platform.WINDOWS:
                 command.extend(["--target=x86_64-w64-mingw32"])
+
+            self.logger.info(f"Standard compilation command: {' '.join(command)}")
             run_command(command, cwd=source_abs.parent)
             return {
                 "applied_passes": actually_applied_passes,
@@ -891,8 +955,12 @@ class LLVMObfuscator:
             if config.platform == Platform.WINDOWS:
                 compile_flags.append("--target=x86_64-w64-mingw32")
 
-            # Compile baseline with absolute paths
-            command = [compiler, str(source_abs), "-o", str(baseline_abs)] + compile_flags
+            # Add additional source files from compiler_flags (for multi-file projects)
+            # Filter out source files from compiler flags
+            additional_sources = [flag for flag in config.compiler_flags if flag.endswith(('.c', '.cpp', '.cc', '.cxx', '.c++'))]
+
+            # Compile baseline with absolute paths, including all source files
+            command = [compiler, str(source_abs)] + additional_sources + ["-o", str(baseline_abs)] + compile_flags
             run_command(command)
 
             # Analyze baseline binary

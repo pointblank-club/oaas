@@ -150,6 +150,7 @@ jobs:
         echo "  3. Apply LLVM obfuscation"
         echo "  4. Run baseline vs obfuscated"
         echo "  5. Validate functional equivalence"
+        echo "  6. Hello world"
         echo "=========================================="
         echo ""
 

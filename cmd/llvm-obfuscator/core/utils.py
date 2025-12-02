@@ -22,7 +22,15 @@ def ensure_directory(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
 
 
-def run_command(command: List[str], cwd: Optional[Path] = None, env: Optional[Dict[str, str]] = None) -> Tuple[int, str, str]:
+def run_command(command: List[str], cwd: Optional[Path] = None, env: Optional[Dict[str, str]] = None, timeout: Optional[int] = 120) -> Tuple[int, str, str]:
+    """Execute a command with optional timeout.
+    
+    Args:
+        command: Command and arguments to execute
+        cwd: Working directory for the command
+        env: Environment variables
+        timeout: Timeout in seconds (default: 120). None for no timeout.
+    """
     logger.debug("Executing command: %s", " ".join(command))
     process = subprocess.Popen(
         command,
@@ -32,7 +40,12 @@ def run_command(command: List[str], cwd: Optional[Path] = None, env: Optional[Di
         stderr=subprocess.PIPE,
         text=True,
     )
-    stdout, stderr = process.communicate()
+    try:
+        stdout, stderr = process.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.communicate()  # Clean up
+        raise ObfuscationError(f"Command timed out after {timeout}s: {' '.join(command)}")
     logger.debug("Command stdout: %s", stdout)
     if stderr:
         logger.debug("Command stderr: %s", stderr)

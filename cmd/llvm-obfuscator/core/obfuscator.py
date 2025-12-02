@@ -34,6 +34,7 @@ logger = logging.getLogger(__name__)
 class LLVMObfuscator:
     """Main obfuscation pipeline orchestrator."""
 
+    # Base flags that are always safe to apply
     BASE_FLAGS = [
         "-fvisibility=hidden",
         "-O3",
@@ -41,6 +42,18 @@ class LLVMObfuscator:
         "-fomit-frame-pointer",
         "-mspeculative-load-hardening",
         "-Wl,-s",
+    ]
+
+    # Exception-disabling flags - only applied when source doesn't use exceptions
+    # When source uses try/catch/throw, we compile WITH exceptions enabled
+    # and use our exception-aware obfuscation passes (Hikari-style implementation).
+    # These flags are applied when no exception handling is detected for stronger obfuscation.
+    EXCEPTION_DISABLE_FLAGS = [
+        "-fno-exceptions",
+        "-fno-rtti",
+        "-fno-unwind-tables",
+        "-fno-asynchronous-unwind-tables",
+        "-fno-use-cxa-atexit",
     ]
 
     CUSTOM_PASSES = [
@@ -58,6 +71,41 @@ class LLVMObfuscator:
         self.symbol_obfuscator = SymbolObfuscator()
         self.remarks_collector = RemarksCollector()
         self.upx_packer = UPXPacker()
+
+    def _source_uses_exceptions(self, source_content: str) -> bool:
+        """
+        Detect if C++ source code uses exception handling (try/catch/throw).
+
+        Our exception-aware OLLVM passes (Hikari-style) can handle functions
+        with exception handling. When exceptions are detected:
+        - We compile WITHOUT -fno-exceptions so the code compiles
+        - Exception-aware obfuscation passes are applied
+        - Exception handling semantics are preserved
+        - Landing pad blocks are excluded from flattening
+        - Invoke instructions are handled specially to preserve unwind edges
+        """
+        import re
+
+        # Look for C++ exception keywords (excluding comments)
+        # Remove single-line comments
+        code_no_single_comments = re.sub(r'//.*$', '', source_content, flags=re.MULTILINE)
+        # Remove multi-line comments
+        code_no_comments = re.sub(r'/\*.*?\*/', '', code_no_single_comments, flags=re.DOTALL)
+
+        # Check for exception keywords as standalone words
+        exception_patterns = [
+            r'\btry\s*\{',           # try {
+            r'\bcatch\s*\(',         # catch (
+            r'\bthrow\s+',           # throw expression
+            r'\bthrow\s*;',          # throw; (rethrow)
+            r'\bnoexcept\b',         # noexcept specifier
+        ]
+
+        for pattern in exception_patterns:
+            if re.search(pattern, code_no_comments):
+                return True
+
+        return False
 
     def _get_bundled_plugin_path(self, target_platform: Optional[Platform] = None) -> Optional[Path]:
         """Auto-detect bundled OLLVM plugin for current or target platform."""
@@ -225,7 +273,27 @@ class LLVMObfuscator:
             fake_loops = self.fake_loop_generator.generate(config.advanced.fake_loops, source_file.name)
 
         enabled_passes = config.passes.enabled_passes()
-        compiler_flags = merge_flags(self.BASE_FLAGS, config.compiler_flags)
+
+        # Detect if source uses C++ exception handling
+        # Our exception-aware OLLVM passes can now handle functions with exceptions (Hikari-style)
+        uses_exceptions = self._source_uses_exceptions(source_content)
+        if uses_exceptions:
+            self.logger.info(
+                "C++ exception handling detected (try/catch/throw). "
+                "Compiling WITH exceptions enabled. "
+                "Exception-aware obfuscation passes will be applied. "
+                "Exception handling semantics are preserved while control flow is obfuscated."
+            )
+            warnings_log.append(
+                "Exception handling detected: using exception-aware obfuscation mode. "
+                "Exception handling is preserved while applying obfuscation passes."
+            )
+            # Don't add exception-disabling flags - compile with exceptions enabled
+            compiler_flags = merge_flags(self.BASE_FLAGS, config.compiler_flags)
+        else:
+            # No exceptions detected - safe to disable them for stronger obfuscation
+            base_with_no_exceptions = self.BASE_FLAGS + self.EXCEPTION_DISABLE_FLAGS
+            compiler_flags = merge_flags(base_with_no_exceptions, config.compiler_flags)
 
         # IMPORTANT: Cycles only make sense for source code recompilation
         # Once we have a binary, we can't feed it back through the compiler

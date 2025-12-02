@@ -32,3 +32,8 @@ cmd/llvm-obfuscator/obfuscated/
 
 # Generated reports - these are test outputs, don't commit
 cmd/llvm-obfuscator/reports/
+
+cmd/llvm-obfuscator/build-plugin.sh
+cmd/llvm-obfuscator/docker-compose.build-plugin.yml
+cmd/llvm-obfuscator/Dockerfile.build-plugin
+cmd/llvm-obfuscator/Dockerfile.plugin-builder

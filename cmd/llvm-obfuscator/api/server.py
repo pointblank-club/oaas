@@ -650,7 +650,7 @@ def _run_custom_build(
     env: Dict[str, str],
     logger: logging.Logger,
     cmake_options: Optional[str] = None,
-    timeout: int = 600  # 10 minute timeout
+    timeout: int = 1800  # 30 minute timeout for large projects like CURL
 ) -> Tuple[bool, str]:
     """Run the project's native build system with our hijacked CC/CXX."""
     import subprocess

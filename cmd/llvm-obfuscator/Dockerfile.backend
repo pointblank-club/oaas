@@ -7,6 +7,9 @@ ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
 # Install system dependencies including LLVM development tools
+# NOTE: autoconf, automake, libtool, cmake are REQUIRED for building projects
+# that use Autotools (like curl) or CMake build systems. Without these,
+# generated config headers (curl_config.h, config.h) cannot be created.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
@@ -16,6 +19,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     lld \
     libc6-dev \
     upx-ucl \
+    # Build system tools (required for ./configure && make workflows)
+    autoconf \
+    automake \
+    libtool \
+    cmake \
+    ninja-build \
+    pkg-config \
+    # Common development libraries (for projects like curl, openssl, etc.)
+    libssl-dev \
+    zlib1g-dev \
+    git \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

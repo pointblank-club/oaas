@@ -1,12 +1,16 @@
-name: Store LLVM Binaries as Artifacts
+name: Store LLVM Binaries in Release
 
-# This workflow stores LLVM binaries as GitHub Actions artifacts
+# This workflow stores LLVM binaries as GitHub Release assets
 # Run this manually when binaries need to be updated
-# Artifacts are stored indefinitely and don't count against LFS quota
+# Releases provide permanent storage and versioning
 
 on:
   workflow_dispatch:
     inputs:
+      version:
+        description: "Release version (e.g., v1.0.0)"
+        required: true
+        default: "v1.0.0"
       source:
         description: "Source of binaries (lfs, local)"
         required: true
@@ -15,11 +19,21 @@ on:
         options:
           - lfs
           - local
+      create_release:
+        description: "Create new release (or update existing)"
+        required: true
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
 
 jobs:
   store-binaries:
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    permissions:
+      contents: write
     
     steps:
     - name: Checkout repository
@@ -91,23 +105,135 @@ jobs:
           exit 1
         fi
 
-    - name: Upload binaries as artifact
-      uses: actions/upload-artifact@v4
+    - name: Create release archive
+      run: |
+        cd binaries-artifact
+        tar -czf ../llvm-binaries-linux-x86_64.tar.gz linux-x86_64/
+        cd ..
+        echo "Archive created: llvm-binaries-linux-x86_64.tar.gz"
+        ls -lh llvm-binaries-linux-x86_64.tar.gz
+
+    - name: Check if release exists
+      id: check-release
+      uses: actions/github-script@v7
       with:
-        name: llvm-binaries-linux-x86_64
-        path: binaries-artifact/
-        retention-days: 0  # Keep forever (no expiration)
-        compression-level: 1  # Fast compression (binaries are already compressed)
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        script: |
+          const version = '${{ github.event.inputs.version }}';
+          try {
+            const { data: release } = await github.rest.repos.getReleaseByTag({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              tag: version
+            });
+            core.setOutput('exists', 'true');
+            core.setOutput('release-id', release.id.toString());
+            console.log(`Release ${version} already exists (ID: ${release.id})`);
+          } catch (error) {
+            if (error.status === 404) {
+              core.setOutput('exists', 'false');
+              console.log(`Release ${version} does not exist, will create new`);
+            } else {
+              throw error;
+            }
+          }
+
+    - name: Create or get release
+      id: release
+      uses: actions/github-script@v7
+      with:
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        script: |
+          const version = '${{ github.event.inputs.version }}';
+          const createNew = '${{ github.event.inputs.create_release }}' === 'true';
+          const releaseExists = '${{ steps.check-release.outputs.exists }}' === 'true';
+          
+          if (releaseExists && !createNew) {
+            // Use existing release
+            const { data: release } = await github.rest.repos.getReleaseByTag({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              tag: version
+            });
+            core.setOutput('id', release.id.toString());
+            core.setOutput('upload-url', release.upload_url);
+            console.log(`Using existing release ${version} (ID: ${release.id})`);
+          } else {
+            // Create new release
+            const { data: release } = await github.rest.repos.createRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              tag_name: version,
+              name: `LLVM Binaries ${version}`,
+              body: `Custom LLVM obfuscator binaries for Linux x86_64\n\n**Version:** ${version}\n**Platform:** linux-x86_64\n**Created:** ${new Date().toISOString()}\n\nThis release contains the custom LLVM toolchain binaries required for the obfuscator.`,
+              draft: false,
+              prerelease: false
+            });
+            core.setOutput('id', release.id.toString());
+            core.setOutput('upload-url', release.upload_url);
+            console.log(`Created new release ${version} (ID: ${release.id})`);
+          }
+
+    - name: Upload binaries to release
+      uses: actions/github-script@v7
+      with:
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        script: |
+          const fs = require('fs');
+          const path = require('path');
+          
+          const releaseId = '${{ steps.release.outputs.id }}';
+          const archivePath = 'llvm-binaries-linux-x86_64.tar.gz';
+          const archiveName = path.basename(archivePath);
+          
+          // Check if asset already exists and delete it
+          try {
+            const { data: assets } = await github.rest.repos.listReleaseAssets({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              release_id: parseInt(releaseId)
+            });
+            
+            const existingAsset = assets.find(a => a.name === archiveName);
+            if (existingAsset) {
+              console.log(`Deleting existing asset: ${archiveName}`);
+              await github.rest.repos.deleteReleaseAsset({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                asset_id: existingAsset.id
+              });
+            }
+          } catch (error) {
+            console.log('No existing assets to delete or error checking:', error.message);
+          }
+          
+          // Upload new asset
+          const archiveData = fs.readFileSync(archivePath);
+          const archiveSize = archiveData.length;
+          
+          console.log(`Uploading ${archiveName} (${(archiveSize / 1024 / 1024).toFixed(2)} MB)...`);
+          
+          await github.rest.repos.uploadReleaseAsset({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            release_id: parseInt(releaseId),
+            name: archiveName,
+            data: archiveData
+          });
+          
+          console.log(`✅ Successfully uploaded ${archiveName} to release`);
 
     - name: Summary
       run: |
         echo "=========================================="
-        echo "✅ Binaries stored as artifact successfully"
+        echo "✅ Binaries stored in release successfully"
         echo "=========================================="
         echo ""
-        echo "Artifact name: llvm-binaries-linux-x86_64"
-        echo "Binaries can now be downloaded in other workflows using:"
-        echo "  actions/download-artifact@v4"
+        echo "Release version: ${{ github.event.inputs.version }}"
+        echo "Asset: llvm-binaries-linux-x86_64.tar.gz"
         echo ""
-        echo "This bypasses Git LFS quota limits!"
+        echo "Binaries can now be downloaded in workflows from:"
+        echo "  https://github.com/${{ github.repository }}/releases/tag/${{ github.event.inputs.version }}"
+        echo ""
+        echo "This bypasses Git LFS quota limits and provides versioning!"
 

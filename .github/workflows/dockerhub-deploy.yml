@@ -22,26 +22,52 @@ jobs:
       with:
         lfs: false
 
-    - name: Download LLVM binaries from artifacts
+    - name: Download LLVM binaries from release
       id: download-binaries
-      uses: actions/download-artifact@v4
-      with:
-        name: llvm-binaries-linux-x86_64
-        path: cmd/llvm-obfuscator/plugins/
-        github-token: ${{ secrets.GITHUB_TOKEN }}
-      continue-on-error: false
-
-    - name: Check if binaries were downloaded
-      if: steps.download-binaries.outcome == 'failure'
       run: |
-        echo "❌ ERROR: Could not download binaries from artifacts"
-        echo ""
-        echo "To fix:"
-        echo "  1. Go to Actions → 'Store LLVM Binaries as Artifacts'"
-        echo "  2. Run the workflow manually (select 'lfs' as source if you have LFS access)"
-        echo "  3. This will upload binaries as artifacts (bypasses LFS quota)"
-        echo ""
-        exit 1
+        echo "=========================================="
+        echo "Downloading LLVM binaries from release"
+        echo "=========================================="
+        
+        # Default to latest release, or use specific version from input
+        VERSION="${GITHUB_REF#refs/tags/}"
+        if [ "$VERSION" = "$GITHUB_REF" ]; then
+          # Not a tag, use latest release
+          echo "Not a tagged release, fetching latest release..."
+          VERSION=$(curl -s https://api.github.com/repos/${{ github.repository }}/releases/latest | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
+          if [ -z "$VERSION" ]; then
+            echo "❌ ERROR: No releases found"
+            echo "   Please create a release with binaries first"
+            exit 1
+          fi
+        fi
+        
+        echo "Using release version: $VERSION"
+        echo "::set-output name=version::$VERSION"
+        
+        # Download the archive
+        ARCHIVE_URL="https://github.com/${{ github.repository }}/releases/download/${VERSION}/llvm-binaries-linux-x86_64.tar.gz"
+        echo "Downloading from: $ARCHIVE_URL"
+        
+        mkdir -p cmd/llvm-obfuscator/plugins/
+        curl -L -o /tmp/llvm-binaries.tar.gz "$ARCHIVE_URL" || {
+          echo "❌ ERROR: Failed to download binaries from release"
+          echo ""
+          echo "To fix:"
+          echo "  1. Go to Actions → 'Store LLVM Binaries in Release'"
+          echo "  2. Run the workflow manually with a version (e.g., v1.0.0)"
+          echo "  3. This will upload binaries to a GitHub Release"
+          echo ""
+          exit 1
+        }
+        
+        # Extract archive
+        cd cmd/llvm-obfuscator/plugins/
+        tar -xzf /tmp/llvm-binaries.tar.gz
+        rm /tmp/llvm-binaries.tar.gz
+        
+        echo "✅ Binaries extracted successfully"
+        ls -lh linux-x86_64/
 
     - name: Verify binaries are present (REQUIRED)
       run: |

@@ -16,7 +16,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 from .config import ObfuscationConfig, Platform
 from .exceptions import ObfuscationError
-from .utils import create_logger, run_command, detect_project_compile_flags
+from .utils import create_logger, run_command, detect_project_compile_flags, ensure_generated_headers_exist
 
 logger = create_logger(__name__)
 
@@ -270,9 +270,25 @@ def compile_multifile_ir_workflow(
             logger.error("No build log found. The build may not have been executed.")
         
         logger.error("=" * 80)
-        logger.error("STOPPING: Cannot continue without compile flags")
+        logger.warning("Build failed. Attempting to generate stub config headers...")
         logger.error("=" * 80)
-        raise ObfuscationError(f"Failed to extract compile flags from project: {e}")
+
+        # Try to generate stub headers for missing config files
+        try:
+            generated_headers = ensure_generated_headers_exist(project_root)
+            if generated_headers:
+                logger.info(f"Generated {len(generated_headers)} stub config headers")
+                for header in generated_headers:
+                    logger.info(f"  - {header}")
+                logger.info("Retrying with stub headers...")
+                # Set empty flags and continue - we'll use stub headers
+                auto_detected_flags = []
+            else:
+                logger.error("Could not generate stub headers")
+                raise ObfuscationError(f"Failed to extract compile flags from project: {e}")
+        except Exception as stub_error:
+            logger.error(f"Failed to generate stub headers: {stub_error}")
+            raise ObfuscationError(f"Failed to extract compile flags from project: {e}")
     
     logger.info("")
     logger.info("━" * 80)
@@ -318,24 +334,37 @@ def compile_multifile_ir_workflow(
         
         logger.info("=" * 80)
     else:
-        logger.error("=" * 80)
-        logger.error("✗ CRITICAL: No compile flags auto-detected!")
-        logger.error("=" * 80)
-        logger.error("This WILL cause header file errors during per-TU compilation.")
-        logger.error("The build system was likely not executed properly.")
-        logger.error("")
-        logger.error("Possible causes:")
-        logger.error("  1. Build system not detected correctly")
-        logger.error("  2. Build command failed")
-        logger.error("  3. No entrypoint command provided for complex projects")
-        logger.error("")
-        logger.error("For Autotools projects (like curl):")
-        logger.error("  Entrypoint: ./buildconf && ./configure && make")
-        logger.error("For CMake projects:")
-        logger.error("  Entrypoint: cmake -B build && cmake --build build")
-        logger.error("=" * 80)
-        
-        # Don't raise here, let it fail during compilation with better error messages
+        logger.warning("=" * 80)
+        logger.warning("⚠ No compile flags auto-detected!")
+        logger.warning("=" * 80)
+        logger.warning("This may cause header file errors during per-TU compilation.")
+        logger.warning("The build system was likely not executed properly.")
+        logger.warning("")
+        logger.warning("Attempting to generate stub config headers...")
+
+        # Try to generate stub headers for missing config files
+        generated_headers = ensure_generated_headers_exist(project_root)
+        if generated_headers:
+            logger.info(f"Generated {len(generated_headers)} stub config headers:")
+            for header in generated_headers:
+                logger.info(f"  - {header}")
+            # Add include paths for generated headers
+            for header in generated_headers:
+                include_flag = f"-I{header.parent}"
+                if include_flag not in compiler_flags:
+                    compiler_flags.append(include_flag)
+            compiler_flags.append("-DHAVE_CONFIG_H")
+            logger.info("Added include paths and -DHAVE_CONFIG_H for stub headers")
+        else:
+            logger.warning("No stub headers could be generated")
+            logger.warning("Compilation may fail due to missing headers")
+
+        logger.warning("")
+        logger.warning("For Autotools projects (like curl):")
+        logger.warning("  Entrypoint: ./buildconf && ./configure && make")
+        logger.warning("For CMake projects:")
+        logger.warning("  Entrypoint: cmake -B build && cmake --build build")
+        logger.warning("=" * 80)
     
     # Note: Build system diagnostics removed (optional feature)
     logger.info("")

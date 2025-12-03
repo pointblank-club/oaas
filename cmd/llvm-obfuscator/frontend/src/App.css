@@ -199,6 +199,61 @@ body {
   margin: 0;
 }
 
+/* Error Details Expandable Section */
+.error-details-section {
+  margin-top: 15px;
+  border-top: 1px solid var(--border-color);
+  padding-top: 12px;
+}
+
+.error-details-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background-color 0.2s, border-color 0.2s;
+  width: 100%;
+  text-align: left;
+}
+
+.error-details-toggle:hover {
+  border-color: var(--accent);
+  background: var(--bg-secondary);
+}
+
+.error-details-content {
+  margin-top: 10px;
+  padding: 12px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-left: 3px solid #d32f2f;
+  max-height: 300px;
+  overflow-y: auto;
+  animation: slideDown 0.2s ease;
+}
+
+.error-details-content pre {
+  margin: 0;
+  font-family: 'Courier New', 'Courier', monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text-secondary);
+}
+
+/* Modal with details - wider */
+.modal-with-details {
+  min-width: 500px;
+  max-width: 800px;
+}
+
 .modal-footer {
   padding: 15px 20px;
   border-top: 1px solid var(--border-color);
@@ -1064,12 +1119,25 @@ body {
     min-width: 95%;
   }
 
+  .modal-with-details {
+    min-width: 95%;
+    max-width: 95%;
+  }
+
   .modal-header h3 {
     font-size: 14px;
   }
 
   .modal-body {
     font-size: 13px;
+  }
+
+  .error-details-content {
+    max-height: 200px;
+  }
+
+  .error-details-content pre {
+    font-size: 11px;
   }
 }
 

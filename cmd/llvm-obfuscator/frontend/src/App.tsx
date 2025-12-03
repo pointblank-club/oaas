@@ -296,6 +296,7 @@ interface Modal {
   type: 'error' | 'warning' | 'success';
   title: string;
   message: string;
+  details?: string;  // Optional detailed error message (shown on expand)
 }
 
 interface RepoFile {
@@ -330,6 +331,7 @@ function App() {
   const [report, setReport] = useState<ReportData | null>(null);
   const [loading, setLoading] = useState(false);
   const [modal, setModal] = useState<Modal | null>(null);
+  const [showErrorDetails, setShowErrorDetails] = useState(false);
   const [progress, setProgress] = useState<{ message: string; percent: number } | null>(null);
   const [detectedLanguage, setDetectedLanguage] = useState<'c' | 'cpp' | null>(null);
 
@@ -459,13 +461,67 @@ function App() {
     setShowGitHubModal(false);
   }, []);
 
-  const onGitHubError = useCallback((error: string) => {
+  // Helper function to parse errors into summary and details
+  const parseErrorForDisplay = useCallback((error: string): { summary: string; details?: string } => {
+    const lines = error.split('\n').filter(line => line.trim());
+    
+    // Check for build failure pattern
+    if (error.includes('Build failed:') || error.includes('Compilation failed')) {
+      const summaryLine = lines.find(l => 
+        l.includes('Build failed') || 
+        l.includes('Compilation failed') ||
+        l.includes('error:')
+      ) || lines[0];
+      
+      // Extract a short summary
+      let summary = 'Compilation failed';
+      const errorMatch = error.match(/error:.*$/m);
+      if (errorMatch) {
+        summary = errorMatch[0].slice(0, 100) + (errorMatch[0].length > 100 ? '...' : '');
+      } else if (summaryLine) {
+        summary = summaryLine.slice(0, 100) + (summaryLine.length > 100 ? '...' : '');
+      }
+      
+      return {
+        summary,
+        details: lines.length > 1 ? error : undefined
+      };
+    }
+    
+    // For other errors, use first line as summary if multi-line
+    if (lines.length > 1) {
+      return {
+        summary: lines[0].slice(0, 150) + (lines[0].length > 150 ? '...' : ''),
+        details: error
+      };
+    }
+    
+    // Single line error - show as is if short, otherwise truncate with details
+    if (error.length > 200) {
+      return {
+        summary: error.slice(0, 200) + '...',
+        details: error
+      };
+    }
+    
+    return { summary: error };
+  }, []);
+
+  // Helper to show error modal with summary/details pattern
+  const showErrorModal = useCallback((title: string, error: string) => {
+    const { summary, details } = parseErrorForDisplay(error);
+    setShowErrorDetails(false);
     setModal({
       type: 'error',
-      title: 'GitHub Error',
-      message: error
+      title,
+      message: summary,
+      details
     });
-  }, []);
+  }, [parseErrorForDisplay]);
+
+  const onGitHubError = useCallback((error: string) => {
+    showErrorModal('GitHub Error', error);
+  }, [showErrorModal]);
 
   const onSelectDemo = useCallback((demoKey: string) => {
     if (!demoKey) {
@@ -714,11 +770,8 @@ function App() {
       }
 
     } catch (err) {
-      setModal({
-        type: 'error',
-        title: 'File Read Error',
-        message: 'Failed to read the source file. Please try again.'
-      });
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      showErrorModal('File Read Error', `Failed to read the source file: ${errorMsg}`);
       return;
     }
 
@@ -868,10 +921,20 @@ function App() {
             const reportData = await reportRes.json();
             console.log('[DEBUG] Report data received:', reportData);
             setReport(reportData);
+          } else {
+            console.error('[DEBUG] Failed to fetch report: HTTP', reportRes.status);
+            // Don't show error modal for report fetch failure - binary was still generated successfully
           }
         } catch (reportErr) {
           console.error('[DEBUG] Failed to fetch report:', reportErr);
-          // Don't fail the whole operation if just report fetch fails
+          const reportErrMsg = reportErr instanceof Error ? reportErr.message : String(reportErr);
+          // Show a warning (not error) since the obfuscation succeeded
+          setModal({
+            type: 'warning',
+            title: 'Report Unavailable',
+            message: 'Obfuscation completed successfully, but failed to fetch the report.',
+            details: `Error: ${reportErrMsg}\n\nYou can still download the binary and try fetching the report manually.`
+          });
         }
       }
     } catch (err) {
@@ -898,13 +961,8 @@ function App() {
       } else if (errorMsg.includes('network') || errorMsg.includes('Failed to fetch')) {
         userFriendlyError = 'Network error. Please check your connection and try again.';
       }
-      // For compilation errors, show the FULL compiler output with line numbers
 
-      setModal({
-        type: 'error',
-        title: 'Obfuscation Failed',
-        message: userFriendlyError
-      });
+      showErrorModal('Obfuscation Failed', userFriendlyError);
     } finally {
       setLoading(false);
       setProgress(null); 
@@ -918,7 +976,8 @@ function App() {
     flagLTO, flagSymbolHiding, flagOmitFramePointer, flagSpeculativeLoadHardening,
     flagO3, flagStripSymbols, flagNoBuiltin,
     buildSystem, customBuildCommand, outputBinaryPath, cmakeOptions,
-    detectLanguage, countLayers, selectedRepoFile, repoSessionId, repoFileCount, repoFiles
+    detectLanguage, countLayers, selectedRepoFile, repoSessionId, repoFileCount, repoFiles,
+    showErrorModal
   ]);
 
   const onDownloadBinary = useCallback((platform: Platform) => {
@@ -952,17 +1011,32 @@ function App() {
 
       {/* Modal */}
       {modal && (
-        <div className="modal-overlay" onClick={() => setModal(null)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-overlay" onClick={() => { setModal(null); setShowErrorDetails(false); }}>
+          <div className={`modal ${modal.details ? 'modal-with-details' : ''}`} onClick={(e) => e.stopPropagation()}>
             <div className={`modal-header ${modal.type}`}>
               <h3>{modal.title}</h3>
-              <button className="modal-close" onClick={() => setModal(null)}>×</button>
+              <button className="modal-close" onClick={() => { setModal(null); setShowErrorDetails(false); }}>×</button>
             </div>
             <div className="modal-body">
               <p>{modal.message}</p>
+              {modal.details && (
+                <div className="error-details-section">
+                  <button 
+                    className="error-details-toggle"
+                    onClick={() => setShowErrorDetails(!showErrorDetails)}
+                  >
+                    {showErrorDetails ? '▼ Hide Details' : '▶ Show Details'}
+                  </button>
+                  {showErrorDetails && (
+                    <div className="error-details-content">
+                      <pre>{modal.details}</pre>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
             <div className="modal-footer">
-              <button className="modal-btn" onClick={() => setModal(null)}>
+              <button className="modal-btn" onClick={() => { setModal(null); setShowErrorDetails(false); }}>
                 {modal.type === 'success' ? 'OK' : 'Close'}
               </button>
             </div>

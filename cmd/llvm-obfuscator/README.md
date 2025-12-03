@@ -4,10 +4,10 @@ Production-ready LLVM binary obfuscation tool with 4-layer protection.
 
 ## Features
 
-- **Layer 0: Symbol Obfuscation** - Cryptographic symbol renaming (SHA256/Blake2b)
-- **Layer 1: Compiler Flags** - 9 optimal flags (82.5/100 score)
-- **Layer 2: OLLVM Passes** - 4 control-flow obfuscation passes
-- **Layer 3: String Encryption** - Runtime XOR encryption with constructor-based decryption
+- **Layer 1: Symbol Obfuscation** - Cryptographic symbol renaming (SHA256/Blake2b)
+- **Layer 2: String Encryption** - Runtime XOR encryption with constructor-based decryption
+- **Layer 3: OLLVM Passes** - 4 control-flow obfuscation passes
+- **Layer 4: Compiler Flags** - 9 optimal flags (82.5/100 score)
 
 ## Installation
 
@@ -43,7 +43,7 @@ llvm-obfuscate compile src/myapp.c --config-file config.yaml
 
 ## Layer Details
 
-### Layer 0: Symbol Obfuscation
+### Layer 1: Symbol Obfuscation
 Renames all function and variable names using cryptographic hashes.
 
 **Options:**
@@ -192,7 +192,7 @@ llvm-obfuscate batch config.yaml
 
 | Configuration | Overhead | Security Gain |
 |---------------|----------|---------------|
-| Layer 0+1+3   | ~10%     | 10-15x        |
+| Layer 1+2+3   | ~10%     | 10-15x        |
 | Layer 1+2     | ~15-20%  | 20-30x        |
 | All layers    | ~25-30%  | 50x+          |
 

@@ -88,8 +88,16 @@ void ConstantObfuscationPass::runOnOperation() {
   // STEP 2: Obfuscate Integer and Float Constants in Func Dialect Operations
   // ============================================================================
   module.walk([&](Operation *op) {
-    // Skip non-Func dialect operations to maintain compatibility
-    if (!isa<func::FuncOp>(op->getParentOp()) && !isa<ModuleOp>(op->getParentOp())) {
+    // Skip operations not inside a function (support both Func and LLVM dialects)
+    Operation *parentOp = op->getParentOp();
+    if (!parentOp)
+      return;
+    
+    // Allow operations inside func::FuncOp, LLVM::LLVMFuncOp, or ModuleOp
+    bool inValidScope = llvm::isa<func::FuncOp>(parentOp) ||
+                        llvm::isa<LLVM::LLVMFuncOp>(parentOp) ||
+                        llvm::isa<ModuleOp>(parentOp);
+    if (!inValidScope) {
       return;
     }
 

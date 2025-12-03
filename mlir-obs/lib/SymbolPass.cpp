@@ -68,9 +68,15 @@ void SymbolObfuscatePass::processFuncDialect() {
 
   module.walk([&](func::FuncOp func) {
     StringRef oldName = func.getSymName();
-    // Don't rename main if you want to keep entry stable (optional)
-    // if (oldName == "main")
-    //   return;
+    
+    // Don't rename main - it's the entry point
+    if (oldName == "main")
+      return;
+    
+    // Don't rename external/declaration-only functions (like printf, strcmp, etc.)
+    // These are library functions that must keep their original names
+    if (func.isDeclaration())
+      return;
 
     // Only assign a new name once per function
     if (renameMap.find(oldName) == renameMap.end()) {
@@ -129,9 +135,16 @@ void SymbolObfuscatePass::processLLVMDialect() {
 
   module.walk([&](LLVM::LLVMFuncOp func) {
     StringRef oldName = func.getSymName();
-    // Don't rename main
-    // if (oldName == "main")
-    //   return;
+    
+    // Don't rename main - it's the entry point
+    if (oldName == "main")
+      return;
+    
+    // Don't rename external/declaration-only functions (like printf, strcmp, etc.)
+    // These are library functions that must keep their original names.
+    // In LLVM dialect, external functions have an empty body region.
+    if (func.isExternal())
+      return;
 
     if (renameMap.find(oldName) == renameMap.end()) {
       std::string newName = generateObfuscatedName(rng);

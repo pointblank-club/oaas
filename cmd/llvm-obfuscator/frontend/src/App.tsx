@@ -335,12 +335,13 @@ function App() {
   const [progress, setProgress] = useState<{ message: string; percent: number } | null>(null);
   const [detectedLanguage, setDetectedLanguage] = useState<'c' | 'cpp' | null>(null);
 
-  // Layer states (execution order: 1→2→3→4)
+  // Layer states (execution order: 1→2→3→4→5)
   const [layer1, setLayer1] = useState(false); // Symbol obfuscation (PRE-COMPILE, FIRST)
   const [layer2, setLayer2] = useState(false); // String encryption (PRE-COMPILE, SECOND)
   const [layer2_5, setLayer2_5] = useState(false); // Indirect calls (PRE-COMPILE, 2.5)
   const [layer3, setLayer3] = useState(false); // OLLVM passes (COMPILE, THIRD - optional)
-  const [layer4, setLayer4] = useState(false); // Compiler flags (COMPILE, FINAL)
+  const [layer4, setLayer4] = useState(false); // Compiler flags (COMPILE, FOURTH)
+  const [layer5, setLayer5] = useState(false); // UPX packing (POST-COMPILE, FINAL)
 
   // Layer 1: Symbol Obfuscation sub-options
   const [symbolAlgorithm, setSymbolAlgorithm] = useState('sha256');
@@ -370,6 +371,11 @@ function App() {
   const [flagO3, setFlagO3] = useState(false);
   const [flagStripSymbols, setFlagStripSymbols] = useState(false);
   const [flagNoBuiltin, setFlagNoBuiltin] = useState(false);
+
+  // Layer 5: UPX Packing sub-options
+  const [upxCompression, setUpxCompression] = useState<'fast' | 'default' | 'best' | 'brute'>('best');
+  const [upxLzma, setUpxLzma] = useState(true);
+  const [upxPreserveOriginal, setUpxPreserveOriginal] = useState(false);
 
   // Configuration states
   const [obfuscationLevel, setObfuscationLevel] = useState(5);
@@ -548,8 +554,9 @@ function App() {
     if (layer2_5) count++; // Indirect calls
     if (layer3 && (passFlattening || passSubstitution || passBogusControlFlow || passSplitBasicBlocks)) count++; // OLLVM passes
     if (layer4 && (flagLTO || flagSymbolHiding || flagOmitFramePointer || flagSpeculativeLoadHardening || flagO3 || flagStripSymbols || flagNoBuiltin)) count++; // Compiler flags
+    if (layer5) count++; // UPX packing
     return count;
-  }, [layer1, layer2, layer2_5, layer3, layer4, passFlattening, passSubstitution, passBogusControlFlow, passSplitBasicBlocks, flagLTO, flagSymbolHiding, flagOmitFramePointer, flagSpeculativeLoadHardening, flagO3, flagStripSymbols, flagNoBuiltin]);
+  }, [layer1, layer2, layer2_5, layer3, layer4, layer5, passFlattening, passSubstitution, passBogusControlFlow, passSplitBasicBlocks, flagLTO, flagSymbolHiding, flagOmitFramePointer, flagSpeculativeLoadHardening, flagO3, flagStripSymbols, flagNoBuiltin]);
 
   // Validate source code syntax
   const validateCode = (code: string, language: 'c' | 'cpp'): { valid: boolean; error?: string } => {
@@ -623,6 +630,7 @@ function App() {
       }
     }
     if (layer === 4) setLayer4(value);
+    if (layer === 5) setLayer5(value);
   };
 
   const onSubmit = useCallback(async () => {
@@ -863,6 +871,12 @@ function App() {
             enabled: layer2_5,
             obfuscate_stdlib: layer2_5 ? indirectStdlib : true,
             obfuscate_custom: layer2_5 ? indirectCustom : true
+          },
+          upx: {
+            enabled: layer5,
+            compression_level: layer5 ? upxCompression : 'best',
+            use_lzma: layer5 ? upxLzma : true,
+            preserve_original: layer5 ? upxPreserveOriginal : false
           }
         },
         report_formats: ['json', 'markdown'],
@@ -969,12 +983,13 @@ function App() {
     }
   }, [
     file, inputMode, pastedSource, obfuscationLevel, cycles, targetPlatform, entrypointCommand,
-    layer1, layer2, layer3, layer4, layer2_5,
+    layer1, layer2, layer3, layer4, layer2_5, layer5,
     symbolAlgorithm, symbolHashLength, symbolPrefix, symbolSalt,
     fakeLoops, indirectStdlib, indirectCustom,
     passFlattening, passSubstitution, passBogusControlFlow, passSplitBasicBlocks,
     flagLTO, flagSymbolHiding, flagOmitFramePointer, flagSpeculativeLoadHardening,
     flagO3, flagStripSymbols, flagNoBuiltin,
+    upxCompression, upxLzma, upxPreserveOriginal,
     buildSystem, customBuildCommand, outputBinaryPath, cmakeOptions,
     detectLanguage, countLayers, selectedRepoFile, repoSessionId, repoFileCount, repoFiles,
     showErrorModal
@@ -1215,7 +1230,7 @@ function App() {
             <button
               className="select-all-btn"
               onClick={() => {
-                const allSelected = layer1 && layer2 && layer2_5 && layer3 && layer4 &&
+                const allSelected = layer1 && layer2 && layer2_5 && layer3 && layer4 && layer5 &&
                   passFlattening && passSubstitution && passBogusControlFlow && passSplitBasicBlocks &&
                   flagLTO && flagSymbolHiding && flagOmitFramePointer && flagSpeculativeLoadHardening &&
                   flagO3 && flagStripSymbols && flagNoBuiltin;
@@ -1226,6 +1241,7 @@ function App() {
                 setLayer2_5(newValue);
                 setLayer3(newValue);
                 setLayer4(newValue);
+                setLayer5(newValue);
                 setPassFlattening(newValue);
                 setPassSubstitution(newValue);
                 setPassBogusControlFlow(newValue);
@@ -1239,7 +1255,7 @@ function App() {
                 setFlagNoBuiltin(newValue);
               }}
             >
-              {layer1 && layer2 && layer2_5 && layer3 && layer4 &&
+              {layer1 && layer2 && layer2_5 && layer3 && layer4 && layer5 &&
                 passFlattening && passSubstitution && passBogusControlFlow && passSplitBasicBlocks &&
                 flagLTO && flagSymbolHiding && flagOmitFramePointer && flagSpeculativeLoadHardening &&
                 flagO3 && flagStripSymbols && flagNoBuiltin
@@ -1535,6 +1551,55 @@ function App() {
                   </div>
                   {layer3 && <span style={{ color: '#ff6b6b', fontSize: '0.8em', marginLeft: '20px' }}>⚠ Incompatible with Layer 3</span>}
                 </label>
+              </div>
+            )}
+
+            {/* Layer 5: UPX Binary Packing */}
+            <label className="layer-checkbox">
+              <input
+                type="checkbox"
+                checked={layer5}
+                onChange={(e) => handleLayerChange(5, e.target.checked)}
+              />
+              <span className="layer-label">
+                [LAYER 5] UPX Binary Packing (POST-COMPILE, FINAL)
+                <small>Compress binary 50-70% + additional obfuscation layer</small>
+              </span>
+            </label>
+
+            {layer5 && (
+              <div className="layer-config">
+                <label>
+                  Compression Level:
+                  <select
+                    value={upxCompression}
+                    onChange={(e) => setUpxCompression(e.target.value as 'fast' | 'default' | 'best' | 'brute')}
+                  >
+                    <option value="fast">Fast (~40-50% compression)</option>
+                    <option value="default">Default (~50-60% compression)</option>
+                    <option value="best">Best (~60-70% compression)</option>
+                    <option value="brute">Brute (~65-75%, very slow)</option>
+                  </select>
+                </label>
+                <label className="sub-option">
+                  <input
+                    type="checkbox"
+                    checked={upxLzma}
+                    onChange={(e) => setUpxLzma(e.target.checked)}
+                  />
+                  Use LZMA Compression (better ratio, recommended)
+                </label>
+                <label className="sub-option">
+                  <input
+                    type="checkbox"
+                    checked={upxPreserveOriginal}
+                    onChange={(e) => setUpxPreserveOriginal(e.target.checked)}
+                  />
+                  Preserve Original Binary (.pre-upx backup)
+                </label>
+                <div className="layer-info" style={{ marginTop: '10px', fontSize: '0.85em', color: 'var(--text-secondary)' }}>
+                  Note: Adds 10-50ms startup overhead. Some antivirus may flag UPX-packed binaries.
+                </div>
               </div>
             )}
           </div>

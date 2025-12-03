@@ -28,7 +28,7 @@ from core import (
     analyze_binary,
 )
 from core.comparer import CompareConfig, compare_binaries
-from core.config import AdvancedConfiguration, PassConfiguration, SymbolObfuscationConfiguration
+from core.config import AdvancedConfiguration, PassConfiguration, SymbolObfuscationConfiguration, UPXConfiguration
 from core.exceptions import JobNotFoundError, ValidationError
 from core.job_manager import JobManager
 from core.progress import ProgressEvent, ProgressTracker
@@ -167,6 +167,13 @@ class SymbolObfuscationModel(BaseModel):
     salt: Optional[str] = None
 
 
+class UPXModel(BaseModel):
+    enabled: bool = False
+    compression_level: str = Field("best", pattern="^(fast|default|best|brute)$")
+    use_lzma: bool = True
+    preserve_original: bool = False
+
+
 class ConfigModel(BaseModel):
     level: int = Field(3, ge=1, le=5)
     passes: PassesModel = PassesModel()
@@ -174,6 +181,7 @@ class ConfigModel(BaseModel):
     string_encryption: bool = False
     fake_loops: int = Field(0, ge=0, le=50)
     symbol_obfuscation: SymbolObfuscationModel = SymbolObfuscationModel()
+    upx: UPXModel = UPXModel()
 
 
 
@@ -324,11 +332,18 @@ def _build_config_from_request(payload: ObfuscateRequest, destination_dir: Path,
         prefix_style=payload.config.symbol_obfuscation.prefix_style,
         salt=payload.config.symbol_obfuscation.salt,
     )
+    upx_config = UPXConfiguration(
+        enabled=payload.config.upx.enabled,
+        compression_level=payload.config.upx.compression_level,
+        use_lzma=payload.config.upx.use_lzma,
+        preserve_original=payload.config.upx.preserve_original,
+    )
     advanced = AdvancedConfiguration(
         cycles=payload.config.cycles,
         string_encryption=payload.config.string_encryption,
         fake_loops=payload.config.fake_loops,
         symbol_obfuscation=symbol_obf,
+        upx_packing=upx_config,
     )
     # Auto-load plugin if passes are requested and no explicit plugin provided
     any_pass_requested = (
@@ -460,6 +475,10 @@ def _setup_build_environment(config: ObfuscationConfig, plugin_path: Optional[st
     # LDFLAGS for linker (strip symbols, etc.)
     env["LDFLAGS"] = layer4_flags
 
+    # DEBUG: Log Layer 4 config
+    logger.info(f"[DEBUG] Layer 4 (Compiler Flags): {config.compiler_flags}")
+    logger.info(f"[DEBUG] Layer 4 OLLVM_CFLAGS: {env.get('OLLVM_CFLAGS', 'none')}")
+    logger.info(f"[DEBUG] Layer 4 LDFLAGS: {env.get('LDFLAGS', 'none')}")
     logger.info(f"Build environment: CC={env.get('CC')}, OLLVM_PASSES={env.get('OLLVM_PASSES', 'none')}")
 
     return env
@@ -631,10 +650,18 @@ def _obfuscate_project_sources(
         "indirect_calls": 0,
     }
 
+    # DEBUG: Log config values to verify they're being passed correctly
+    logger.info(f"[DEBUG] Layer 1 (Symbol Obfuscation) enabled: {config.advanced.symbol_obfuscation.enabled}")
+    logger.info(f"[DEBUG] Layer 2 (String Encryption) enabled: {config.advanced.string_encryption}")
+    has_indirect_calls = hasattr(config.advanced, 'indirect_calls') and hasattr(config.advanced.indirect_calls, 'enabled')
+    logger.info(f"[DEBUG] Layer 2.5 (Indirect Calls) enabled: {config.advanced.indirect_calls.enabled if has_indirect_calls else 'N/A (not configured)'}")
+
     # Find all source files
     all_sources: List[Path] = []
     for ext in source_extensions:
         all_sources.extend(project_root.rglob(ext))
+
+    logger.info(f"[DEBUG] Found {len(all_sources)} source files to process")
 
     # Build shared symbol map for consistency across files
     symbol_map: Dict[str, str] = {}

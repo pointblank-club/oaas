@@ -68,14 +68,8 @@ RUN ARCH=$(dpkg --print-architecture) && \
         cp plugins/$PLUGIN_DIR/LLVMObfuscationPlugin.so /usr/local/llvm-obfuscator/lib/; \
     elif [ -f "plugins/$PLUGIN_DIR/LLVMObfuscationPlugin.dylib" ]; then \
         cp plugins/$PLUGIN_DIR/LLVMObfuscationPlugin.dylib /usr/local/llvm-obfuscator/lib/; \
-    fi && \
-    echo "Applying UPX compression to binaries..." && \
-    if [ -f "/usr/local/llvm-obfuscator/bin/clang" ]; then \
-        upx --best --lzma /usr/local/llvm-obfuscator/bin/clang 2>/dev/null || echo "UPX compression skipped for clang"; \
-    fi && \
-    if [ -f "/usr/local/llvm-obfuscator/bin/opt" ]; then \
-        upx --best --lzma /usr/local/llvm-obfuscator/bin/opt 2>/dev/null || echo "UPX compression skipped for opt"; \
     fi
+    # Note: UPX compression removed - binaries from GCP are uncompressed for faster execution
 
 # Add custom LLVM toolchain to PATH
 ENV PATH="/usr/local/llvm-obfuscator/bin:${PATH}"

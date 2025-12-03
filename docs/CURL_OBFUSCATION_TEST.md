@@ -111,7 +111,82 @@ The wrapper scripts automatically detect and skip OLLVM for CMake try_compile te
 
 ---
 
-## December 3, 2025 Test Results
+## December 3, 2025 - All Layers Test
+
+### Objective
+
+Test applying **ALL 4 obfuscation layers** to curl:
+- Layer 1: Symbol Obfuscation (SHA256, 12 chars, typed prefix)
+- Layer 2: String Encryption
+- Layer 2.5: Indirect Call Obfuscation
+- Layer 3: OLLVM Passes (substitution, boguscf, split)
+- Layer 4: Compiler Flags
+
+### Configuration
+
+| Setting | Value |
+|---------|-------|
+| Repository | curl/curl (master branch) |
+| Files | 684 C/C++ source files |
+| Build System | CMake |
+| All Layers Enabled | Yes |
+| OLLVM Passes | substitution, boguscf, split |
+| Flattening | **DISABLED** (causes segfaults) |
+| Timeout | 180 minutes |
+
+### Results
+
+| Layer | Requested | Applied | Evidence |
+|-------|-----------|---------|----------|
+| Layer 1: Symbol Obfuscation | Yes | **NO** | Symbols like `curl_easy_init` still visible |
+| Layer 2: String Encryption | Yes | **NO** | Strings like "error initializing curl" in plaintext |
+| Layer 2.5: Indirect Calls | Yes | **NO** | 0 indirect calls processed |
+| Layer 3: OLLVM Passes | Yes | **YES** | Confirmed via `opt --passes=substitution,boguscf,split` |
+| Layer 4: Compiler Flags | Yes | **PARTIAL** | Binary is stripped (`-Wl,-s`) |
+
+### Bug Found: Source-Level Obfuscation Not Applied
+
+Server logs revealed:
+```
+2025-12-03 15:43:12,245 - api - INFO - Source obfuscation complete: {'files_processed': 0, 'symbols_renamed': 0, 'strings_encrypted': 0, 'indirect_calls': 0}
+```
+
+**Root Cause:** The `_apply_string_encryption` and `_apply_indirect_calls` functions in `server.py` are placeholder implementations that count but don't actually modify content. The `_apply_symbol_obfuscation` function works but may not be finding symbols due to strict filtering rules.
+
+**Impact:** For repository/CMake builds, only Layer 3 (OLLVM via wrapper scripts) and partial Layer 4 (linker flags) are currently effective.
+
+### Binary Analysis
+
+```bash
+$ ls -la curl_obfuscated_all_layers
+-rwxr-xr-x 1 root root 5508952 Dec  3 16:15 curl_obfuscated_all_layers
+
+$ file curl_obfuscated_all_layers
+ELF 64-bit LSB pie executable, x86-64, version 1 (SYSV),
+dynamically linked, interpreter /lib64/ld-linux-x86-64.so.2,
+for GNU/Linux 3.2.0, stripped
+
+$ nm curl_obfuscated_all_layers
+no symbols  # Symbol table stripped
+
+$ strings curl_obfuscated_all_layers | grep -c curl
+156  # Curl-related strings still visible (Layer 2 not working)
+```
+
+### Timeline
+
+| Time (UTC) | Event |
+|------------|-------|
+| 15:42:08 | Repository download started |
+| 15:43:12 | Source obfuscation attempted (0 files processed) |
+| 15:43:12 | OLLVM wrapper scripts configured |
+| 15:57:00 | CMake configure complete |
+| 16:15:35 | Build completed successfully |
+| **Total** | **~32 minutes** |
+
+---
+
+## December 3, 2025 - OLLVM-Only Test (Earlier)
 
 ### Configuration
 
@@ -300,16 +375,41 @@ chmod +x /curl
 |---------|--------|
 | Wrapper script approach | Working |
 | CMake try_compile detection | Working |
-| Instruction Substitution | Working |
-| Bogus Control Flow | Working |
-| Split Basic Blocks | Working |
+| Layer 3: Instruction Substitution | Working |
+| Layer 3: Bogus Control Flow | Working |
+| Layer 3: Split Basic Blocks | Working |
+| Layer 4: Symbol Stripping (`-Wl,-s`) | Working |
 | Large project builds | Working (with 180min timeout) |
 
 ### What Doesn't Work
 
 | Feature | Status | Notes |
 |---------|--------|-------|
-| Control Flow Flattening | Unstable | Causes segfaults on complex code |
+| Layer 1: Symbol Obfuscation | Not Working | Frontend sends `enabled: false` even when checked |
+| Layer 2: String Encryption | Not Working | Backend placeholder returns unchanged content |
+| Layer 2.5: Indirect Calls | Not Working | Frontend doesn't send config to backend |
+| Layer 3: Control Flow Flattening | Unstable | Causes segfaults on complex code |
+
+### Known Bug: Source-Level Obfuscation for Repository Builds
+
+When building from a GitHub repository (CMake/Make/Autotools), the source-level obfuscation (Layers 1, 2, 2.5) processes 0 files.
+
+**Verified via Debug Logging (Dec 3, 2025):**
+```
+[DEBUG] Layer 1 (Symbol Obfuscation) enabled: False   ← Bug: UI checked but not sent
+[DEBUG] Layer 2 (String Encryption) enabled: True     ← Sent correctly
+[DEBUG] Layer 2.5 (Indirect Calls) enabled: False     ← Not sent from frontend
+[DEBUG] Found 1 source files to process               ← Files ARE being found
+[DEBUG] Layer 4 (Compiler Flags): ['-O3', '-fno-builtin', '-Wl,-s', ...]  ← Working
+```
+
+**Root Causes:**
+1. **Layer 1**: Frontend not sending `symbol_obfuscation.enabled: true` to backend
+2. **Layer 2**: `_apply_string_encryption()` returns original content unchanged (placeholder)
+3. **Layer 2.5**: Frontend not sending indirect_calls config to backend
+4. **Layer 4**: Working correctly - flags are passed via `OLLVM_CFLAGS` and `LDFLAGS`
+
+**Workaround:** For now, rely on Layer 3 (OLLVM passes) and Layer 4 (compiler flags) which work correctly.
 
 ### Recommendations
 
@@ -317,6 +417,7 @@ chmod +x /curl
 2. **Disable flattening** for complex projects
 3. **Set timeout to 180 minutes** for large projects
 4. **Enable only**: substitution, boguscf, split
+5. **Note:** Layers 1, 2, 2.5 need fixes before they work with repo builds
 
 ---
 

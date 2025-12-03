@@ -85,7 +85,8 @@ for arg in "$@"; do
         *.c|*.cc|*.cpp|*.cxx|*.C|*.c++) input_files+=("$arg") ;;
         *.o|*.a|*.so|*.dylib) link_args+=("$arg") ;;
         -l*|-L*|-Wl,*|-framework) link_args+=("$arg") ;;
-        -M|-MM|-MD|-MMD|-MF|-MT|-MQ) skip_obfuscation=true; compile_args+=("$arg") ;;
+        -M|-MM) skip_obfuscation=true; compile_args+=("$arg") ;;  # Preprocessing-only modes
+        -MD|-MMD|-MF|-MT|-MQ) compile_args+=("$arg") ;;  # Dependency gen flags - still compile normally
         *) compile_args+=("$arg") ;;
     esac
 done

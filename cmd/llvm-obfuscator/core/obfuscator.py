@@ -4,7 +4,7 @@ import logging
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from .config import ObfuscationConfig, Platform
+from .config import Architecture, ObfuscationConfig, Platform
 from .exceptions import ObfuscationError
 from .fake_loop_inserter import FakeLoopGenerator
 from .multifile_compiler import compile_multifile_ir_workflow
@@ -167,6 +167,39 @@ class LLVMObfuscator:
         except Exception as e:
             self.logger.debug(f"Could not locate MLIR plugin: {e}")
             return None
+
+    def _get_target_triple(self, platform: Platform, arch: Architecture) -> str:
+        """Build LLVM target triple from platform + architecture combination.
+
+        Target triple format: <arch>-<vendor>-<os>-<environment>
+
+        Returns the appropriate target triple for cross-compilation.
+        """
+        # Mapping of (platform, architecture) to LLVM target triple
+        target_triples = {
+            # Linux targets
+            (Platform.LINUX, Architecture.X86_64): "x86_64-unknown-linux-gnu",
+            (Platform.LINUX, Architecture.ARM64): "aarch64-unknown-linux-gnu",
+            (Platform.LINUX, Architecture.X86): "i686-unknown-linux-gnu",
+            # Windows targets (using MinGW toolchain)
+            (Platform.WINDOWS, Architecture.X86_64): "x86_64-w64-mingw32",
+            (Platform.WINDOWS, Architecture.ARM64): "aarch64-w64-mingw32",
+            (Platform.WINDOWS, Architecture.X86): "i686-w64-mingw32",
+            # macOS/Darwin targets
+            (Platform.MACOS, Architecture.X86_64): "x86_64-apple-darwin",
+            (Platform.MACOS, Architecture.ARM64): "aarch64-apple-darwin",
+            (Platform.DARWIN, Architecture.X86_64): "x86_64-apple-darwin",
+            (Platform.DARWIN, Architecture.ARM64): "aarch64-apple-darwin",
+        }
+
+        triple = target_triples.get((platform, arch))
+        if triple:
+            self.logger.info(f"Target triple: {triple} (platform={platform.value}, arch={arch.value})")
+            return triple
+
+        # Fallback to x86_64 Linux if combination not found
+        self.logger.warning(f"Unknown platform/arch combination: {platform.value}/{arch.value}, defaulting to x86_64-unknown-linux-gnu")
+        return "x86_64-unknown-linux-gnu"
 
     def obfuscate(self, source_file: Path, config: ObfuscationConfig, job_id: Optional[str] = None) -> Dict:
         if not source_file.exists():
@@ -652,8 +685,9 @@ class LLVMObfuscator:
             resource_dir_flags = self._get_resource_dir_flag(compiler)
             if resource_dir_flags:
                 ir_cmd.extend(resource_dir_flags)
-            if config.platform == Platform.WINDOWS:
-                ir_cmd.extend(["--target=x86_64-w64-mingw32"])
+            # Add target triple for cross-compilation
+            target_triple = self._get_target_triple(config.platform, config.architecture)
+            ir_cmd.extend([f"--target={target_triple}"])
             run_command(ir_cmd, cwd=source_abs.parent)
 
             # 1b: Convert LLVM IR to MLIR
@@ -684,14 +718,14 @@ class LLVMObfuscator:
 
             # Fix target triple and data layout (MLIR sometimes generates malformed output)
             llvm_ir_file = destination_abs.parent / f"{destination_abs.stem}_from_mlir.ll"
-            import subprocess
 
-            target_triple = "x86_64-unknown-linux-gnu"
-            data_layout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128"
-
+            # Get target triple for cross-compilation
+            target_triple = self._get_target_triple(config.platform, config.architecture)
+            # Data layout depends on the target
             if config.platform == Platform.WINDOWS:
-                target_triple = "x86_64-w64-mingw32"
                 data_layout = "e-m:w-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128"
+            else:
+                data_layout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128"
 
             # Read, fix, and write - remove ALL target-specific attributes
             with open(str(llvm_ir_raw), 'r') as f:
@@ -756,8 +790,9 @@ class LLVMObfuscator:
                 resource_dir_flags = self._get_resource_dir_flag(compiler)
                 if resource_dir_flags:
                     ir_cmd.extend(resource_dir_flags)
-                if config.platform == Platform.WINDOWS:
-                    ir_cmd.extend(["--target=x86_64-w64-mingw32"])
+                # Add target triple for cross-compilation
+                target_triple = self._get_target_triple(config.platform, config.architecture)
+                ir_cmd.extend([f"--target={target_triple}"])
                 run_command(ir_cmd, cwd=source_abs.parent)
                 current_input = ir_file
 
@@ -826,8 +861,9 @@ class LLVMObfuscator:
         # Stage 3: Compile to binary
         self.logger.info("Compiling final IR to binary...")
         final_cmd = [compiler, str(current_input), "-o", str(destination_abs)] + compiler_flags
-        if config.platform == Platform.WINDOWS:
-            final_cmd.extend(["--target=x86_64-w64-mingw32"])
+        # Add target triple for cross-compilation
+        target_triple = self._get_target_triple(config.platform, config.architecture)
+        final_cmd.extend([f"--target={target_triple}"])
         run_command(final_cmd, cwd=source_abs.parent)
 
         # Cleanup any remaining intermediate files
@@ -890,8 +926,9 @@ class LLVMObfuscator:
         # 1a: Compile source to ClangIR MLIR (CIR dialect)
         cir_mlir_file = destination_abs.parent / f"{destination_abs.stem}_cir.mlir"
         clangir_cmd = ["clangir", str(current_input), "-emit-cir", "-o", str(cir_mlir_file)]
-        if config.platform == Platform.WINDOWS:
-            clangir_cmd.extend(["--target=x86_64-w64-mingw32"])
+        # Add target triple for cross-compilation
+        target_triple = self._get_target_triple(config.platform, config.architecture)
+        clangir_cmd.extend([f"--target={target_triple}"])
         run_command(clangir_cmd, cwd=source_abs.parent)
 
         # 1b: Lower ClangIR to LLVM dialect MLIR
@@ -931,12 +968,13 @@ class LLVMObfuscator:
 
         # Fix target triple and data layout
         import re
-        target_triple = "x86_64-unknown-linux-gnu"
-        data_layout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128"
-
+        # Get target triple for cross-compilation
+        target_triple = self._get_target_triple(config.platform, config.architecture)
+        # Data layout depends on the target
         if config.platform == Platform.WINDOWS:
-            target_triple = "x86_64-w64-mingw32"
             data_layout = "e-m:w-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128"
+        else:
+            data_layout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128"
 
         with open(str(llvm_ir_file), 'r') as f:
             ir_content = f.read()
@@ -998,8 +1036,9 @@ class LLVMObfuscator:
         # Stage 5: Compile to binary
         self.logger.info("Compiling final IR to binary...")
         final_cmd = [compiler, str(current_input), "-o", str(destination_abs)] + compiler_flags
-        if config.platform == Platform.WINDOWS:
-            final_cmd.extend(["--target=x86_64-w64-mingw32"])
+        # Add target triple for cross-compilation
+        target_triple = self._get_target_triple(config.platform, config.architecture)
+        final_cmd.extend([f"--target={target_triple}"])
         run_command(final_cmd, cwd=source_abs.parent)
 
         # Cleanup intermediate files
@@ -1061,9 +1100,9 @@ class LLVMObfuscator:
             # Add minimal optimization flags
             compile_flags.extend(["-O2"])
 
-            # Platform-specific flags
-            if config.platform == Platform.WINDOWS:
-                compile_flags.append("--target=x86_64-w64-mingw32")
+            # Add target triple for cross-compilation
+            target_triple = self._get_target_triple(config.platform, config.architecture)
+            compile_flags.append(f"--target={target_triple}")
 
             # Add include paths for common directories in the project
             include_dirs = set()

@@ -1,0 +1,162 @@
+#!/bin/bash
+# clang-obfuscate - Wrapper script that applies OLLVM passes during compilation
+#
+# This wrapper intercepts clang compilation calls and:
+# 1. Compiles source to LLVM bitcode
+# 2. Applies OLLVM obfuscation passes via opt
+# 3. Compiles obfuscated bitcode to object file
+#
+# All steps use bundled LLVM 22 clang with system headers injected via -isystem.
+#
+# Environment variables:
+#   OLLVM_PASSES    - Comma-separated list of passes (e.g., "flattening,substitution,boguscf")
+#   OLLVM_PLUGIN    - Path to LLVMObfuscationPlugin.so
+#   OLLVM_DEBUG     - Set to "1" for verbose output
+#   OLLVM_CFLAGS    - Additional CFLAGS to pass (Layer 4 flags)
+
+set -e
+
+# Configuration
+SCRIPT_DIR="$(dirname "$(readlink -f "$0")")"
+
+# Bundled LLVM 22 clang
+CLANG="${SCRIPT_DIR}/clang.real"
+if [ ! -x "$CLANG" ]; then
+    CLANG="/usr/local/llvm-obfuscator/bin/clang.real"
+fi
+
+# Bundled opt with OLLVM plugin
+OPT="${SCRIPT_DIR}/opt"
+if [ ! -x "$OPT" ]; then
+    OPT="/usr/local/llvm-obfuscator/bin/opt"
+fi
+
+# System headers to inject (fixes incomplete bundled headers)
+SYSTEM_HEADERS="-nostdinc"
+if [ -d "/usr/lib/llvm-19/lib/clang/19/include" ]; then
+    SYSTEM_HEADERS="$SYSTEM_HEADERS -isystem /usr/lib/llvm-19/lib/clang/19/include"
+elif [ -d "/usr/lib/llvm-18/lib/clang/18/include" ]; then
+    SYSTEM_HEADERS="$SYSTEM_HEADERS -isystem /usr/lib/llvm-18/lib/clang/18/include"
+else
+    # Find any system clang headers
+    SYS_HDR=$(find /usr/lib/llvm-*/lib/clang/*/include -maxdepth 0 2>/dev/null | head -1)
+    [ -n "$SYS_HDR" ] && SYSTEM_HEADERS="$SYSTEM_HEADERS -isystem $SYS_HDR"
+fi
+SYSTEM_HEADERS="$SYSTEM_HEADERS -isystem /usr/local/include -isystem /usr/include/x86_64-linux-gnu -isystem /usr/include"
+
+PLUGIN="${OLLVM_PLUGIN:-/usr/local/llvm-obfuscator/lib/LLVMObfuscationPlugin.so}"
+PASSES="${OLLVM_PASSES:-}"
+DEBUG="${OLLVM_DEBUG:-0}"
+EXTRA_CFLAGS="${OLLVM_CFLAGS:-}"
+
+log() {
+    [ "$DEBUG" = "1" ] && echo "[clang-obfuscate] $*" >&2
+}
+
+log "Called with args: $*"
+log "PASSES=$PASSES, PLUGIN=$PLUGIN"
+
+# Parse arguments
+is_compile=false
+is_preprocess=false
+is_assemble_only=false
+emit_llvm=false
+output_file=""
+input_files=()
+compile_args=()
+link_args=()
+next_is_output=false
+skip_obfuscation=false
+
+for arg in "$@"; do
+    if [ "$next_is_output" = true ]; then
+        output_file="$arg"
+        next_is_output=false
+        continue
+    fi
+
+    case "$arg" in
+        -c) is_compile=true; compile_args+=("$arg") ;;
+        -E) is_preprocess=true; compile_args+=("$arg") ;;
+        -S) is_assemble_only=true; compile_args+=("$arg") ;;
+        -emit-llvm) emit_llvm=true; compile_args+=("$arg") ;;
+        -o) next_is_output=true ;;
+        -shared|-dynamiclib) link_args+=("$arg") ;;
+        *.c|*.cc|*.cpp|*.cxx|*.C|*.c++) input_files+=("$arg") ;;
+        *.o|*.a|*.so|*.dylib) link_args+=("$arg") ;;
+        -l*|-L*|-Wl,*|-framework) link_args+=("$arg") ;;
+        -M|-MM|-MD|-MMD|-MF|-MT|-MQ) skip_obfuscation=true; compile_args+=("$arg") ;;
+        *) compile_args+=("$arg") ;;
+    esac
+done
+
+[ -n "$EXTRA_CFLAGS" ] && read -ra extra_flags <<< "$EXTRA_CFLAGS" && compile_args+=("${extra_flags[@]}")
+
+log "is_compile=$is_compile, input_files=${input_files[*]}, output_file=$output_file"
+
+# Decide whether to apply obfuscation
+should_obfuscate=false
+if [ "$is_compile" = true ] && \
+   [ "$is_preprocess" = false ] && \
+   [ "$is_assemble_only" = false ] && \
+   [ "$emit_llvm" = false ] && \
+   [ "$skip_obfuscation" = false ] && \
+   [ -n "$PASSES" ] && \
+   [ -f "$PLUGIN" ] && \
+   [ ${#input_files[@]} -gt 0 ]; then
+    should_obfuscate=true
+fi
+
+log "should_obfuscate=$should_obfuscate"
+
+if [ "$should_obfuscate" = true ]; then
+    log "Applying OLLVM obfuscation passes: $PASSES"
+
+    TEMP_DIR=$(mktemp -d)
+    trap "rm -rf $TEMP_DIR" EXIT
+
+    for input in "${input_files[@]}"; do
+        base_name=$(basename "$input")
+        base_name_noext="${base_name%.*}"
+        bc_file="$TEMP_DIR/${base_name_noext}.bc"
+        obf_file="$TEMP_DIR/${base_name_noext}_obf.bc"
+        obj_file="${output_file:-${base_name_noext}.o}"
+
+        log "Processing: $input -> $bc_file -> $obf_file -> $obj_file"
+
+        # Build args without -c
+        step1_args=()
+        for arg in "${compile_args[@]}"; do
+            [ "$arg" != "-c" ] && step1_args+=("$arg")
+        done
+
+        # Step 1: Source -> Bitcode (bundled clang + system headers)
+        log "Step 1: $CLANG $SYSTEM_HEADERS -emit-llvm -c $input -o $bc_file"
+        $CLANG $SYSTEM_HEADERS -emit-llvm -c "$input" -o "$bc_file" "${step1_args[@]}" 2>&1 || {
+            log "ERROR: Failed to compile to bitcode"; exit 1
+        }
+
+        # Step 2: Apply OLLVM passes
+        log "Step 2: $OPT --load-pass-plugin=$PLUGIN --passes=$PASSES $bc_file -o $obf_file"
+        "$OPT" --load-pass-plugin="$PLUGIN" --passes="$PASSES" "$bc_file" -o "$obf_file" 2>&1 || {
+            log "ERROR: Failed to apply OLLVM passes"; exit 1
+        }
+
+        # Step 3: Bitcode -> Object (bundled clang, no headers needed)
+        log "Step 3: $CLANG -c $obf_file -o $obj_file"
+        "$CLANG" -c "$obf_file" -o "$obj_file" 2>&1 || {
+            log "ERROR: Failed to compile obfuscated bitcode"; exit 1
+        }
+
+        log "Successfully obfuscated: $input -> $obj_file"
+    done
+else
+    # PASSTHROUGH - use bundled clang with system headers
+    log "Passthrough mode"
+    all_args=("${compile_args[@]}" "${link_args[@]}")
+    [ -n "$output_file" ] && all_args+=("-o" "$output_file")
+    for input in "${input_files[@]}"; do all_args+=("$input"); done
+
+    log "Executing: $CLANG $SYSTEM_HEADERS ${all_args[*]}"
+    exec $CLANG $SYSTEM_HEADERS "${all_args[@]}"
+fi

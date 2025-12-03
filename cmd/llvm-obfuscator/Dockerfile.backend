@@ -45,6 +45,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libsqlite3-dev \
     libreadline-dev \
     libncurses-dev \
+    # X11 development libraries (for projects like DOOM, games, GUI apps)
+    libx11-dev \
+    libxext-dev \
     git \
     && rm -rf /var/lib/apt/lists/*
 

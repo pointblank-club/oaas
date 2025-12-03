@@ -450,6 +450,10 @@ def _setup_build_environment(config: ObfuscationConfig, plugin_path: Optional[st
     # LDFLAGS for linker (strip symbols, etc.)
     env["LDFLAGS"] = layer4_flags
 
+    # DEBUG: Log Layer 4 config
+    logger.info(f"[DEBUG] Layer 4 (Compiler Flags): {config.compiler_flags}")
+    logger.info(f"[DEBUG] Layer 4 OLLVM_CFLAGS: {env.get('OLLVM_CFLAGS', 'none')}")
+    logger.info(f"[DEBUG] Layer 4 LDFLAGS: {env.get('LDFLAGS', 'none')}")
     logger.info(f"Build environment: CC={env.get('CC')}, OLLVM_PASSES={env.get('OLLVM_PASSES', 'none')}")
 
     return env
@@ -621,10 +625,18 @@ def _obfuscate_project_sources(
         "indirect_calls": 0,
     }
 
+    # DEBUG: Log config values to verify they're being passed correctly
+    logger.info(f"[DEBUG] Layer 1 (Symbol Obfuscation) enabled: {config.advanced.symbol_obfuscation.enabled}")
+    logger.info(f"[DEBUG] Layer 2 (String Encryption) enabled: {config.advanced.string_encryption}")
+    has_indirect_calls = hasattr(config.advanced, 'indirect_calls') and hasattr(config.advanced.indirect_calls, 'enabled')
+    logger.info(f"[DEBUG] Layer 2.5 (Indirect Calls) enabled: {config.advanced.indirect_calls.enabled if has_indirect_calls else 'N/A (not configured)'}")
+
     # Find all source files
     all_sources: List[Path] = []
     for ext in source_extensions:
         all_sources.extend(project_root.rglob(ext))
+
+    logger.info(f"[DEBUG] Found {len(all_sources)} source files to process")
 
     # Build shared symbol map for consistency across files
     symbol_map: Dict[str, str] = {}

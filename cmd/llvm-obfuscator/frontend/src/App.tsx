@@ -770,13 +770,9 @@ function App() {
         if (flagLTO) flags.push('-flto', '-flto=thin');
       }
 
-      // Build OLLVM pass flags based on Layer 3 - only selected passes
-      if (layer3) {
-        if (passFlattening) flags.push('-mllvm', '-fla');
-        if (passBogusControlFlow) flags.push('-mllvm', '-bcf');
-        if (passSubstitution) flags.push('-mllvm', '-sub');
-        if (passSplitBasicBlocks) flags.push('-mllvm', '-split');
-      }
+      // NOTE: Layer 3 OLLVM passes are handled via config.passes object below
+      // The server uses wrapper scripts (clang-obfuscate) which apply passes via opt tool
+      // No -mllvm flags needed here - they're passed via OLLVM_PASSES environment variable
 
       const payload = {
         source_code: source_b64,

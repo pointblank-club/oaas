@@ -88,8 +88,17 @@ if [ "$should_obfuscate" = true ]; then
         obf_file="$TEMP_DIR/${base_name_noext}_obf.bc"
         obj_file="${output_file:-${base_name_noext}.o}"
 
+        # Build args without -c and without dependency generation flags
         step1_args=()
-        for arg in "${compile_args[@]}"; do [ "$arg" != "-c" ] && step1_args+=("$arg"); done
+        skip_next=false
+        for arg in "${compile_args[@]}"; do
+            if [ "$skip_next" = true ]; then skip_next=false; continue; fi
+            case "$arg" in
+                -c|-MD|-MMD) continue ;;
+                -MF|-MT|-MQ) skip_next=true; continue ;;
+                *) step1_args+=("$arg") ;;
+            esac
+        done
 
         log "Step 1: $CLANG $SYSTEM_HEADERS -emit-llvm -c $input -o $bc_file"
         $CLANG $SYSTEM_HEADERS -emit-llvm -c "$input" -o "$bc_file" "${step1_args[@]}" 2>&1 || exit 1

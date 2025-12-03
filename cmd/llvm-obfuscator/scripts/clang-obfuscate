@@ -125,10 +125,20 @@ if [ "$should_obfuscate" = true ]; then
 
         log "Processing: $input -> $bc_file -> $obf_file -> $obj_file"
 
-        # Build args without -c
+        # Build args without -c and without dependency generation flags
+        # (dependency flags use paths relative to original dir, not temp dir)
         step1_args=()
+        skip_next=false
         for arg in "${compile_args[@]}"; do
-            [ "$arg" != "-c" ] && step1_args+=("$arg")
+            if [ "$skip_next" = true ]; then
+                skip_next=false
+                continue
+            fi
+            case "$arg" in
+                -c|-MD|-MMD) continue ;;  # Skip these flags
+                -MF|-MT|-MQ) skip_next=true; continue ;;  # Skip flag and its argument
+                *) step1_args+=("$arg") ;;
+            esac
         done
 
         # Step 1: Source -> Bitcode (bundled clang + system headers)

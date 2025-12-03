@@ -22,41 +22,51 @@ jobs:
       with:
         lfs: false
 
-    - name: Download LLVM binaries from release
+    - name: Authenticate to Google Cloud
+      uses: google-github-actions/auth@v2
+      with:
+        credentials_json: ${{ secrets.GCP_SERVICE_ACCOUNT_KEY }}
+
+    - name: Set up Cloud SDK
+      uses: google-github-actions/setup-gcloud@v2
+
+    - name: Download LLVM binaries from GCP Cloud Storage
       id: download-binaries
+      env:
+        GCP_BUCKET: llvmbins
       run: |
         echo "=========================================="
-        echo "Downloading LLVM binaries from release"
+        echo "Downloading LLVM binaries from GCP Cloud Storage"
         echo "=========================================="
         
-        # Default to latest release, or use specific version from input
+        # Use latest version by default, or specific version if tagged
         VERSION="${GITHUB_REF#refs/tags/}"
         if [ "$VERSION" = "$GITHUB_REF" ]; then
-          # Not a tag, use latest release
-          echo "Not a tagged release, fetching latest release..."
-          VERSION=$(curl -s https://api.github.com/repos/${{ github.repository }}/releases/latest | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
-          if [ -z "$VERSION" ]; then
-            echo "❌ ERROR: No releases found"
-            echo "   Please create a release with binaries first"
-            exit 1
-          fi
+          # Not a tag, use latest
+          echo "Not a tagged release, using latest binaries..."
+          ARCHIVE_NAME="llvm-binaries-linux-x86_64-latest.tar.gz"
+        else
+          # Use versioned binary
+          echo "Using tagged version: $VERSION"
+          ARCHIVE_NAME="llvm-binaries-linux-x86_64-${VERSION}.tar.gz"
         fi
         
-        echo "Using release version: $VERSION"
         echo "::set-output name=version::$VERSION"
         
-        # Download the archive
-        ARCHIVE_URL="https://github.com/${{ github.repository }}/releases/download/${VERSION}/llvm-binaries-linux-x86_64.tar.gz"
-        echo "Downloading from: $ARCHIVE_URL"
-        
+        # Download the archive from GCP
+        echo "Downloading from gs://${GCP_BUCKET}/${ARCHIVE_NAME}..."
         mkdir -p cmd/llvm-obfuscator/plugins/
-        curl -L -o /tmp/llvm-binaries.tar.gz "$ARCHIVE_URL" || {
-          echo "❌ ERROR: Failed to download binaries from release"
+        
+        gsutil cp "gs://${GCP_BUCKET}/${ARCHIVE_NAME}" /tmp/llvm-binaries.tar.gz || {
+          echo "❌ ERROR: Failed to download binaries from GCP Cloud Storage"
+          echo ""
+          echo "Archive: ${ARCHIVE_NAME}"
+          echo "Bucket: ${GCP_BUCKET}"
           echo ""
           echo "To fix:"
-          echo "  1. Go to Actions → 'Store LLVM Binaries in Release'"
+          echo "  1. Go to Actions → 'Store LLVM Binaries in GCP Cloud Storage'"
           echo "  2. Run the workflow manually with a version (e.g., v1.0.0)"
-          echo "  3. This will upload binaries to a GitHub Release"
+          echo "  3. This will upload binaries to GCP Cloud Storage"
           echo ""
           exit 1
         }
@@ -121,9 +131,9 @@ jobs:
           echo "=========================================="
           echo ""
           echo "To fix:"
-          echo "  1. Go to Actions → 'Store LLVM Binaries as Artifacts'"
-          echo "  2. Run the workflow manually"
-          echo "  3. This will upload binaries as artifacts (bypasses LFS quota)"
+          echo "  1. Go to Actions → 'Store LLVM Binaries in GCP Cloud Storage'"
+          echo "  2. Run the workflow manually with a version (e.g., v1.0.0)"
+          echo "  3. This will upload binaries to GCP Cloud Storage"
           echo ""
           exit 1
         else
@@ -156,6 +166,7 @@ jobs:
           type=semver,pattern={{major}}.{{minor}}
           type=semver,pattern={{major}}
           type=raw,value=latest,enable={{is_default_branch}}
+          type=raw,value=patched,enable={{is_default_branch}}
 
     - name: Extract frontend metadata
       id: meta-frontend
@@ -170,6 +181,7 @@ jobs:
           type=semver,pattern={{major}}.{{minor}}
           type=semver,pattern={{major}}
           type=raw,value=latest,enable={{is_default_branch}}
+          type=raw,value=patched,enable={{is_default_branch}}
 
     - name: Build and push backend image
       uses: docker/build-push-action@v5

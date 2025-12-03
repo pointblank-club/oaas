@@ -32,7 +32,17 @@ from core.config import AdvancedConfiguration, PassConfiguration, SymbolObfuscat
 from core.exceptions import JobNotFoundError, ValidationError
 from core.job_manager import JobManager
 from core.progress import ProgressEvent, ProgressTracker
-from core.utils import create_logger, ensure_directory, normalize_flags_and_passes
+from core.utils import (
+    create_logger,
+    ensure_directory,
+    normalize_flags_and_passes,
+    get_timestamp,
+    get_file_size,
+    detect_binary_format,
+    list_sections,
+    summarize_symbols,
+    compute_entropy,
+)
 
 from .multifile_pipeline import (
     GitHubRepoRequest,
@@ -367,7 +377,7 @@ def _build_config_from_request(payload: ObfuscateRequest, destination_dir: Path,
 BUILD_COMMANDS = {
     "simple": None,  # Use direct clang compilation
     "cmake": "cmake -B build -DCMAKE_C_COMPILER=$CC -DCMAKE_CXX_COMPILER=$CXX && cmake --build build -j$(nproc)",
-    "make": "make CC=$CC CXX=$CXX -j$(nproc)",
+    "make": "make COMPILER=clang CC=$CC CXX=$CXX -j$(nproc)",
     "autotools": "./configure CC=$CC CXX=$CXX && make -j$(nproc)",
     "custom": None,  # Use user-provided build_command
 }
@@ -821,7 +831,8 @@ async def api_obfuscate_sync(
             # Check if using custom build mode (cmake, make, autotools, custom)
             if payload.build_system != "simple":
                 # CUSTOM BUILD MODE: Use project's native build system
-                logger.info(f"Using custom build mode: {payload.build_system}")
+                logger.info(f"[CUSTOM BUILD DEBUG] Using custom build mode: {payload.build_system}")
+                logger.info(f"[CUSTOM BUILD DEBUG] Repository session ID: {payload.repo_session_id}")
 
                 # Build config first to get obfuscation settings
                 config = _build_config_from_request(payload, working_dir, project_root=repo_path)
@@ -869,11 +880,81 @@ async def api_obfuscate_sync(
                 final_binary = working_dir / f"obfuscated_{output_binary.name}"
                 shutil.copy2(output_binary, final_binary)
 
+                # Generate reports for custom-built binaries
+                # This is necessary because custom build mode bypasses the obfuscator.obfuscate() method
+                # which normally generates reports
+                report_paths_dict = {}
+                if reporter:
+                    try:
+                        logger.info("Generating reports for custom-built binary...")
+
+                        # Build job data for reporting (mimics what obfuscator.obfuscate() does)
+                        # Extract enabled passes from the PassesModel
+                        enabled_passes_list = []
+                        if payload.config.passes.flattening:
+                            enabled_passes_list.append("flattening")
+                        if payload.config.passes.substitution:
+                            enabled_passes_list.append("substitution")
+                        if payload.config.passes.bogus_control_flow:
+                            enabled_passes_list.append("boguscf")
+                        if payload.config.passes.split:
+                            enabled_passes_list.append("split")
+
+                        job_data = {
+                            "job_id": job.job_id,
+                            "source_file": payload.filename,
+                            "platform": payload.platform.value,
+                            "obfuscation_level": int(payload.config.level),
+                            "requested_passes": enabled_passes_list,
+                            "applied_passes": [],  # For custom builds, we don't track this as precisely
+                            "compiler_flags": config.compiler_flags if config else [],
+                            "timestamp": get_timestamp(),
+                            "warnings": [],
+                            "baseline_metrics": {},  # Custom builds don't have baseline
+                            "output_attributes": {
+                                "file_size": get_file_size(final_binary),
+                                "binary_format": detect_binary_format(final_binary),
+                                "sections": list_sections(final_binary),
+                                "symbols_count": summarize_symbols(final_binary)[0],
+                                "functions_count": summarize_symbols(final_binary)[1],
+                                "entropy": compute_entropy(final_binary.read_bytes()),
+                                "obfuscation_methods": list(obf_results.keys()) if obf_results else [],
+                            },
+                            "comparison": {},
+                            "bogus_code_info": {},
+                            "cycles_completed": 1,
+                            "string_obfuscation": {"enabled": config.advanced.string_encryption if config else False},
+                            "fake_loops_inserted": 0,
+                            "symbol_obfuscation": {"enabled": config.advanced.symbol_obfuscation.enabled if config and hasattr(config.advanced, 'symbol_obfuscation') else False},
+                            "indirect_calls": {"enabled": False},
+                            "upx_packing": {"enabled": False},
+                            "obfuscation_score": 0,
+                            "symbol_reduction": 0,
+                            "function_reduction": 0,
+                            "size_reduction": 0,
+                            "entropy_increase": 0,
+                            "estimated_re_effort": "N/A",
+                            "output_file": str(final_binary),
+                            "build_system": payload.build_system,
+                            "source_obfuscation": obf_results,
+                        }
+
+                        # Generate and export reports
+                        report = reporter.generate_report(job_data)
+                        report_formats = payload.report_formats or ["json", "markdown"]
+                        exported = reporter.export(report, job.job_id, report_formats)
+                        report_paths_dict = {fmt: str(path) for fmt, path in exported.items()}
+                        logger.info(f"Reports generated: {list(report_paths_dict.keys())}")
+                    except Exception as e:
+                        logger.error(f"Failed to generate reports for custom build: {e}", exc_info=True)
+                        logger.error(f"Report paths dict: {report_paths_dict}")
+
                 result = {
                     "output_file": str(final_binary),
                     "build_system": payload.build_system,
                     "source_obfuscation": obf_results,
                     "binaries_found": [str(b) for b in binaries],
+                    "report_paths": report_paths_dict,
                 }
 
             else:
@@ -962,7 +1043,9 @@ async def api_obfuscate_sync(
             result = obfuscator.obfuscate(source_path, config, job_id=job.job_id)
 
         job_manager.update_job(job.job_id, status="completed", result=result)
-        job_manager.attach_reports(job.job_id, result.get("report_paths", {}))
+        reports_to_attach = result.get("report_paths", {})
+        logger.info(f"[REPORT DEBUG] Attaching reports for job {job.job_id}: {reports_to_attach}")
+        job_manager.attach_reports(job.job_id, reports_to_attach)
 
         binary_path = Path(result.get("output_file", ""))
         if not binary_path.exists():

@@ -152,11 +152,8 @@ if [ "$should_obfuscate" = true ]; then
     done
 else
     # PASSTHROUGH - use bundled clang with system headers
+    # IMPORTANT: Pass arguments in original order to preserve -MT <value>, -MF <value> etc.
     log "Passthrough mode"
-    all_args=("${compile_args[@]}" "${link_args[@]}")
-    [ -n "$output_file" ] && all_args+=("-o" "$output_file")
-    for input in "${input_files[@]}"; do all_args+=("$input"); done
-
-    log "Executing: $CLANG $SYSTEM_HEADERS ${all_args[*]}"
-    exec $CLANG $SYSTEM_HEADERS "${all_args[@]}"
+    log "Executing: $CLANG $SYSTEM_HEADERS $*"
+    exec $CLANG $SYSTEM_HEADERS "$@"
 fi

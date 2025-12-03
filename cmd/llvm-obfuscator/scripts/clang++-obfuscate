@@ -102,9 +102,7 @@ if [ "$should_obfuscate" = true ]; then
         log "Success: $input -> $obj_file"
     done
 else
-    all_args=("${compile_args[@]}" "${link_args[@]}")
-    [ -n "$output_file" ] && all_args+=("-o" "$output_file")
-    for input in "${input_files[@]}"; do all_args+=("$input"); done
-    log "Passthrough: $CLANG $SYSTEM_HEADERS ${all_args[*]}"
-    exec $CLANG $SYSTEM_HEADERS "${all_args[@]}"
+    # PASSTHROUGH - preserve original argument order for -MT <value>, -MF <value> etc.
+    log "Passthrough: $CLANG $SYSTEM_HEADERS $*"
+    exec $CLANG $SYSTEM_HEADERS "$@"
 fi

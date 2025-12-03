@@ -478,11 +478,29 @@ class LLVMObfuscator:
             # If it's a .bc file, try to use llvm-dis to convert to text
             # Otherwise, read directly as text
             if ir_file.suffix == '.bc':
-                # Try to find llvm-dis
                 import shutil
                 import subprocess
 
-                llvm_dis = shutil.which("llvm-dis")
+                # Try to find LLVM 22 llvm-dis first (bundled with our LLVM 22 toolchain)
+                # System llvm-dis may be older (e.g., LLVM 19) and fail to read LLVM 22 bitcode
+                llvm_dis = None
+                bundled_llvm_dis_paths = [
+                    Path("/usr/local/llvm-obfuscator/bin/llvm-dis"),  # Docker production
+                    Path("/app/plugins/linux-x86_64/llvm-dis"),  # Docker backup
+                ]
+
+                for bundled_path in bundled_llvm_dis_paths:
+                    if bundled_path.exists():
+                        llvm_dis = str(bundled_path)
+                        self.logger.debug(f"Using bundled llvm-dis (LLVM 22): {llvm_dis}")
+                        break
+
+                # Fallback to system llvm-dis if no bundled version
+                if not llvm_dis:
+                    llvm_dis = shutil.which("llvm-dis")
+                    if llvm_dis:
+                        self.logger.debug(f"Using system llvm-dis: {llvm_dis}")
+
                 if llvm_dis:
                     # Use llvm-dis to convert .bc to .ll temporarily
                     temp_ll = ir_file.parent / f"{ir_file.stem}_temp.ll"
@@ -496,19 +514,17 @@ class LLVMObfuscator:
                         ir_content = temp_ll.read_text(encoding='utf-8', errors='ignore')
                         temp_ll.unlink()  # Clean up
                     except Exception as e:
-                        self.logger.warning(f"Failed to convert .bc to .ll: {e}")
-                        # Try to read as binary and search for patterns
-                        ir_bytes = ir_file.read_bytes()
-                        # Search for "invoke" and "landingpad" in binary
-                        has_invoke = b'invoke' in ir_bytes
-                        has_landingpad = b'landingpad' in ir_bytes
-                        return has_invoke or has_landingpad
+                        self.logger.warning(f"Failed to convert .bc to .ll with llvm-dis: {e}")
+                        # For C++ code with exception handling, assume it has EH
+                        # This is safer than letting flattening crash
+                        # Check file extension heuristics from source
+                        self.logger.warning("Assuming C++ exception handling is present (safer for flattening)")
+                        return True
                 else:
-                    # No llvm-dis, try to read as binary
-                    ir_bytes = ir_file.read_bytes()
-                    has_invoke = b'invoke' in ir_bytes
-                    has_landingpad = b'landingpad' in ir_bytes
-                    return has_invoke or has_landingpad
+                    # No llvm-dis available - assume C++ has EH to be safe
+                    self.logger.warning("No llvm-dis available to check for exception handling")
+                    self.logger.warning("Assuming C++ exception handling is present (safer for flattening)")
+                    return True
             else:
                 # Text IR file (.ll)
                 ir_content = ir_file.read_text(encoding='utf-8', errors='ignore')
@@ -519,10 +535,14 @@ class LLVMObfuscator:
             # Check for landingpad instructions (exception handlers)
             has_landingpad = ' landingpad ' in ir_content
 
+            if has_invoke or has_landingpad:
+                self.logger.info("C++ exception handling detected (invoke/landingpad found in IR)")
+
             return has_invoke or has_landingpad
         except Exception as e:
             self.logger.warning(f"Could not check for exception handling in IR: {e}")
-            return False
+            # Err on the side of caution - assume EH is present
+            return True
 
     def _compile(
         self,
@@ -763,12 +783,15 @@ class LLVMObfuscator:
                     opt_binary = Path("/usr/local/llvm-obfuscator/bin/opt")
                     self.logger.info("Using opt from Docker installation: %s", opt_binary)
 
-                    # IMPORTANT: Use ABSOLUTE PATH to system clang
-                    # Docker clang doesn't have LLVMgold.so needed for LTO linking
-                    # We use Docker opt for OLLVM passes, but system clang for final compilation
-                    # Must use /usr/bin/clang explicitly because /usr/local/llvm-obfuscator/bin is first in PATH
-                    compiler = "/usr/bin/clang++" if base_compiler == "clang++" else "/usr/bin/clang"
-                    self.logger.info("Using Docker opt for OLLVM passes, system clang (%s) for final compilation", compiler)
+                    # Use bundled LLVM 22 clang to ensure version compatibility with opt output
+                    # The bitcode produced by LLVM 22 opt uses attributes that older LLVM can't read
+                    docker_clang = Path("/usr/local/llvm-obfuscator/bin/clang")
+                    if docker_clang.exists():
+                        compiler = str(docker_clang)
+                        self.logger.info("Using bundled clang from Docker installation (LLVM 22): %s", compiler)
+                    else:
+                        compiler = "/usr/bin/clang++" if base_compiler == "clang++" else "/usr/bin/clang"
+                        self.logger.warning("Bundled clang not found, falling back to system clang (%s) - may have version mismatch", compiler)
                 # THIRD: Check if plugin is from LLVM build directory
                 elif "/llvm-project/build/lib/" in str(plugin_path_resolved):
                     # Plugin is from LLVM build, try to find opt and clang in same build

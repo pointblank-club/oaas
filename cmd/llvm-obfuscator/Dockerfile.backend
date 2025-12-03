@@ -83,11 +83,7 @@ RUN chmod +x /usr/local/llvm-obfuscator/bin/opt
 RUN chmod +x /usr/local/llvm-obfuscator/bin/clang-obfuscate
 RUN chmod +x /usr/local/llvm-obfuscator/bin/clang++-obfuscate
 
-# Apply UPX compression to reduce binary size and add additional obfuscation layer
-# Using --best for maximum compression (can take longer but provides better results)
-# Note: UPX may fail on some binaries (statically linked, etc) - using || true to continue
-RUN upx --best --lzma /usr/local/llvm-obfuscator/bin/clang.real 2>/dev/null || echo "UPX compression skipped for clang"
-RUN upx --best --lzma /usr/local/llvm-obfuscator/bin/opt 2>/dev/null || echo "UPX compression skipped for opt"
+# Note: UPX compression removed - binaries from GCP are uncompressed for faster execution
 # Fix incomplete bundled headers by copying missing file from system clang
 RUN cp /usr/lib/llvm-*/lib/clang/*/include/__stddef_header_macro.h \
        /usr/local/llvm-obfuscator/lib/clang/22/include/ || true

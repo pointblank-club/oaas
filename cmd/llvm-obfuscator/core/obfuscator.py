@@ -761,7 +761,8 @@ class LLVMObfuscator:
                 run_command(ir_cmd, cwd=source_abs.parent)
                 current_input = ir_file
 
-            # Check for exception handling incompatibility
+            # Check for C++ exception handling - Hikari approach
+            # Flattening crashes on EH, but other passes work fine
             if self._has_exception_handling(current_input):
                 if "flattening" in ollvm_passes:
                     warning_msg = (
@@ -806,19 +807,21 @@ class LLVMObfuscator:
             else:
                 raise ObfuscationError(f"OLLVM opt binary not found at {bundled_opt}")
 
-            # Apply OLLVM passes
-            obfuscated_ir = destination_abs.parent / f"{destination_abs.stem}_obfuscated.bc"
-            passes_pipeline = ",".join(ollvm_passes)
-            opt_cmd = [
-                str(opt_binary),
-                "-load-pass-plugin=" + str(plugin_path),
-                f"-passes={passes_pipeline}",
-                str(current_input),
-                "-o", str(obfuscated_ir)
-            ]
-            self.logger.info("Applying OLLVM passes via opt")
-            run_command(opt_cmd, cwd=source_abs.parent)
-            current_input = obfuscated_ir
+            # Only continue with OLLVM if we still have passes enabled
+            if ollvm_passes:
+                # Apply OLLVM passes
+                obfuscated_ir = destination_abs.parent / f"{destination_abs.stem}_obfuscated.bc"
+                passes_pipeline = ",".join(ollvm_passes)
+                opt_cmd = [
+                    str(opt_binary),
+                    "-load-pass-plugin=" + str(plugin_path),
+                    f"-passes={passes_pipeline}",
+                    str(current_input),
+                    "-o", str(obfuscated_ir)
+                ]
+                self.logger.info("Applying OLLVM passes via opt")
+                run_command(opt_cmd, cwd=source_abs.parent)
+                current_input = obfuscated_ir
 
         # Stage 3: Compile to binary
         self.logger.info("Compiling final IR to binary...")

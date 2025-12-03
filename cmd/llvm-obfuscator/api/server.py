@@ -1530,6 +1530,23 @@ async def github_repo_session_delete(session_id: str):
     return JSONResponse({"success": True, "message": "Session deleted"})
 
 
+@app.post("/api/github/repo/session/{session_id}")
+async def github_repo_session_cleanup_beacon(session_id: str):
+    """Cleanup repository session via sendBeacon (called on page unload).
+    
+    This endpoint accepts POST requests from navigator.sendBeacon() which is used
+    for reliable cleanup when the user closes or navigates away from the page.
+    """
+    success = cleanup_repo_session(session_id)
+    
+    # Don't raise error if session not found - it may have already been cleaned up
+    # Just log and return success to avoid errors in browser console
+    if not success:
+        logger.info(f"Session cleanup called but session not found: {session_id}")
+    
+    return JSONResponse({"success": True, "message": "Session cleanup completed"})
+
+
 @app.get("/api/flags")
 async def api_flags():
     # Expose the comprehensive flag list for UI selection

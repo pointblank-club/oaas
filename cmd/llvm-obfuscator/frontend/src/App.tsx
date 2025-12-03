@@ -313,7 +313,7 @@ function App() {
   const [pastedSource, setPastedSource] = useState('');
   const [selectedDemo, setSelectedDemo] = useState<string>('');
   const [jobId, setJobId] = useState<string | null>(null);
-  
+
   // GitHub integration state
   const [repoFiles, setRepoFiles] = useState<RepoFile[]>([]);
   const [selectedRepoFile, setSelectedRepoFile] = useState<RepoFile | null>(null);
@@ -322,6 +322,7 @@ function App() {
   const [repoSessionId, setRepoSessionId] = useState<string | null>(null);  // Fast clone session
   const [repoFileCount, setRepoFileCount] = useState<number>(0);  // File count from fast clone
   const [showGitHubModal, setShowGitHubModal] = useState(false);
+  const [loadingSession, setLoadingSession] = useState(false);  // Loading saved session
   const [downloadUrls, setDownloadUrls] = useState<Record<Platform, string | null>>({
     linux: null,
     windows: null,
@@ -399,6 +400,34 @@ function App() {
       .catch(() => setServerStatus('offline'));
   }, []);
 
+  // Restore session on mount
+  useEffect(() => {
+    const savedSessionId = sessionStorage.getItem('repoSessionId');
+    if (savedSessionId) {
+      setLoadingSession(true);
+      fetch(`/api/github/repo/session/${savedSessionId}`)
+        .then(res => {
+          if (res.ok) {
+            return res.json();
+          }
+          throw new Error('Session expired or not found');
+        })
+        .then(data => {
+          setRepoSessionId(data.session_id);
+          setRepoName(data.repo_name);
+          setRepoBranch(data.branch);
+          setRepoFileCount(data.file_count || 0);
+          setInputMode('github');
+          setLoadingSession(false);
+        })
+        .catch(err => {
+          console.log('No valid session to restore:', err);
+          sessionStorage.removeItem('repoSessionId');
+          setLoadingSession(false);
+        });
+    }
+  }, []);
+
   // Auto-detect language
   const detectLanguage = useCallback((filename: string, content?: string): 'c' | 'cpp' => {
     const ext = filename.toLowerCase().split('.').pop();
@@ -465,20 +494,23 @@ function App() {
     setRepoFiles([]);  // Clear any old files - we don't need them for fast clone
     setInputMode('github');
     setShowGitHubModal(false);
+
+    // Save session ID to sessionStorage for persistence across page refreshes
+    sessionStorage.setItem('repoSessionId', sessionId);
   }, []);
 
   // Helper function to parse errors into summary and details
   const parseErrorForDisplay = useCallback((error: string): { summary: string; details?: string } => {
     const lines = error.split('\n').filter(line => line.trim());
-    
+
     // Check for build failure pattern
     if (error.includes('Build failed:') || error.includes('Compilation failed')) {
-      const summaryLine = lines.find(l => 
-        l.includes('Build failed') || 
+      const summaryLine = lines.find(l =>
+        l.includes('Build failed') ||
         l.includes('Compilation failed') ||
         l.includes('error:')
       ) || lines[0];
-      
+
       // Extract a short summary
       let summary = 'Compilation failed';
       const errorMatch = error.match(/error:.*$/m);
@@ -487,13 +519,13 @@ function App() {
       } else if (summaryLine) {
         summary = summaryLine.slice(0, 100) + (summaryLine.length > 100 ? '...' : '');
       }
-      
+
       return {
         summary,
         details: lines.length > 1 ? error : undefined
       };
     }
-    
+
     // For other errors, use first line as summary if multi-line
     if (lines.length > 1) {
       return {
@@ -501,7 +533,7 @@ function App() {
         details: error
       };
     }
-    
+
     // Single line error - show as is if short, otherwise truncate with details
     if (error.length > 200) {
       return {
@@ -509,7 +541,7 @@ function App() {
         details: error
       };
     }
-    
+
     return { summary: error };
   }, []);
 
@@ -920,6 +952,11 @@ function App() {
       setBinaryName(customBinaryName);
       setProgress({ message: 'Complete!', percent: 100 });
 
+      // Clear session storage since backend cleaned up the session
+      if (repoSessionId) {
+        sessionStorage.removeItem('repoSessionId');
+      }
+
       // Show success modal
       setModal({
         type: 'success',
@@ -979,7 +1016,7 @@ function App() {
       showErrorModal('Obfuscation Failed', userFriendlyError);
     } finally {
       setLoading(false);
-      setProgress(null); 
+      setProgress(null);
     }
   }, [
     file, inputMode, pastedSource, obfuscationLevel, cycles, targetPlatform, entrypointCommand,
@@ -1036,7 +1073,7 @@ function App() {
               <p>{modal.message}</p>
               {modal.details && (
                 <div className="error-details-section">
-                  <button 
+                  <button
                     className="error-details-toggle"
                     onClick={() => setShowErrorDetails(!showErrorDetails)}
                   >
@@ -1127,7 +1164,13 @@ function App() {
             </div>
           )}
 
-          {inputMode === 'file' ? (
+          {loadingSession && (
+            <div style={{ padding: '20px', textAlign: 'center', color: 'var(--text-secondary)' }}>
+              <p>Restoring previous session...</p>
+            </div>
+          )}
+
+          {!loadingSession && inputMode === 'file' ? (
             <div className="file-input">
               <label className="file-label">
                 <input type="file" accept=".c,.cpp,.cc,.cxx,.txt" onChange={onPick} />
@@ -1135,7 +1178,7 @@ function App() {
               </label>
               {file && <span className="file-name">{file.name}</span>}
             </div>
-          ) : inputMode === 'paste' ? (
+          ) : !loadingSession && inputMode === 'paste' ? (
             <textarea
               className="code-input"
               placeholder="// Paste your C/C++ source code here..."
@@ -1144,7 +1187,7 @@ function App() {
               rows={20}
               style={{ minHeight: '400px', fontFamily: 'monospace', fontSize: '14px' }}
             />
-          ) : (
+          ) : !loadingSession ? (
             <div className="github-input">
               {/* Fast clone mode: files are on backend */}
               {repoSessionId ? (
@@ -1158,6 +1201,28 @@ function App() {
                     <p style={{ fontSize: '0.9em', color: 'var(--text-secondary)', marginTop: '3px' }}>
                       ℹ️ All C/C++ files will be compiled together into a single obfuscated binary
                     </p>
+                    <button
+                      className="clear-repo-btn"
+                      onClick={() => {
+                        setRepoSessionId(null);
+                        setRepoName('');
+                        setRepoBranch('');
+                        setRepoFileCount(0);
+                        sessionStorage.removeItem('repoSessionId');
+                      }}
+                      style={{
+                        marginTop: '10px',
+                        padding: '8px 16px',
+                        backgroundColor: 'var(--danger)',
+                        color: 'white',
+                        border: 'none',
+                        borderRadius: '4px',
+                        cursor: 'pointer',
+                        fontSize: '0.9em'
+                      }}
+                    >
+                      Clear Repository
+                    </button>
                   </div>
                   <div className="github-content">
                     <div className="file-preview" style={{ width: '100%' }}>
@@ -1217,7 +1282,7 @@ function App() {
                 </div>
               )}
             </div>
-          )}
+          ) : null}
         </section>
 
         {/* Layer Selection */}
@@ -1729,8 +1794,8 @@ function App() {
             onClick={onSubmit}
             disabled={loading || (
               inputMode === 'file' ? !file :
-              inputMode === 'paste' ? pastedSource.trim().length === 0 :
-              inputMode === 'github' ? (!repoSessionId && repoFiles.length === 0) : true
+                inputMode === 'paste' ? pastedSource.trim().length === 0 :
+                  inputMode === 'github' ? (!repoSessionId && repoFiles.length === 0) : true
             )}
           >
             {loading ? 'PROCESSING...' : '► OBFUSCATE'}

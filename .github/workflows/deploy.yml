@@ -45,13 +45,16 @@ jobs:
             echo "📦 Pulling latest images from Docker Hub..."
             docker compose pull
             
-            # Stop existing containers
-            echo "🛑 Stopping existing containers..."
-            docker compose down || true
+            # Stop and remove existing containers (force remove if needed)
+            echo "🛑 Stopping and removing existing containers..."
+            docker compose down --remove-orphans || true
+            
+            # Force remove any containers with conflicting names
+            docker rm -f llvm-obfuscator-backend llvm-obfuscator-frontend 2>/dev/null || true
             
             # Start new containers
             echo "🚀 Starting new containers..."
-            docker compose up -d
+            docker compose up -d --remove-orphans
             
             # Wait for services to start
             echo "⏳ Waiting for services to start..."

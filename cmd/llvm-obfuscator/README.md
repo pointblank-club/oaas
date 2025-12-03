@@ -78,6 +78,57 @@ Four powerful control-flow obfuscation techniques.
 
 **Note:** Plugins auto-detected for your platform (macOS, Linux, Windows)
 
+#### OLLVM Wrapper Scripts (Server Pipeline)
+
+For complex projects using CMake or Autotools, the server uses wrapper scripts that apply OLLVM passes via the `opt` tool:
+
+```
+Source.c
+    → Step 1: clang -emit-llvm -c → Source.bc (LLVM bitcode)
+    → Step 2: opt --passes=substitution,boguscf,split → Source_obf.bc
+    → Step 3: clang -c Source_obf.bc → Source.o (object file)
+```
+
+**Pipeline Diagram:**
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    clang-obfuscate wrapper                      │
+├─────────────────────────────────────────────────────────────────┤
+│  INPUT: source.c with compilation flags                        │
+│                                                                 │
+│  ┌─────────────────────────────────────────────────────────┐   │
+│  │  Is this a CMake try_compile test?                      │   │
+│  │  (Check path for CMakeFiles/CMakeScratch, etc.)         │   │
+│  └─────────────────────────────────────────────────────────┘   │
+│              │                              │                   │
+│            YES                             NO                   │
+│              │                              │                   │
+│              ▼                              ▼                   │
+│  ┌─────────────────────┐      ┌─────────────────────────────┐  │
+│  │  PASSTHROUGH MODE   │      │  OLLVM OBFUSCATION MODE     │  │
+│  │  clang.real $@      │      │                             │  │
+│  └─────────────────────┘      │  Step 1: Source → Bitcode   │  │
+│                               │  Step 2: Apply OLLVM passes │  │
+│                               │  Step 3: Bitcode → Object   │  │
+│                               └─────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Environment Variables:**
+
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `OLLVM_PASSES` | Comma-separated passes | `substitution,boguscf,split` |
+| `OLLVM_PLUGIN` | Path to LLVMObfuscationPlugin.so | `/usr/local/llvm-obfuscator/lib/LLVMObfuscationPlugin.so` |
+| `OLLVM_DEBUG` | Enable verbose logging | `1` |
+| `OLLVM_CFLAGS` | Additional compiler flags | `-O3 -fno-builtin` |
+
+**Recommended Passes for Complex Projects:**
+- ✅ `substitution` - Instruction substitution (stable)
+- ✅ `boguscf` - Bogus control flow (stable)
+- ✅ `split` - Split basic blocks (stable)
+- ⚠️ `flattening` - **AVOID** for complex projects (causes segfaults on code with complex switch statements)
+
 ### Layer 3: String Encryption
 Encrypts all string literals at compile time.
 
@@ -209,6 +260,7 @@ cd /path/to/llvm
 - Full docs: [OBFUSCATION_COMPLETE.md](../../OBFUSCATION_COMPLETE.md)
 - OLLVM fix: [OLLVM_INTEGRATION_FIX.md](../../OLLVM_INTEGRATION_FIX.md)
 - CLI guide: [CLAUDE.md](../../CLAUDE.md)
+- Curl test: [CURL_OBFUSCATION_TEST.md](../../docs/CURL_OBFUSCATION_TEST.md) - Real-world curl build with OLLVM
 
 ## License
 

@@ -28,7 +28,7 @@ from core import (
     analyze_binary,
 )
 from core.comparer import CompareConfig, compare_binaries
-from core.config import AdvancedConfiguration, PassConfiguration, SymbolObfuscationConfiguration
+from core.config import AdvancedConfiguration, PassConfiguration, SymbolObfuscationConfiguration, UPXConfiguration
 from core.exceptions import JobNotFoundError, ValidationError
 from core.job_manager import JobManager
 from core.progress import ProgressEvent, ProgressTracker
@@ -164,6 +164,7 @@ class ConfigModel(BaseModel):
     string_encryption: bool = False
     fake_loops: int = Field(0, ge=0, le=50)
     symbol_obfuscation: SymbolObfuscationModel = SymbolObfuscationModel()
+    upx: UPXModel = UPXModel()
 
 
 
@@ -172,6 +173,13 @@ class IndirectCallsModel(BaseModel):
     enabled: bool = False
     obfuscate_stdlib: bool = True
     obfuscate_custom: bool = True
+
+
+class UPXModel(BaseModel):
+    enabled: bool = False
+    compression_level: str = Field("best", pattern="^(fast|default|best|brute)$")
+    use_lzma: bool = True
+    preserve_original: bool = False
 
 
 class ObfuscateRequest(BaseModel):
@@ -314,11 +322,18 @@ def _build_config_from_request(payload: ObfuscateRequest, destination_dir: Path,
         prefix_style=payload.config.symbol_obfuscation.prefix_style,
         salt=payload.config.symbol_obfuscation.salt,
     )
+    upx_config = UPXConfiguration(
+        enabled=payload.config.upx.enabled,
+        compression_level=payload.config.upx.compression_level,
+        use_lzma=payload.config.upx.use_lzma,
+        preserve_original=payload.config.upx.preserve_original,
+    )
     advanced = AdvancedConfiguration(
         cycles=payload.config.cycles,
         string_encryption=payload.config.string_encryption,
         fake_loops=payload.config.fake_loops,
         symbol_obfuscation=symbol_obf,
+        upx_packing=upx_config,
     )
     # Auto-load plugin if passes are requested and no explicit plugin provided
     any_pass_requested = (

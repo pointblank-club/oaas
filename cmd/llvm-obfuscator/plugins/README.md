@@ -2,9 +2,9 @@
 
 This directory contains platform-specific LLVM 22 toolchain binaries.
 
-## ✅ Binaries Stored in Git via Git LFS
+## ✅ Binaries Stored in GCP Cloud Storage
 
-The binary files are **stored in git using Git LFS** (Large File Storage).
+The binary files are **stored in GCP Cloud Storage** to avoid Git LFS quota limits.
 
 **Binary files included:**
 - `opt` (57-60 MB) - LLVM optimizer with OLLVM passes
@@ -12,8 +12,8 @@ The binary files are **stored in git using Git LFS** (Large File Storage).
 - `LLVMObfuscationPlugin.{so,dylib,dll}` (116-150 KB) - Obfuscation plugin
 
 These files are:
-- ✅ **Stored in git via Git LFS** (no rebuild needed after clone)
-- ✅ **Automatically downloaded** when you clone the repo
+- ✅ **Stored in GCP Cloud Storage bucket** (`llvmbins`)
+- ✅ **Automatically downloaded** in CI/CD workflows
 - ✅ **Bundled in distribution packages** (wheels, pip packages)
 
 ## Directory Structure
@@ -119,22 +119,24 @@ pip install llvm-obfuscator
 
 The binaries are **automatically included** in the package. No manual building required!
 
-## Git LFS Setup
+## GCP Cloud Storage Setup
 
-GitHub has file size limits (100 MB max), so we use **Git LFS** for large binaries.
+GitHub has file size limits (100 MB max) and Git LFS has quota restrictions, so we use **GCP Cloud Storage** for large binaries.
 
-**What is Git LFS?**
-- Stores large files on GitHub's LFS servers
-- Git only stores small pointer files
-- Files download automatically on clone
-- No special commands needed for most operations
+**What is GCP Cloud Storage?**
+- Stores large files in Google Cloud Storage bucket (`llvmbins`)
+- No quota limits like Git LFS
+- Versioned storage with latest tag
+- Fast downloads in CI/CD workflows
 
 **Our binaries:**
-- `clang`: 117-123 MB ← Stored via LFS
-- `opt`: 57-60 MB ← Stored via LFS
-- `plugin`: 116-150 KB ← Stored via LFS
+- `clang`: 117-123 MB ← Stored in GCP Cloud Storage
+- `opt`: 57-60 MB ← Stored in GCP Cloud Storage
+- `plugin`: 116-150 KB ← Stored in GCP Cloud Storage
 
-**Solution:** Git LFS handles everything automatically!
+**Storage location:** `gs://llvmbins/llvm-binaries-linux-x86_64-{version}.tar.gz`
+
+**For CI/CD:** Binaries are automatically downloaded from GCP Cloud Storage in workflows using Google Cloud authentication.
 
 ## File Size Summary
 

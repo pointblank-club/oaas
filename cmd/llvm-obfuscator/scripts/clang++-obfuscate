@@ -69,10 +69,24 @@ done
 
 [ -n "$EXTRA_CFLAGS" ] && read -ra extra_flags <<< "$EXTRA_CFLAGS" && compile_args+=("${extra_flags[@]}")
 
+# Check if input is a CMake try_compile test (skip OLLVM for these - they're just feature detection)
+is_cmake_test=false
+for input in "${input_files[@]}"; do
+    if [[ "$input" == *"CMakeFiles/CMakeScratch"* ]] || \
+       [[ "$input" == *"CMakeFiles/CMakeTmp"* ]] || \
+       [[ "$input" == *"CMakeFiles/CheckTypeSize"* ]] || \
+       [[ "$input" == *"CMakeFiles/CheckSymbol"* ]] || \
+       [[ "$input" == *"CMakeFiles/CheckFunction"* ]]; then
+        is_cmake_test=true
+        log "Skipping OLLVM for CMake test file: $input"
+        break
+    fi
+done
+
 should_obfuscate=false
 if [ "$is_compile" = true ] && [ "$is_preprocess" = false ] && [ "$is_assemble_only" = false ] && \
-   [ "$emit_llvm" = false ] && [ "$skip_obfuscation" = false ] && [ -n "$PASSES" ] && \
-   [ -f "$PLUGIN" ] && [ ${#input_files[@]} -gt 0 ]; then
+   [ "$emit_llvm" = false ] && [ "$skip_obfuscation" = false ] && [ "$is_cmake_test" = false ] && \
+   [ -n "$PASSES" ] && [ -f "$PLUGIN" ] && [ ${#input_files[@]} -gt 0 ]; then
     should_obfuscate=true
 fi
 

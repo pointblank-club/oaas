@@ -705,19 +705,19 @@ class LLVMObfuscator:
                 self.logger.info("Step 1/3: Compiling to LLVM IR")
                 run_command(ir_cmd, cwd=source_abs.parent)
 
-                # Check for C++ exception handling (incompatible with ALL OLLVM passes)
+                # Check for C++ exception handling - Hikari approach
+                # Flattening crashes on EH, but other passes work fine
                 if self._has_exception_handling(ir_file):
-                    if enabled_passes:
+                    if "flattening" in enabled_passes:
                         warning_msg = (
                             "C++ exception handling detected in IR (invoke/landingpad instructions). "
-                            "ALL OLLVM passes are incompatible with C++ exception handling and will be disabled. "
-                            "This is a known limitation of OLLVM. "
-                            "Obfuscation will continue with compiler flags, string encryption, and symbol obfuscation only."
+                            "Flattening pass disabled for stability (known to crash on exception handling). "
+                            "Other OLLVM passes (substitution, boguscf, split) will still be applied."
                         )
                         self.logger.warning(warning_msg)
                         warnings.append(warning_msg)
-                        enabled_passes = []  # Disable ALL OLLVM passes
-                        actually_applied_passes = []  # No OLLVM passes applied
+                        enabled_passes = [p for p in enabled_passes if p != "flattening"]  # Remove only flattening
+                        actually_applied_passes = list(enabled_passes)  # Track remaining passes
 
                 # Only continue with OLLVM if we still have passes enabled
                 if not enabled_passes:

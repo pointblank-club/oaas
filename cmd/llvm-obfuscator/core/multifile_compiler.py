@@ -760,27 +760,44 @@ def compile_multifile_ir_workflow(
         logger.info(f"  ✓ File size: {unified_bc.stat().st_size} bytes")
     logger.info("━" * 80)
     
-    # Check for C++ exception handling in unified IR
+    # Check for C++ exception handling in unified IR - HIKARI APPROACH
+    # Only disable flattening, allow other passes (substitution, boguscf, split)
     if has_exception_handling_fn(unified_bc):
-        warning_msg = (
-            "C++ exception handling detected in unified IR (invoke/landingpad instructions). "
-            "ALL OLLVM passes are incompatible with C++ exception handling and will be disabled. "
-            "This is a known limitation of OLLVM. "
-            "Obfuscation will continue with compiler flags, string encryption, and symbol obfuscation only."
-        )
-        logger.warning(warning_msg)
-        warnings.append(warning_msg)
-        enabled_passes = []
-        actually_applied_passes = []
+        if "flattening" in enabled_passes:
+            warning_msg = (
+                "C++ exception handling detected in unified IR (invoke/landingpad instructions). "
+                "Flattening pass disabled for stability (known to crash on exception handling). "
+                "Other OLLVM passes (substitution, boguscf, split) will still be applied. "
+                "This is the Hikari-style exception-aware obfuscation approach."
+            )
+            logger.warning(warning_msg)
+            warnings.append(warning_msg)
+            
+            # Remove only flattening pass (Hikari approach)
+            original_passes = list(enabled_passes)
+            enabled_passes = [p for p in enabled_passes if p != "flattening"]
+            actually_applied_passes = list(enabled_passes)
+            
+            logger.info(f"  Original passes: {original_passes}")
+            logger.info(f"  After EH check: {enabled_passes}")
+            logger.info(f"  Disabled: flattening")
+        else:
+            # No flattening requested, proceed with all requested passes
+            logger.info("C++ exception handling detected, but flattening is not enabled. Proceeding with requested passes.")
+    
+    # If all passes were disabled (e.g., only flattening was requested), skip OLLVM
+    if not enabled_passes:
+        logger.warning("No OLLVM passes remaining after exception handling check. Compiling without OLLVM.")
+        warnings.append("No OLLVM passes applied (only flattening was requested, but it's incompatible with C++ exception handling)")
         
         # Fall back to standard compilation without OLLVM passes
-        # Compile unified.bc to binary
         command = [compiler, str(unified_bc), "-o", str(destination_abs)]
         
-        # Add linker flags
+        # Add linker flags (exclude LTO flags to avoid LLVMgold.so dependency)
         linker_flags = [
             flag for flag in compiler_flags
-            if flag.startswith('-Wl,') or flag in ['-lstdc++']
+            if (flag.startswith('-Wl,') or flag in ['-lstdc++']) 
+            and flag not in ['-flto', '-flto=thin', '-flto=full']
         ]
         command.extend(linker_flags)
         
@@ -803,7 +820,7 @@ def compile_multifile_ir_workflow(
         return {
             "applied_passes": actually_applied_passes,
             "warnings": warnings,
-            "disabled_passes": list(enabled_passes)
+            "disabled_passes": ["flattening"]
         }
     
     # STEP 5: Apply OLLVM passes using opt on unified.bc
@@ -855,6 +872,13 @@ def compile_multifile_ir_workflow(
     final_flags = [
         flag for flag in final_flags 
         if not flag.endswith(('.c', '.cpp', '.cc', '.cxx', '.c++'))
+    ]
+    
+    # Remove LTO flags (we're linking an already-obfuscated IR, LTO plugin not needed)
+    # LTO requires LLVMgold.so which may not be installed with custom LLVM builds
+    final_flags = [
+        flag for flag in final_flags
+        if flag not in ['-flto', '-flto=thin', '-flto=full']
     ]
     
     final_cmd = [compiler, str(obfuscated_bc), "-o", str(destination_abs)] + final_flags

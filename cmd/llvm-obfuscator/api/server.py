@@ -374,51 +374,83 @@ BUILD_COMMANDS = {
 
 
 def _setup_build_environment(config: ObfuscationConfig, plugin_path: Optional[str] = None) -> Dict[str, str]:
-    """Set up environment variables to hijack the build and inject obfuscation."""
-    env = os.environ.copy()
+    """Set up environment variables to hijack the build and inject obfuscation.
 
-    # Point to our clang
-    clang_path = shutil.which("clang") or "/usr/bin/clang"
-    clangpp_path = shutil.which("clang++") or "/usr/bin/clang++"
+    This function sets up the build environment for OLLVM obfuscation using a
+    wrapper script approach. The wrapper scripts (clang-obfuscate, clang++-obfuscate)
+    intercept compilation and apply OLLVM passes via `opt` tool.
+
+    The pipeline for each source file:
+    1. Compile to LLVM bitcode: clang -emit-llvm -c source.c -o source.bc
+    2. Apply OLLVM passes: opt --load-pass-plugin=... --passes=... source.bc -o source_obf.bc
+    3. Compile to object: clang -c source_obf.bc -o source.o
+    """
+    env = os.environ.copy()
 
     # Check for custom LLVM installation
     custom_llvm = Path("/usr/local/llvm-obfuscator/bin")
-    if custom_llvm.exists():
-        clang_path = str(custom_llvm / "clang")
-        clangpp_path = str(custom_llvm / "clang++")
 
-    env["CC"] = clang_path
-    env["CXX"] = clangpp_path
+    # Default paths
+    clang_path = str(custom_llvm / "clang") if custom_llvm.exists() else (shutil.which("clang") or "/usr/bin/clang")
+    clangpp_path = str(custom_llvm / "clang++") if custom_llvm.exists() else (shutil.which("clang++") or "/usr/bin/clang++")
 
-    # Build OLLVM flags based on enabled passes
-    ollvm_flags = []
-
+    # Build list of OLLVM passes to apply
+    ollvm_passes = []
     if plugin_path and Path(plugin_path).exists():
         if config.passes.flattening:
-            ollvm_flags.extend(["-mllvm", "-fla"])
+            ollvm_passes.append("flattening")
         if config.passes.substitution:
-            ollvm_flags.extend(["-mllvm", "-sub"])
+            ollvm_passes.append("substitution")
         if config.passes.bogus_control_flow:
-            ollvm_flags.extend(["-mllvm", "-bcf"])
+            ollvm_passes.append("boguscf")
         if config.passes.split:
-            ollvm_flags.extend(["-mllvm", "-split"])
+            ollvm_passes.append("split")
 
-        # Add plugin loading if any OLLVM passes enabled
-        if ollvm_flags:
-            plugin_flags = f"-Xclang -load -Xclang {plugin_path} " + " ".join(ollvm_flags)
+    # If OLLVM passes are enabled, use wrapper scripts
+    if ollvm_passes and plugin_path:
+        # Check for wrapper scripts
+        wrapper_clang = custom_llvm / "clang-obfuscate"
+        wrapper_clangpp = custom_llvm / "clang++-obfuscate"
+
+        if wrapper_clang.exists() and wrapper_clangpp.exists():
+            # Use wrapper scripts that apply OLLVM via opt
+            env["CC"] = str(wrapper_clang)
+            env["CXX"] = str(wrapper_clangpp)
+            env["OLLVM_PASSES"] = ",".join(ollvm_passes)
+            env["OLLVM_PLUGIN"] = plugin_path
+            # Enable debug logging for troubleshooting (can be disabled in production)
+            env["OLLVM_DEBUG"] = "1"
+            logger.info(f"Using OLLVM wrapper scripts with passes: {ollvm_passes}")
         else:
-            plugin_flags = ""
+            # Fallback: Use regular clang without OLLVM (wrappers not installed)
+            env["CC"] = clang_path
+            env["CXX"] = clangpp_path
+            logger.warning(f"OLLVM wrapper scripts not found at {wrapper_clang}, OLLVM passes will NOT be applied")
     else:
-        plugin_flags = ""
+        # No OLLVM passes - use regular clang
+        env["CC"] = clang_path
+        env["CXX"] = clangpp_path
 
-    # Add compiler flags from config
+    # Add Layer 4 compiler flags (optimization, stripping, etc.)
+    # These are passed via OLLVM_CFLAGS for the wrapper, or directly via CFLAGS
     layer4_flags = " ".join(config.compiler_flags) if config.compiler_flags else ""
 
-    env["CFLAGS"] = f"{plugin_flags} {layer4_flags}".strip()
-    env["CXXFLAGS"] = env["CFLAGS"]
+    if ollvm_passes:
+        # For wrapper mode: pass Layer 4 flags via OLLVM_CFLAGS
+        # The wrapper will add these to compilation commands
+        env["OLLVM_CFLAGS"] = layer4_flags
+        # CFLAGS should be minimal - just flags that need to be visible to build system
+        env["CFLAGS"] = ""
+        env["CXXFLAGS"] = ""
+    else:
+        # For non-OLLVM mode: pass all flags directly
+        env["CFLAGS"] = layer4_flags
+        env["CXXFLAGS"] = layer4_flags
 
-    # Also set LDFLAGS for linking
+    # LDFLAGS for linker (strip symbols, etc.)
     env["LDFLAGS"] = layer4_flags
+
+    logger.info(f"Build environment: CC={env.get('CC')}, OLLVM_PASSES={env.get('OLLVM_PASSES', 'none')}")
 
     return env
 

@@ -1,0 +1,2 @@
+1. ollvm code is in ../llvm-project under ollvm-integration branch -> llvm 22\
+2. Deployment is at oaas.pointblank.club -> we always test by deploying it to server using docker and testing using playwright end to end 

@@ -1,52 +1,73 @@
-name: Store LLVM Binaries in Release
+name: Store LLVM Binaries in GCP Cloud Storage
 
-# This workflow stores LLVM binaries as GitHub Release assets
+# This workflow stores LLVM binaries in GCP Cloud Storage bucket
 # Run this manually when binaries need to be updated
-# Releases provide permanent storage and versioning
+# GCP Storage provides permanent storage and versioning without Git LFS quota limits
 
 on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Release version (e.g., v1.0.0)"
+        description: "Binary version (e.g., v1.0.0)"
         required: true
         default: "v1.0.0"
       source:
-        description: "Source of binaries (lfs, local)"
+        description: "Source of binaries (local, gcp)"
         required: true
-        default: "lfs"
+        default: "local"
         type: choice
         options:
-          - lfs
           - local
-      create_release:
-        description: "Create new release (or update existing)"
-        required: true
-        default: "true"
-        type: choice
-        options:
-          - "true"
-          - "false"
+          - gcp
+
+env:
+  GCP_BUCKET: llvmbins
+  GCP_REGION: asia-south2
 
 jobs:
   store-binaries:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     permissions:
-      contents: write
+      contents: read
     
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
       with:
-        lfs: ${{ github.event.inputs.source == 'lfs' }}
+        lfs: false
 
-    - name: Pull Git LFS files (if using LFS source)
-      if: github.event.inputs.source == 'lfs'
-      continue-on-error: true
+    - name: Authenticate to Google Cloud
+      uses: google-github-actions/auth@v2
+      with:
+        credentials_json: ${{ secrets.GCP_SERVICE_ACCOUNT_KEY }}
+
+    - name: Set up Cloud SDK
+      uses: google-github-actions/setup-gcloud@v2
+
+    - name: Download binaries from GCP (if using GCP source)
+      if: github.event.inputs.source == 'gcp'
       run: |
-        echo "Attempting to pull from LFS..."
-        git lfs pull || echo "LFS pull failed, will use existing files if available"
+        echo "=========================================="
+        echo "Downloading binaries from GCP Cloud Storage"
+        echo "=========================================="
+        
+        VERSION="${{ github.event.inputs.version }}"
+        mkdir -p cmd/llvm-obfuscator/plugins/linux-x86_64
+        
+        # Download archive from GCP
+        gsutil cp "gs://${GCP_BUCKET}/llvm-binaries-linux-x86_64-${VERSION}.tar.gz" /tmp/llvm-binaries.tar.gz || {
+          echo "⚠️  No existing binaries found for version ${VERSION}, will use local files if available"
+          exit 0
+        }
+        
+        # Extract archive
+        cd cmd/llvm-obfuscator/plugins/
+        tar -xzf /tmp/llvm-binaries.tar.gz
+        rm /tmp/llvm-binaries.tar.gz
+        cd ../../../
+        
+        echo "✅ Binaries downloaded from GCP"
 
     - name: Prepare binaries for upload
       run: |
@@ -62,7 +83,7 @@ jobs:
           file cmd/llvm-obfuscator/plugins/linux-x86_64/clang | grep -q "ELF" && {
             cp cmd/llvm-obfuscator/plugins/linux-x86_64/clang binaries-artifact/linux-x86_64/clang
             echo "✅ Copied clang binary"
-          } || echo "⚠️  clang exists but is LFS pointer"
+          } || echo "⚠️  clang exists but is not a valid ELF binary"
         else
           echo "⚠️  clang binary not found"
         fi
@@ -71,7 +92,7 @@ jobs:
           file cmd/llvm-obfuscator/plugins/linux-x86_64/opt | grep -q "ELF" && {
             cp cmd/llvm-obfuscator/plugins/linux-x86_64/opt binaries-artifact/linux-x86_64/opt
             echo "✅ Copied opt binary"
-          } || echo "⚠️  opt exists but is LFS pointer"
+          } || echo "⚠️  opt exists but is not a valid ELF binary"
         else
           echo "⚠️  opt binary not found"
         fi
@@ -80,7 +101,7 @@ jobs:
           file cmd/llvm-obfuscator/plugins/linux-x86_64/LLVMObfuscationPlugin.so | grep -q "shared object" && {
             cp cmd/llvm-obfuscator/plugins/linux-x86_64/LLVMObfuscationPlugin.so binaries-artifact/linux-x86_64/LLVMObfuscationPlugin.so
             echo "✅ Copied plugin binary"
-          } || echo "⚠️  plugin exists but is LFS pointer"
+          } || echo "⚠️  plugin exists but is not a valid shared object"
         else
           echo "⚠️  plugin binary not found"
         fi
@@ -105,7 +126,7 @@ jobs:
           exit 1
         fi
 
-    - name: Create release archive
+    - name: Create archive
       run: |
         cd binaries-artifact
         tar -czf ../llvm-binaries-linux-x86_64.tar.gz linux-x86_64/
@@ -113,127 +134,55 @@ jobs:
         echo "Archive created: llvm-binaries-linux-x86_64.tar.gz"
         ls -lh llvm-binaries-linux-x86_64.tar.gz
 
-    - name: Check if release exists
-      id: check-release
-      uses: actions/github-script@v7
-      with:
-        github-token: ${{ secrets.GITHUB_TOKEN }}
-        script: |
-          const version = '${{ github.event.inputs.version }}';
-          try {
-            const { data: release } = await github.rest.repos.getReleaseByTag({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              tag: version
-            });
-            core.setOutput('exists', 'true');
-            core.setOutput('release-id', release.id.toString());
-            console.log(`Release ${version} already exists (ID: ${release.id})`);
-          } catch (error) {
-            if (error.status === 404) {
-              core.setOutput('exists', 'false');
-              console.log(`Release ${version} does not exist, will create new`);
-            } else {
-              throw error;
-            }
-          }
-
-    - name: Create or get release
-      id: release
-      uses: actions/github-script@v7
-      with:
-        github-token: ${{ secrets.GITHUB_TOKEN }}
-        script: |
-          const version = '${{ github.event.inputs.version }}';
-          const createNew = '${{ github.event.inputs.create_release }}' === 'true';
-          const releaseExists = '${{ steps.check-release.outputs.exists }}' === 'true';
-          
-          if (releaseExists && !createNew) {
-            // Use existing release
-            const { data: release } = await github.rest.repos.getReleaseByTag({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              tag: version
-            });
-            core.setOutput('id', release.id.toString());
-            core.setOutput('upload-url', release.upload_url);
-            console.log(`Using existing release ${version} (ID: ${release.id})`);
-          } else {
-            // Create new release
-            const { data: release } = await github.rest.repos.createRelease({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              tag_name: version,
-              name: `LLVM Binaries ${version}`,
-              body: `Custom LLVM obfuscator binaries for Linux x86_64\n\n**Version:** ${version}\n**Platform:** linux-x86_64\n**Created:** ${new Date().toISOString()}\n\nThis release contains the custom LLVM toolchain binaries required for the obfuscator.`,
-              draft: false,
-              prerelease: false
-            });
-            core.setOutput('id', release.id.toString());
-            core.setOutput('upload-url', release.upload_url);
-            console.log(`Created new release ${version} (ID: ${release.id})`);
-          }
-
-    - name: Upload binaries to release
-      uses: actions/github-script@v7
-      with:
-        github-token: ${{ secrets.GITHUB_TOKEN }}
-        script: |
-          const fs = require('fs');
-          const path = require('path');
-          
-          const releaseId = '${{ steps.release.outputs.id }}';
-          const archivePath = 'llvm-binaries-linux-x86_64.tar.gz';
-          const archiveName = path.basename(archivePath);
-          
-          // Check if asset already exists and delete it
-          try {
-            const { data: assets } = await github.rest.repos.listReleaseAssets({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              release_id: parseInt(releaseId)
-            });
-            
-            const existingAsset = assets.find(a => a.name === archiveName);
-            if (existingAsset) {
-              console.log(`Deleting existing asset: ${archiveName}`);
-              await github.rest.repos.deleteReleaseAsset({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                asset_id: existingAsset.id
-              });
-            }
-          } catch (error) {
-            console.log('No existing assets to delete or error checking:', error.message);
-          }
-          
-          // Upload new asset
-          const archiveData = fs.readFileSync(archivePath);
-          const archiveSize = archiveData.length;
-          
-          console.log(`Uploading ${archiveName} (${(archiveSize / 1024 / 1024).toFixed(2)} MB)...`);
-          
-          await github.rest.repos.uploadReleaseAsset({
-            owner: context.repo.owner,
-            repo: context.repo.repo,
-            release_id: parseInt(releaseId),
-            name: archiveName,
-            data: archiveData
-          });
-          
-          console.log(`✅ Successfully uploaded ${archiveName} to release`);
+    - name: Upload binaries to GCP Cloud Storage
+      run: |
+        echo "=========================================="
+        echo "Uploading binaries to GCP Cloud Storage"
+        echo "=========================================="
+        
+        VERSION="${{ github.event.inputs.version }}"
+        ARCHIVE_NAME="llvm-binaries-linux-x86_64-${VERSION}.tar.gz"
+        ARCHIVE_PATH="llvm-binaries-linux-x86_64.tar.gz"
+        
+        # Rename archive with version
+        cp "${ARCHIVE_PATH}" "${ARCHIVE_NAME}"
+        
+        # Upload to GCP bucket
+        echo "Uploading ${ARCHIVE_NAME} to gs://${GCP_BUCKET}/..."
+        gsutil cp "${ARCHIVE_NAME}" "gs://${GCP_BUCKET}/${ARCHIVE_NAME}"
+        
+        # Also upload as latest (for convenience)
+        echo "Uploading as latest version..."
+        gsutil cp "${ARCHIVE_NAME}" "gs://${GCP_BUCKET}/llvm-binaries-linux-x86_64-latest.tar.gz"
+        
+        # Set metadata
+        gsutil -m setmeta -h "Content-Type:application/gzip" \
+          -h "Cache-Control:public, max-age=3600" \
+          "gs://${GCP_BUCKET}/${ARCHIVE_NAME}" \
+          "gs://${GCP_BUCKET}/llvm-binaries-linux-x86_64-latest.tar.gz"
+        
+        echo "✅ Successfully uploaded binaries to GCP Cloud Storage"
+        echo "   Versioned: gs://${GCP_BUCKET}/${ARCHIVE_NAME}"
+        echo "   Latest: gs://${GCP_BUCKET}/llvm-binaries-linux-x86_64-latest.tar.gz"
+        
+        # List uploaded files
+        echo ""
+        echo "Files in bucket:"
+        gsutil ls -lh "gs://${GCP_BUCKET}/llvm-binaries-linux-x86_64-*.tar.gz" || true
 
     - name: Summary
       run: |
         echo "=========================================="
-        echo "✅ Binaries stored in release successfully"
+        echo "✅ Binaries stored in GCP Cloud Storage successfully"
         echo "=========================================="
         echo ""
-        echo "Release version: ${{ github.event.inputs.version }}"
-        echo "Asset: llvm-binaries-linux-x86_64.tar.gz"
+        echo "Version: ${{ github.event.inputs.version }}"
+        echo "Bucket: ${GCP_BUCKET}"
+        echo "Region: ${GCP_REGION}"
         echo ""
         echo "Binaries can now be downloaded in workflows from:"
-        echo "  https://github.com/${{ github.repository }}/releases/tag/${{ github.event.inputs.version }}"
+        echo "  gs://${GCP_BUCKET}/llvm-binaries-linux-x86_64-${{ github.event.inputs.version }}.tar.gz"
+        echo "  gs://${GCP_BUCKET}/llvm-binaries-linux-x86_64-latest.tar.gz"
         echo ""
         echo "This bypasses Git LFS quota limits and provides versioning!"
 

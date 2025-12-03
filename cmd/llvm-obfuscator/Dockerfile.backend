@@ -65,21 +65,28 @@ RUN mkdir -p /usr/local/llvm-obfuscator/bin
 RUN mkdir -p /usr/local/llvm-obfuscator/lib
 
 # Copy custom LLVM binaries and plugins
-COPY plugins/linux-x86_64/clang /usr/local/llvm-obfuscator/bin/clang
+COPY plugins/linux-x86_64/clang /usr/local/llvm-obfuscator/bin/clang.real
 COPY plugins/linux-x86_64/opt /usr/local/llvm-obfuscator/bin/opt
 COPY plugins/linux-x86_64/LLVMObfuscationPlugin.so /usr/local/llvm-obfuscator/lib/
 COPY plugins/linux-x86_64/lib/libLLVM.so.22.0git /usr/local/llvm-obfuscator/lib/
 COPY plugins/linux-x86_64/lib/clang/22 /usr/local/llvm-obfuscator/lib/clang/22
 
+# Copy OLLVM wrapper scripts (these apply OLLVM passes via opt tool)
+COPY scripts/clang-obfuscate /usr/local/llvm-obfuscator/bin/clang-obfuscate
+COPY scripts/clang++-obfuscate /usr/local/llvm-obfuscator/bin/clang++-obfuscate
+# Create symlink for clang (wrapper scripts reference clang.real)
+RUN ln -sf /usr/local/llvm-obfuscator/bin/clang.real /usr/local/llvm-obfuscator/bin/clang
 
 # Make binaries executable
-RUN chmod +x /usr/local/llvm-obfuscator/bin/clang
+RUN chmod +x /usr/local/llvm-obfuscator/bin/clang.real
 RUN chmod +x /usr/local/llvm-obfuscator/bin/opt
+RUN chmod +x /usr/local/llvm-obfuscator/bin/clang-obfuscate
+RUN chmod +x /usr/local/llvm-obfuscator/bin/clang++-obfuscate
 
 # Apply UPX compression to reduce binary size and add additional obfuscation layer
 # Using --best for maximum compression (can take longer but provides better results)
 # Note: UPX may fail on some binaries (statically linked, etc) - using || true to continue
-RUN upx --best --lzma /usr/local/llvm-obfuscator/bin/clang 2>/dev/null || echo "UPX compression skipped for clang"
+RUN upx --best --lzma /usr/local/llvm-obfuscator/bin/clang.real 2>/dev/null || echo "UPX compression skipped for clang"
 RUN upx --best --lzma /usr/local/llvm-obfuscator/bin/opt 2>/dev/null || echo "UPX compression skipped for opt"
 # Fix incomplete bundled headers by copying missing file from system clang
 RUN cp /usr/lib/llvm-*/lib/clang/*/include/__stddef_header_macro.h \

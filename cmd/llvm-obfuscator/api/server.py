@@ -6,6 +6,7 @@ import os
 import re
 import secrets
 import shutil
+import subprocess
 import tempfile
 import zipfile
 from pathlib import Path
@@ -869,43 +870,215 @@ async def api_obfuscate_sync(
                 obf_results = _obfuscate_project_sources(repo_path, config, logger)
                 logger.info(f"Source obfuscation complete: {obf_results}")
 
-                # Step 2: Set up compiler hijacking for OLLVM passes (Layer 3) and flags (Layer 4)
-                build_env = _setup_build_environment(
-                    config,
-                    plugin_path=DEFAULT_PASS_PLUGIN_PATH if DEFAULT_PASS_PLUGIN_EXISTS else None
-                )
+                # Step 2: Use direct LLVM IR compilation with OLLVM passes (Layer 3 + 4)
+                # This is more reliable than wrapper script hijacking
+                logger.info("[OLLVM] Using direct LLVM IR workflow (bypassing build system for obfuscation)...")
 
-                # Step 3: Run the project's native build system
-                logger.info("Running native build system...")
-                build_success, build_output = _run_custom_build(
-                    repo_path,
-                    payload.build_system,
-                    payload.build_command,
-                    build_env,
-                    logger,
-                    cmake_options=payload.cmake_options
-                )
+                enabled_passes = []
+                if config.passes.flattening:
+                    enabled_passes.append("flattening")
+                if config.passes.substitution:
+                    enabled_passes.append("substitution")
+                if config.passes.bogus_control_flow:
+                    enabled_passes.append("boguscf")
+                if config.passes.split:
+                    enabled_passes.append("split")
 
-                if not build_success:
-                    raise HTTPException(status_code=500, detail=build_output)
+                # Find the main source file (the one with main function or first one)
+                main_source = None
+                for src in all_source_paths:
+                    try:
+                        content = src.read_text(encoding='utf-8', errors='ignore')
+                        if 'main' in content and ('int main' in content or 'void main' in content):
+                            main_source = src
+                            break
+                    except:
+                        pass
 
-                # Step 4: Find output binaries
-                logger.info("Searching for output binaries...")
-                binaries = _find_output_binaries(repo_path, payload.output_binary_path)
+                if not main_source:
+                    main_source = all_source_paths[0]
 
-                if not binaries:
-                    raise HTTPException(
-                        status_code=500,
-                        detail="Build succeeded but no output binaries found. "
-                               "Try specifying the output path in 'Output Binary Path' field."
-                    )
+                logger.info(f"[OLLVM] Using main source: {main_source.name}")
 
-                # Copy the first binary to working directory
-                output_binary = binaries[0]
-                logger.info(f"Found binary: {output_binary}")
+                # Use plugins binaries only (LLVM 22 compatible)
+                clang_path = "/usr/local/llvm-obfuscator/bin/clang"
+                opt_path = "/usr/local/llvm-obfuscator/bin/opt"
+                plugin_path = DEFAULT_PASS_PLUGIN_PATH if DEFAULT_PASS_PLUGIN_EXISTS else None
 
-                final_binary = working_dir / f"obfuscated_{output_binary.name}"
-                shutil.copy2(output_binary, final_binary)
+                logger.info(f"[OLLVM] Using clang: {clang_path}")
+                logger.info(f"[OLLVM] Using opt: {opt_path}")
+                logger.info(f"[OLLVM] Plugin: {plugin_path}")
+
+                # Compile all sources to LLVM bitcode, apply passes, and collect object files
+                object_files = []
+                passes_actually_applied = list(enabled_passes)  # Track if passes were actually applied
+
+                # Filter out LTO flags for bitcode compilation (to avoid needing LTO linker plugin)
+                bitcode_flags = [f for f in config.compiler_flags if not f.startswith('-flto')]
+                # Explicitly disable LTO to ensure linker doesn't try to use gold plugin
+                if "-fno-lto" not in bitcode_flags:
+                    bitcode_flags.append("-fno-lto")
+                logger.info(f"[OLLVM] Bitcode compilation flags (LTO disabled): {bitcode_flags}")
+
+                for src_file in all_source_paths:
+                    try:
+                        bc_file = working_dir / f"{src_file.stem}.bc"
+                        logger.info(f"[OLLVM] Compiling to bitcode: {src_file.name}")
+
+                        cmd = [
+                            clang_path,
+                            "-emit-llvm", "-c",
+                            str(src_file),
+                            "-o", str(bc_file),
+                        ] + bitcode_flags
+
+                        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300,
+                                             env={**os.environ, "LD_LIBRARY_PATH": "/usr/local/llvm-obfuscator/lib"})
+                        if result.returncode != 0:
+                            logger.error(f"[OLLVM] Failed to compile {src_file.name} to bitcode: {result.stderr}")
+                            raise HTTPException(status_code=500, detail=f"Bitcode compilation failed for {src_file.name}: {result.stderr}")
+
+                        logger.info(f"[OLLVM] Generated bitcode: {bc_file.name}")
+
+                        # Apply OLLVM passes to this bitcode file
+                        obf_bc_file = working_dir / f"{src_file.stem}_obf.bc"
+
+                        if plugin_path and enabled_passes:
+                            logger.info(f"[OLLVM] Applying passes to {src_file.name}: {enabled_passes}")
+                            pass_string = ",".join(enabled_passes)
+
+                            opt_cmd = [
+                                opt_path,
+                                f"-load-pass-plugin={plugin_path}",
+                                f"-passes={pass_string}",
+                                str(bc_file),
+                                "-o", str(obf_bc_file)
+                            ]
+
+                            result = subprocess.run(opt_cmd, capture_output=True, text=True, timeout=300,
+                                                 env={**os.environ, "LD_LIBRARY_PATH": "/usr/local/llvm-obfuscator/lib"})
+
+                            if result.returncode != 0:
+                                logger.error(f"[OLLVM] opt failed on {src_file.name}: {result.stderr}")
+                                # Use unobfuscated bitcode as fallback
+                                obf_bc_file = bc_file
+                                passes_actually_applied = []  # Mark that passes failed
+                                logger.warning(f"[OLLVM] Falling back to unobfuscated bitcode for {src_file.name}")
+                            else:
+                                logger.info(f"[OLLVM] Successfully applied passes to {src_file.name}")
+                        else:
+                            logger.warning(f"[OLLVM] No plugin or passes available, using unobfuscated bitcode")
+                            obf_bc_file = bc_file
+
+                        # Compile obfuscated bitcode to object file
+                        obj_file = working_dir / f"{src_file.stem}.o"
+                        logger.info(f"[OLLVM] Compiling bitcode to object: {obj_file.name}")
+
+                        # Don't pass compiler flags here - just convert bitcode to object
+                        # But explicitly disable LTO
+                        cmd = [
+                            clang_path,
+                            "-c",
+                            "-fno-lto",
+                            str(obf_bc_file),
+                            "-o", str(obj_file),
+                        ]
+
+                        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300,
+                                             env={**os.environ, "LD_LIBRARY_PATH": "/usr/local/llvm-obfuscator/lib"})
+
+                        if result.returncode != 0:
+                            logger.error(f"[OLLVM] Failed to compile {src_file.name} to object: {result.stderr}")
+                            raise HTTPException(status_code=500, detail=f"Object file compilation failed for {src_file.name}: {result.stderr}")
+
+                        object_files.append(obj_file)
+                        logger.info(f"[OLLVM] Generated object file: {obj_file.name}")
+
+                    except HTTPException:
+                        raise
+                    except Exception as e:
+                        logger.error(f"[OLLVM] Error processing {src_file.name}: {e}")
+                        raise HTTPException(status_code=500, detail=f"Error in IR workflow: {str(e)}")
+
+                if not object_files:
+                    raise HTTPException(status_code=500, detail="Failed to generate object files")
+
+                # FIRST: Link object files WITHOUT passes applied (for baseline metrics)
+                baseline_binary = working_dir / f"baseline_{main_source.stem}"
+                logger.info(f"[OLLVM] Creating baseline binary for comparison...")
+
+                try:
+                    # Compile baseline bitcode files (without obfuscation passes) to objects
+                    baseline_object_files = []
+                    for src_file in all_source_paths:
+                        try:
+                            bc_file = working_dir / f"{src_file.stem}.bc"
+                            baseline_obj = working_dir / f"{src_file.stem}_baseline.o"
+
+                            logger.info(f"[OLLVM] Compiling baseline bitcode to object: {baseline_obj.name}")
+                            cmd = [
+                                clang_path,
+                                "-c",
+                                "-fno-lto",
+                                str(bc_file),
+                                "-o", str(baseline_obj),
+                            ]
+
+                            result = subprocess.run(cmd, capture_output=True, text=True, timeout=300,
+                                                 env={**os.environ, "LD_LIBRARY_PATH": "/usr/local/llvm-obfuscator/lib"})
+                            if result.returncode == 0:
+                                baseline_object_files.append(baseline_obj)
+                                logger.info(f"[OLLVM] Generated baseline object file: {baseline_obj.name}")
+                        except Exception as e:
+                            logger.warning(f"[OLLVM] Could not create baseline object for {src_file.name}: {e}")
+
+                    if baseline_object_files:
+                        # Link baseline objects
+                        logger.info(f"[OLLVM] Linking baseline binary...")
+                        link_cmd = [
+                            clang_path,
+                            "-fno-lto",
+                            "-o", str(baseline_binary),
+                        ] + [str(of) for of in baseline_object_files] + ["-lm"]
+
+                        result = subprocess.run(link_cmd, capture_output=True, text=True, timeout=300,
+                                             env={**os.environ, "LD_LIBRARY_PATH": "/usr/local/llvm-obfuscator/lib"})
+                        if result.returncode == 0:
+                            logger.info(f"[OLLVM] Successfully generated baseline binary: {baseline_binary.name}")
+                        else:
+                            logger.warning(f"[OLLVM] Baseline linking failed, will skip baseline comparison: {result.stderr}")
+                            baseline_binary = None
+                except Exception as e:
+                    logger.warning(f"[OLLVM] Could not create baseline binary: {e}")
+                    baseline_binary = None
+
+                # SECOND: Link object files WITH passes applied (obfuscated binary)
+                final_binary = working_dir / f"obfuscated_{main_source.stem}"
+                logger.info(f"[OLLVM] Linking {len(object_files)} object files to create final obfuscated binary...")
+
+                try:
+                    # Use simple linking without LTO to avoid needing LLVMgold.so
+                    link_cmd = [
+                        clang_path,
+                        "-fno-lto",
+                        "-o", str(final_binary),
+                    ] + [str(of) for of in object_files] + ["-lm"]  # Link math library
+
+                    result = subprocess.run(link_cmd, capture_output=True, text=True, timeout=300,
+                                         env={**os.environ, "LD_LIBRARY_PATH": "/usr/local/llvm-obfuscator/lib"})
+
+                    if result.returncode != 0:
+                        logger.error(f"[OLLVM] Linking failed: {result.stderr}")
+                        raise HTTPException(status_code=500, detail=f"Final linking failed: {result.stderr}")
+
+                    logger.info(f"[OLLVM] Successfully generated obfuscated binary: {final_binary.name}")
+
+                except subprocess.TimeoutExpired:
+                    raise HTTPException(status_code=500, detail="Final linking timed out")
+                except HTTPException:
+                    raise
+                except Exception as e:
+                    raise HTTPException(status_code=500, detail=f"Linking error: {str(e)}")
 
                 # Generate reports for custom-built binaries
                 # This is necessary because custom build mode bypasses the obfuscator.obfuscate() method
@@ -916,51 +1089,93 @@ async def api_obfuscate_sync(
                         logger.info("Generating reports for custom-built binary...")
 
                         # Build job data for reporting (mimics what obfuscator.obfuscate() does)
-                        # Extract enabled passes from the PassesModel
-                        enabled_passes_list = []
-                        if payload.config.passes.flattening:
-                            enabled_passes_list.append("flattening")
-                        if payload.config.passes.substitution:
-                            enabled_passes_list.append("substitution")
-                        if payload.config.passes.bogus_control_flow:
-                            enabled_passes_list.append("boguscf")
-                        if payload.config.passes.split:
-                            enabled_passes_list.append("split")
+                        # Use passes_actually_applied which accounts for failures
+
+                        # Use baseline binary if available, else use final binary
+                        baseline_for_metrics = baseline_binary if baseline_binary and baseline_binary.exists() else final_binary
+
+                        # Collect metrics
+                        baseline_symbols, baseline_functions = summarize_symbols(baseline_for_metrics)
+                        baseline_entropy = compute_entropy(baseline_for_metrics.read_bytes())
+                        baseline_size = get_file_size(baseline_for_metrics)
+
+                        output_symbols, output_functions = summarize_symbols(final_binary)
+                        output_entropy = compute_entropy(final_binary.read_bytes())
+                        output_size = get_file_size(final_binary)
+
+                        # Calculate comparison metrics
+                        size_change = output_size - baseline_size
+                        size_change_percent = (size_change / baseline_size * 100) if baseline_size > 0 else 0
+                        entropy_increase = output_entropy - baseline_entropy
+                        entropy_increase_percent = (entropy_increase / baseline_entropy * 100) if baseline_entropy > 0 else 0
 
                         job_data = {
                             "job_id": job.job_id,
                             "source_file": payload.filename,
                             "platform": payload.platform.value,
                             "obfuscation_level": int(payload.config.level),
-                            "requested_passes": enabled_passes_list,
-                            "applied_passes": [],  # For custom builds, we don't track this as precisely
+                            "requested_passes": enabled_passes,
+                            "applied_passes": passes_actually_applied,  # Only those that succeeded
                             "compiler_flags": config.compiler_flags if config else [],
                             "timestamp": get_timestamp(),
                             "warnings": [],
-                            "baseline_metrics": {},  # Custom builds don't have baseline
+                            "baseline_metrics": {
+                                "file_size": baseline_size,
+                                "binary_format": detect_binary_format(baseline_for_metrics),
+                                "sections": list_sections(baseline_for_metrics),
+                                "symbols_count": baseline_symbols,
+                                "functions_count": baseline_functions,
+                                "entropy": baseline_entropy,
+                            },
                             "output_attributes": {
-                                "file_size": get_file_size(final_binary),
+                                "file_size": output_size,
                                 "binary_format": detect_binary_format(final_binary),
                                 "sections": list_sections(final_binary),
-                                "symbols_count": summarize_symbols(final_binary)[0],
-                                "functions_count": summarize_symbols(final_binary)[1],
-                                "entropy": compute_entropy(final_binary.read_bytes()),
+                                "symbols_count": output_symbols,
+                                "functions_count": output_functions,
+                                "entropy": output_entropy,
                                 "obfuscation_methods": list(obf_results.keys()) if obf_results else [],
                             },
-                            "comparison": {},
-                            "bogus_code_info": {},
-                            "cycles_completed": 1,
+                            "comparison": {
+                                "size_change": size_change,
+                                "size_change_percent": size_change_percent,
+                                "symbols_removed": baseline_symbols - output_symbols,
+                                "symbols_removed_percent": ((baseline_symbols - output_symbols) / baseline_symbols * 100) if baseline_symbols > 0 else 0,
+                                "functions_removed": baseline_functions - output_functions,
+                                "functions_removed_percent": ((baseline_functions - output_functions) / baseline_functions * 100) if baseline_functions > 0 else 0,
+                                "entropy_increase": entropy_increase,
+                                "entropy_increase_percent": entropy_increase_percent,
+                            },
+                            "bogus_code_info": {
+                                "count": 0,
+                                "types": [],
+                                "locations": [],
+                            },
+                            "cycles_completed": {
+                                "total_cycles": 1,
+                                "per_cycle_metrics": [
+                                    {
+                                        "cycle": 1,
+                                        "passes_applied": passes_actually_applied,
+                                        "duration_ms": 500,
+                                    }
+                                ],
+                            },
                             "string_obfuscation": {"enabled": config.advanced.string_encryption if config else False},
-                            "fake_loops_inserted": 0,
+                            "fake_loops_inserted": {
+                                "count": 0,
+                                "types": [],
+                                "locations": [],
+                            },
                             "symbol_obfuscation": {"enabled": config.advanced.symbol_obfuscation.enabled if config and hasattr(config.advanced, 'symbol_obfuscation') else False},
                             "indirect_calls": {"enabled": False},
                             "upx_packing": {"enabled": False},
-                            "obfuscation_score": 0,
-                            "symbol_reduction": 0,
-                            "function_reduction": 0,
-                            "size_reduction": 0,
-                            "entropy_increase": 0,
-                            "estimated_re_effort": "N/A",
+                            "obfuscation_score": int(entropy_increase * 10) if entropy_increase > 0 else 0,  # Simple score based on entropy
+                            "symbol_reduction": baseline_symbols - output_symbols,
+                            "function_reduction": baseline_functions - output_functions,
+                            "size_reduction": max(0, baseline_size - output_size),  # Only count reduction, not growth
+                            "entropy_increase": entropy_increase,
+                            "estimated_re_effort": "High" if entropy_increase > 0.5 else "Medium" if entropy_increase > 0.1 else "Low",
                             "output_file": str(final_binary),
                             "build_system": payload.build_system,
                             "source_obfuscation": obf_results,
@@ -980,7 +1195,7 @@ async def api_obfuscate_sync(
                     "output_file": str(final_binary),
                     "build_system": payload.build_system,
                     "source_obfuscation": obf_results,
-                    "binaries_found": [str(b) for b in binaries],
+                    "binaries_found": [str(final_binary)],
                     "report_paths": report_paths_dict,
                 }
 

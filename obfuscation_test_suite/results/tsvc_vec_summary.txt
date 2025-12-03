@@ -1,0 +1,11 @@
+OBFUSCATION TEST SUMMARY
+==================================================
+
+Program: tsvc_vec
+Date:    2025-12-04T02:41:07.368148
+
+✗ Functional correctness issue
+✓ RE Difficulty: LOW (20/100)
+✓ Performance overhead: 0.0% (acceptable)
+
+For detailed results, see the full report.

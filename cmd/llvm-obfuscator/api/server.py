@@ -157,6 +157,13 @@ class SymbolObfuscationModel(BaseModel):
     salt: Optional[str] = None
 
 
+class UPXModel(BaseModel):
+    enabled: bool = False
+    compression_level: str = Field("best", pattern="^(fast|default|best|brute)$")
+    use_lzma: bool = True
+    preserve_original: bool = False
+
+
 class ConfigModel(BaseModel):
     level: int = Field(3, ge=1, le=5)
     passes: PassesModel = PassesModel()
@@ -173,13 +180,6 @@ class IndirectCallsModel(BaseModel):
     enabled: bool = False
     obfuscate_stdlib: bool = True
     obfuscate_custom: bool = True
-
-
-class UPXModel(BaseModel):
-    enabled: bool = False
-    compression_level: str = Field("best", pattern="^(fast|default|best|brute)$")
-    use_lzma: bool = True
-    preserve_original: bool = False
 
 
 class ObfuscateRequest(BaseModel):

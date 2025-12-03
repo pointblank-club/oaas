@@ -1,0 +1,110 @@
+#!/bin/bash
+# clang++-obfuscate - C++ wrapper script that applies OLLVM passes during compilation
+# See clang-obfuscate for detailed documentation.
+
+set -e
+
+SCRIPT_DIR="$(dirname "$(readlink -f "$0")")"
+
+# Bundled LLVM 22 clang
+CLANG="${SCRIPT_DIR}/clang.real"
+[ ! -x "$CLANG" ] && CLANG="/usr/local/llvm-obfuscator/bin/clang.real"
+
+OPT="${SCRIPT_DIR}/opt"
+[ ! -x "$OPT" ] && OPT="/usr/local/llvm-obfuscator/bin/opt"
+
+# System headers to inject
+SYSTEM_HEADERS="-nostdinc"
+if [ -d "/usr/lib/llvm-19/lib/clang/19/include" ]; then
+    SYSTEM_HEADERS="$SYSTEM_HEADERS -isystem /usr/lib/llvm-19/lib/clang/19/include"
+elif [ -d "/usr/lib/llvm-18/lib/clang/18/include" ]; then
+    SYSTEM_HEADERS="$SYSTEM_HEADERS -isystem /usr/lib/llvm-18/lib/clang/18/include"
+else
+    SYS_HDR=$(find /usr/lib/llvm-*/lib/clang/*/include -maxdepth 0 2>/dev/null | head -1)
+    [ -n "$SYS_HDR" ] && SYSTEM_HEADERS="$SYSTEM_HEADERS -isystem $SYS_HDR"
+fi
+# C++ headers
+SYSTEM_HEADERS="$SYSTEM_HEADERS -isystem /usr/include/c++/14 -isystem /usr/include/x86_64-linux-gnu/c++/14"
+SYSTEM_HEADERS="$SYSTEM_HEADERS -isystem /usr/local/include -isystem /usr/include/x86_64-linux-gnu -isystem /usr/include"
+
+PLUGIN="${OLLVM_PLUGIN:-/usr/local/llvm-obfuscator/lib/LLVMObfuscationPlugin.so}"
+PASSES="${OLLVM_PASSES:-}"
+DEBUG="${OLLVM_DEBUG:-0}"
+EXTRA_CFLAGS="${OLLVM_CFLAGS:-}"
+
+log() { [ "$DEBUG" = "1" ] && echo "[clang++-obfuscate] $*" >&2; }
+
+log "Called with args: $*"
+
+is_compile=false
+is_preprocess=false
+is_assemble_only=false
+emit_llvm=false
+output_file=""
+input_files=()
+compile_args=()
+link_args=()
+next_is_output=false
+skip_obfuscation=false
+
+for arg in "$@"; do
+    if [ "$next_is_output" = true ]; then
+        output_file="$arg"; next_is_output=false; continue
+    fi
+    case "$arg" in
+        -c) is_compile=true; compile_args+=("$arg") ;;
+        -E) is_preprocess=true; compile_args+=("$arg") ;;
+        -S) is_assemble_only=true; compile_args+=("$arg") ;;
+        -emit-llvm) emit_llvm=true; compile_args+=("$arg") ;;
+        -o) next_is_output=true ;;
+        -shared|-dynamiclib) link_args+=("$arg") ;;
+        *.c|*.cc|*.cpp|*.cxx|*.C|*.c++) input_files+=("$arg") ;;
+        *.o|*.a|*.so|*.dylib) link_args+=("$arg") ;;
+        -l*|-L*|-Wl,*|-framework) link_args+=("$arg") ;;
+        -M|-MM|-MD|-MMD|-MF|-MT|-MQ) skip_obfuscation=true; compile_args+=("$arg") ;;
+        *) compile_args+=("$arg") ;;
+    esac
+done
+
+[ -n "$EXTRA_CFLAGS" ] && read -ra extra_flags <<< "$EXTRA_CFLAGS" && compile_args+=("${extra_flags[@]}")
+
+should_obfuscate=false
+if [ "$is_compile" = true ] && [ "$is_preprocess" = false ] && [ "$is_assemble_only" = false ] && \
+   [ "$emit_llvm" = false ] && [ "$skip_obfuscation" = false ] && [ -n "$PASSES" ] && \
+   [ -f "$PLUGIN" ] && [ ${#input_files[@]} -gt 0 ]; then
+    should_obfuscate=true
+fi
+
+if [ "$should_obfuscate" = true ]; then
+    log "Applying OLLVM passes: $PASSES"
+    TEMP_DIR=$(mktemp -d)
+    trap "rm -rf $TEMP_DIR" EXIT
+
+    for input in "${input_files[@]}"; do
+        base_name=$(basename "$input")
+        base_name_noext="${base_name%.*}"
+        bc_file="$TEMP_DIR/${base_name_noext}.bc"
+        obf_file="$TEMP_DIR/${base_name_noext}_obf.bc"
+        obj_file="${output_file:-${base_name_noext}.o}"
+
+        step1_args=()
+        for arg in "${compile_args[@]}"; do [ "$arg" != "-c" ] && step1_args+=("$arg"); done
+
+        log "Step 1: $CLANG $SYSTEM_HEADERS -emit-llvm -c $input -o $bc_file"
+        $CLANG $SYSTEM_HEADERS -emit-llvm -c "$input" -o "$bc_file" "${step1_args[@]}" 2>&1 || exit 1
+
+        log "Step 2: $OPT --passes=$PASSES $bc_file -o $obf_file"
+        "$OPT" --load-pass-plugin="$PLUGIN" --passes="$PASSES" "$bc_file" -o "$obf_file" 2>&1 || exit 1
+
+        log "Step 3: $CLANG -c $obf_file -o $obj_file"
+        "$CLANG" -c "$obf_file" -o "$obj_file" 2>&1 || exit 1
+
+        log "Success: $input -> $obj_file"
+    done
+else
+    all_args=("${compile_args[@]}" "${link_args[@]}")
+    [ -n "$output_file" ] && all_args+=("-o" "$output_file")
+    for input in "${input_files[@]}"; do all_args+=("$input"); done
+    log "Passthrough: $CLANG $SYSTEM_HEADERS ${all_args[*]}"
+    exec $CLANG $SYSTEM_HEADERS "${all_args[@]}"
+fi

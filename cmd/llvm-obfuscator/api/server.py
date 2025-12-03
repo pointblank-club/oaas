@@ -14,7 +14,7 @@ from typing import Dict, List, Optional, Tuple
 from urllib.parse import urlencode
 
 import requests
-from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from github import Github
@@ -53,6 +53,7 @@ from .multifile_pipeline import (
     cleanup_old_sessions,
     cleanup_repo_session,
     clone_repo_to_temp,
+    create_local_upload_session,
     create_multi_file_project,
     extract_repo_files,
     find_main_file,
@@ -1776,3 +1777,66 @@ async def github_repo_clone(request: Request, payload: GitHubCloneRequest):
     except Exception as e:
         logger.error(f"Failed to clone repository: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to clone repository: {str(e)}")
+
+
+@app.post("/api/local/folder/upload")
+async def local_folder_upload(files: List[UploadFile] = File(...)):
+    """Upload local folder/files to backend ephemeral storage.
+
+    This endpoint accepts multiple file uploads and stores them in a temporary
+    directory, returning a session ID that can be used for obfuscation.
+    The workflow is identical to the GitHub clone endpoint.
+
+    The temporary files will be automatically cleaned up after obfuscation
+    or after 1 hour of inactivity.
+    """
+    # Clean up old sessions first
+    cleanup_old_sessions(max_age_seconds=3600)
+
+    if not files:
+        raise HTTPException(status_code=400, detail="No files provided")
+
+    try:
+        # Collect file data
+        files_data = []
+        project_name = "local_upload"
+
+        for upload_file in files:
+            # Get relative path from filename (browsers send path for webkitdirectory)
+            # The filename may contain the relative path like "folder/subfolder/file.c"
+            relative_path = upload_file.filename or "unknown"
+
+            # Extract project name from the first directory component
+            if "/" in relative_path:
+                first_dir = relative_path.split("/")[0]
+                if first_dir and project_name == "local_upload":
+                    project_name = first_dir
+
+            # Read file content
+            content = await upload_file.read()
+            files_data.append((relative_path, content))
+
+        if not files_data:
+            raise HTTPException(status_code=400, detail="No valid files provided")
+
+        # Create session using the same storage mechanism as GitHub clone
+        session_id, project_path = create_local_upload_session(files_data, project_name)
+
+        # Count C/C++ files
+        c_cpp_files = list(project_path.rglob("*.c")) + list(project_path.rglob("*.cpp")) + \
+                      list(project_path.rglob("*.cc")) + list(project_path.rglob("*.cxx"))
+
+        return JSONResponse({
+            "session_id": session_id,
+            "repo_name": project_name,
+            "branch": "local",
+            "file_count": len(c_cpp_files),
+            "total_files": len(files_data),
+            "expires_in": 3600,  # 1 hour
+        })
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to upload files: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to upload files: {str(e)}")

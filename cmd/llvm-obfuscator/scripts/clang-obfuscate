@@ -125,8 +125,9 @@ if [ "$should_obfuscate" = true ]; then
 
         log "Processing: $input -> $bc_file -> $obf_file -> $obj_file"
 
-        # Build args without -c and without dependency generation flags
-        # (dependency flags use paths relative to original dir, not temp dir)
+        # Build step1_args: ONLY include flags needed for bitcode generation
+        # Step 1 needs: -I* (includes), -D* (defines), -std=* (language standard), -W* (warnings, not linker)
+        # Step 1 does NOT need: -c, -M* (deps), -Wl,* (linker), -O* (optimization), -f* (codegen)
         step1_args=()
         skip_next=false
         for arg in "${compile_args[@]}"; do
@@ -135,11 +136,18 @@ if [ "$should_obfuscate" = true ]; then
                 continue
             fi
             case "$arg" in
-                -c|-MD|-MMD) continue ;;  # Skip these flags
+                -c|-MD|-MMD) continue ;;  # Skip compile/dependency flags
                 -MF|-MT|-MQ) skip_next=true; continue ;;  # Skip flag and its argument
-                *) step1_args+=("$arg") ;;
+                -Wl,*) continue ;;  # Skip linker flags
+                -I*|-D*|-std=*|-U*) step1_args+=("$arg") ;;  # Include only essential flags
+                -isystem|-include|-imacros) step1_args+=("$arg") ;;  # Include path flags (take next arg)
+                -W*) step1_args+=("$arg") ;;  # Warnings (not -Wl,* - already filtered)
+                -pthread|-pipe) step1_args+=("$arg") ;;  # Common build flags
+                -*) continue ;;  # Skip all other flags (optimization, codegen, etc.)
+                *) continue ;;  # Skip non-flag args (likely dependency file paths)
             esac
         done
+        log "step1_args: ${step1_args[*]}"
 
         # Step 1: Source -> Bitcode (bundled clang + system headers)
         log "Step 1: $CLANG $SYSTEM_HEADERS -emit-llvm -c $input -o $bc_file"

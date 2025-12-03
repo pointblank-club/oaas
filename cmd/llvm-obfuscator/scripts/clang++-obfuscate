@@ -88,17 +88,26 @@ if [ "$should_obfuscate" = true ]; then
         obf_file="$TEMP_DIR/${base_name_noext}_obf.bc"
         obj_file="${output_file:-${base_name_noext}.o}"
 
-        # Build args without -c and without dependency generation flags
+        # Build step1_args: ONLY include flags needed for bitcode generation
+        # Step 1 needs: -I* (includes), -D* (defines), -std=* (language standard), -W* (warnings, not linker)
+        # Step 1 does NOT need: -c, -M* (deps), -Wl,* (linker), -O* (optimization), -f* (codegen)
         step1_args=()
         skip_next=false
         for arg in "${compile_args[@]}"; do
             if [ "$skip_next" = true ]; then skip_next=false; continue; fi
             case "$arg" in
-                -c|-MD|-MMD) continue ;;
-                -MF|-MT|-MQ) skip_next=true; continue ;;
-                *) step1_args+=("$arg") ;;
+                -c|-MD|-MMD) continue ;;  # Skip compile/dependency flags
+                -MF|-MT|-MQ) skip_next=true; continue ;;  # Skip flag and its argument
+                -Wl,*) continue ;;  # Skip linker flags
+                -I*|-D*|-std=*|-U*) step1_args+=("$arg") ;;  # Include only essential flags
+                -isystem|-include|-imacros) step1_args+=("$arg") ;;  # Include path flags
+                -W*) step1_args+=("$arg") ;;  # Warnings (not -Wl,*)
+                -pthread|-pipe) step1_args+=("$arg") ;;  # Common build flags
+                -*) continue ;;  # Skip all other flags
+                *) continue ;;  # Skip non-flag args (dependency file paths)
             esac
         done
+        log "step1_args: ${step1_args[*]}"
 
         log "Step 1: $CLANG $SYSTEM_HEADERS -emit-llvm -c $input -o $bc_file"
         $CLANG $SYSTEM_HEADERS -emit-llvm -c "$input" -o "$bc_file" "${step1_args[@]}" 2>&1 || exit 1

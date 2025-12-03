@@ -166,6 +166,7 @@ jobs:
           type=semver,pattern={{major}}.{{minor}}
           type=semver,pattern={{major}}
           type=raw,value=latest,enable={{is_default_branch}}
+          type=raw,value=patched,enable={{is_default_branch}}
 
     - name: Extract frontend metadata
       id: meta-frontend
@@ -180,6 +181,7 @@ jobs:
           type=semver,pattern={{major}}.{{minor}}
           type=semver,pattern={{major}}
           type=raw,value=latest,enable={{is_default_branch}}
+          type=raw,value=patched,enable={{is_default_branch}}
 
     - name: Build and push backend image
       uses: docker/build-push-action@v5

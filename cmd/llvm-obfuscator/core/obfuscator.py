@@ -325,6 +325,9 @@ class LLVMObfuscator:
                 actually_applied_passes = cycle_result.get("applied_passes", [])
                 # Always extend warnings list (even if empty, to maintain consistency)
                 warnings_log.extend(cycle_result.get("warnings", []))
+                # Track actual compiler flags used (after stripping LTO/optimization)
+                if "actual_compiler_flags" in cycle_result:
+                    compiler_flags = cycle_result.get("actual_compiler_flags")
 
             intermediate_source = intermediate_binary
 
@@ -717,7 +720,8 @@ class LLVMObfuscator:
                 return {
                     "applied_passes": actually_applied_passes,
                     "warnings": warnings,
-                    "disabled_passes": list(config.passes.enabled_passes())  # Original requested passes
+                    "disabled_passes": list(config.passes.enabled_passes()),  # Original requested passes
+                    "actual_compiler_flags": compiler_flags  # No OLLVM, so flags unchanged
                 }
 
             # Check if this is a multi-file project
@@ -773,19 +777,20 @@ class LLVMObfuscator:
                 self.logger.info("Step 1/3: Compiling to LLVM IR")
                 run_command(ir_cmd, cwd=source_abs.parent)
 
-                # Check for C++ exception handling (incompatible with ALL OLLVM passes)
+                # Check for C++ exception handling
+                # Flattening pass crashes on exception-handling code, but other passes work fine
+                # Disable only flattening, keep substitution, boguscf, and split
                 if self._has_exception_handling(ir_file):
-                    if enabled_passes:
+                    if "flattening" in enabled_passes:
                         warning_msg = (
                             "C++ exception handling detected in IR (invoke/landingpad instructions). "
-                            "ALL OLLVM passes are incompatible with C++ exception handling and will be disabled. "
-                            "This is a known limitation of OLLVM. "
-                            "Obfuscation will continue with compiler flags, string encryption, and symbol obfuscation only."
+                            "Flattening pass disabled for stability (known to crash on exception handling). "
+                            "Other OLLVM passes (substitution, boguscf, split) will still be applied."
                         )
                         self.logger.warning(warning_msg)
                         warnings.append(warning_msg)
-                        enabled_passes = []  # Disable ALL OLLVM passes
-                        actually_applied_passes = []  # No OLLVM passes applied
+                        enabled_passes = [p for p in enabled_passes if p != "flattening"]  # Remove only flattening
+                        actually_applied_passes = list(enabled_passes)  # Track what we'll apply
 
                 # Only continue with OLLVM if we still have passes enabled
                 if not enabled_passes:
@@ -831,12 +836,16 @@ class LLVMObfuscator:
                     opt_binary = Path("/usr/local/llvm-obfuscator/bin/opt")
                     self.logger.info("Using opt from Docker installation: %s", opt_binary)
 
-                    # IMPORTANT: Use ABSOLUTE PATH to system clang
-                    # Docker clang doesn't have LLVMgold.so needed for LTO linking
-                    # We use Docker opt for OLLVM passes, but system clang for final compilation
-                    # Must use /usr/bin/clang explicitly because /usr/local/llvm-obfuscator/bin is first in PATH
-                    compiler = "/usr/bin/clang++" if base_compiler == "clang++" else "/usr/bin/clang"
-                    self.logger.info("Using Docker opt for OLLVM passes, system clang (%s) for final compilation", compiler)
+                    # IMPORTANT: Must use Docker clang (LLVM 22) to compile bitcode from LLVM 22 opt
+                    # System clang (LLVM 19) can't read LLVM 22 bitcode (attribute mismatch)
+                    # LTO flags are stripped in post-obfuscation, so LLVMgold.so not needed
+                    docker_clang = Path("/usr/local/llvm-obfuscator/bin/clang")
+                    if docker_clang.exists():
+                        compiler = str(docker_clang)
+                        self.logger.info("Using Docker clang (LLVM 22) for final compilation to match opt version: %s", compiler)
+                    else:
+                        self.logger.warning("Docker clang not found, falling back to system clang (may have version mismatch)")
+                        compiler = "/usr/bin/clang++" if base_compiler == "clang++" else "/usr/bin/clang"
                 # THIRD: Check if plugin is from LLVM build directory
                 elif "/llvm-project/build/lib/" in str(plugin_path_resolved):
                     # Plugin is from LLVM build, try to find opt and clang in same build
@@ -941,7 +950,8 @@ class LLVMObfuscator:
                 return {
                     "applied_passes": actually_applied_passes,
                     "warnings": warnings,
-                    "disabled_passes": []
+                    "disabled_passes": [],
+                    "actual_compiler_flags": final_flags  # Actual flags after stripping LTO/O3
                 }
 
         elif enabled_passes:
@@ -968,7 +978,8 @@ class LLVMObfuscator:
             return {
                 "applied_passes": actually_applied_passes,
                 "warnings": warnings,
-                "disabled_passes": enabled_passes
+                "disabled_passes": enabled_passes,
+                "actual_compiler_flags": compiler_flags  # No OLLVM, so flags unchanged
             }
         else:
             # No OLLVM passes - standard compilation
@@ -989,7 +1000,8 @@ class LLVMObfuscator:
             return {
                 "applied_passes": actually_applied_passes,
                 "warnings": warnings,
-                "disabled_passes": []
+                "disabled_passes": [],
+                "actual_compiler_flags": compiler_flags  # No OLLVM, so flags unchanged
             }
 
     def _compile_and_analyze_baseline(self, source_file: Path, baseline_binary: Path, config: ObfuscationConfig) -> Dict:

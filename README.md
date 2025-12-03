@@ -58,8 +58,8 @@ The LLVM Binary Obfuscator is a comprehensive code protection toolkit that makes
 - Python 3.10+
 - Clang 15+ (or GCC 11+)
 - CMake 3.20+
-- LLVM 19+ (for Layer 2 OLLVM passes)
-- OpenSSL (for Layer 0 symbol obfuscation)
+- LLVM 19+ (for Layer 3 OLLVM passes)
+- OpenSSL (for Layer 1 symbol obfuscation)
 
 ### Option 1: Quick Install (Recommended)
 
@@ -72,7 +72,7 @@ cd llvm-obfuscator
 cd cmd/llvm-obfuscator
 pip install -r requirements.txt
 
-# Build symbol obfuscator (Layer 0)
+# Build symbol obfuscator (Layer 1)
 cd ../../symbol-obfuscator
 mkdir build && cd build
 cmake .. && make
@@ -149,29 +149,29 @@ cat obfuscated/report.json
 │                                                           │
 │  Input: source.c  →  [4 Layers]  →  Output: binary     │
 │                                                           │
-│  Layer 0: Symbol Obfuscation (Pre-compilation)          │
+│  Layer 1: Symbol Obfuscation (Pre-compilation)          │
 │    ├─ Cryptographic hashing (SHA256/BLAKE2B)            │
 │    ├─ Function/variable renaming                         │
 │    └─ Mapping file generation                            │
 │                                                           │
-│  Layer 1: Compiler Flags (Compilation)                  │
+│  Layer 4: Compiler Flags (Compilation)                  │
 │    ├─ Link-time optimization (-flto)                     │
 │    ├─ Symbol hiding (-fvisibility=hidden)               │
 │    ├─ Frame pointer removal (-fomit-frame-pointer)      │
 │    └─ Speculative hardening (-mspeculative-load-hardening)│
 │                                                           │
-│  Layer 2: OLLVM Passes (IR-level) [Optional]            │
+│  Layer 3: OLLVM Passes (IR-level) [Optional]            │
 │    ├─ Control flow flattening                            │
 │    ├─ Instruction substitution                           │
 │    ├─ Bogus control flow                                 │
 │    └─ Basic block splitting                              │
 │                                                           │
-│  Layer 3: String Encryption (Pre-compilation)           │
+│  Layer 2: String Encryption (Pre-compilation)           │
 │    ├─ XOR encryption                                     │
 │    ├─ Runtime decryption                                 │
 │    └─ Constructor-based initialization                   │
 │                                                           │
-│  Layer 4: UPX Binary Packing (Post-compilation) [New!]  │
+│  Layer 5: UPX Binary Packing (Post-compilation) [New!]  │
 │    ├─ 50-70% binary size reduction                       │
 │    ├─ Additional obfuscation layer                       │
 │    ├─ LZMA compression                                   │
@@ -185,27 +185,27 @@ cat obfuscated/report.json
 ```
 Source File (auth.c)
        ↓
-[Layer 0] Symbol Obfuscation
+[Layer 1] Symbol Obfuscation
        ├─ validate_password → f_dabe0a778dd2
        ├─ failed_attempts → v_3f4e5d6c7b8a
        └─ Output: auth_symbols.c
        ↓
-[Layer 3] String Encryption
+[Layer 2] String Encryption
        ├─ "AdminPass2024!" → {0xCA, 0xCF, 0xC6, ...}
        ├─ Inject decryption functions
        └─ Output: auth_encrypted.c
        ↓
-[Layer 2] OLLVM Passes (if enabled)
+[Layer 3] OLLVM Passes (if enabled)
        ├─ Control flow flattening
        ├─ Instruction substitution
        └─ Output: auth_obfuscated.ll
        ↓
-[Layer 1] Compilation with Flags
+[Layer 4] Compilation with Flags
        ├─ -flto -fvisibility=hidden -O3
        ├─ Symbol stripping
        └─ Output: auth_binary
        ↓
-[Layer 4] UPX Packing (optional)
+[Layer 5] UPX Packing (optional)
        ├─ LZMA compression
        ├─ 50-70% size reduction
        └─ Output: auth_binary (packed)
@@ -426,7 +426,7 @@ python3 -m cli.obfuscate compile source.c \
 
 ---
 
-### Layer 2: OLLVM Compiler Passes
+### Layer 3: OLLVM Compiler Passes
 
 **Purpose:** Transform control flow and instructions at IR level
 **Type:** LLVM IR transformations
@@ -482,7 +482,7 @@ Based on testing 42 configurations, OLLVM passes provide minimal benefit when co
 
 ---
 
-### Layer 3: String Encryption
+### Layer 2: String Encryption
 
 **Purpose:** Hide hardcoded secrets and string literals
 **Type:** Pre-compilation source transformation
@@ -552,7 +552,7 @@ $ strings binary | grep password
 ```bash
 python3 -m cli.obfuscate compile src/auth.c \
   --output ./release \
-  --level 3 \
+  --level 2 \
   --string-encryption \
   --enable-symbol-obfuscation \
   --enable-upx \
@@ -684,7 +684,7 @@ python -m cli.obfuscate [COMMAND] [OPTIONS]
 --report-formats <list>    Generate reports (json,html,markdown)
 ```
 
-#### Layer 0: Symbol Obfuscation
+#### Layer 1: Symbol Obfuscation
 ```
 --enable-symbol-obfuscation       Enable cryptographic symbol renaming
 --symbol-algorithm <algo>         Hash algorithm (sha256, blake2b, siphash)
@@ -693,12 +693,12 @@ python -m cli.obfuscate [COMMAND] [OPTIONS]
 --symbol-salt <string>            Custom salt for deterministic builds
 ```
 
-#### Layer 1: Compiler Flags
+#### Layer 4: Compiler Flags
 ```
 --custom-flags "<flags>"   Custom compiler flags (overrides defaults)
 ```
 
-#### Layer 2: OLLVM Passes
+#### Layer 3: OLLVM Passes
 ```
 --enable-flattening              Enable control flow flattening
 --enable-substitution            Enable instruction substitution
@@ -708,13 +708,13 @@ python -m cli.obfuscate [COMMAND] [OPTIONS]
 --cycles <n>                     Number of obfuscation cycles (1-5)
 ```
 
-#### Layer 3: String Encryption
+#### Layer 2: String Encryption
 ```
 --string-encryption              Enable string literal encryption
 --fake-loops <n>                 Number of fake loops to insert (0-50)
 ```
 
-#### Layer 4: UPX Binary Packing
+#### Layer 5: UPX Binary Packing
 ```
 --enable-upx                     Enable UPX binary packing (compression + obfuscation)
 --upx-compression <level>        Compression level (fast, default, best, brute)
@@ -731,7 +731,7 @@ python -m cli.obfuscate [COMMAND] [OPTIONS]
 
 **Simple obfuscation:**
 ```bash
-python3 -m cli.obfuscate compile source.c --level 3 --string-encryption
+python3 -m cli.obfuscate compile source.c --level 2 --string-encryption
 ```
 
 **Maximum security:**

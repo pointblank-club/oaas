@@ -29,7 +29,7 @@ from core import (
     analyze_binary,
 )
 from core.comparer import CompareConfig, compare_binaries
-from core.config import AdvancedConfiguration, PassConfiguration, SymbolObfuscationConfiguration, UPXConfiguration
+from core.config import AdvancedConfiguration, PassConfiguration, UPXConfiguration
 from core.exceptions import JobNotFoundError, ValidationError
 from core.job_manager import JobManager
 from core.progress import ProgressEvent, ProgressTracker
@@ -161,19 +161,18 @@ class PassesModel(BaseModel):
     split: bool = False
 
 
-class SymbolObfuscationModel(BaseModel):
-    enabled: bool = False
-    algorithm: str = Field("sha256", pattern="^(sha256|blake2b|siphash)$")
-    hash_length: int = Field(12, ge=8, le=32)
-    prefix_style: str = Field("typed", pattern="^(none|typed|underscore)$")
-    salt: Optional[str] = None
-
-
 class UPXModel(BaseModel):
     enabled: bool = False
     compression_level: str = Field("best", pattern="^(fast|default|best|brute)$")
     use_lzma: bool = True
     preserve_original: bool = False
+
+
+class IndirectCallsModel(BaseModel):
+    enabled: bool = False
+    obfuscate_stdlib: bool = True
+    obfuscate_custom: bool = True
+
 
 
 class ConfigModel(BaseModel):
@@ -182,16 +181,8 @@ class ConfigModel(BaseModel):
     cycles: int = Field(1, ge=1, le=5)
     string_encryption: bool = False
     fake_loops: int = Field(0, ge=0, le=50)
-    symbol_obfuscation: SymbolObfuscationModel = SymbolObfuscationModel()
     upx: UPXModel = UPXModel()
-
-
-
-
-class IndirectCallsModel(BaseModel):
-    enabled: bool = False
-    obfuscate_stdlib: bool = True
-    obfuscate_custom: bool = True
+    indirect_calls: IndirectCallsModel = IndirectCallsModel()
 
 
 class ObfuscateRequest(BaseModel):
@@ -327,13 +318,6 @@ def _build_config_from_request(payload: ObfuscateRequest, destination_dir: Path,
         bogus_control_flow=payload.config.passes.bogus_control_flow or detected_passes.get("boguscf", False),
         split=payload.config.passes.split or detected_passes.get("split", False),
     )
-    symbol_obf = SymbolObfuscationConfiguration(
-        enabled=payload.config.symbol_obfuscation.enabled,
-        algorithm=payload.config.symbol_obfuscation.algorithm,
-        hash_length=payload.config.symbol_obfuscation.hash_length,
-        prefix_style=payload.config.symbol_obfuscation.prefix_style,
-        salt=payload.config.symbol_obfuscation.salt,
-    )
     upx_config = UPXConfiguration(
         enabled=payload.config.upx.enabled,
         compression_level=payload.config.upx.compression_level,
@@ -342,9 +326,7 @@ def _build_config_from_request(payload: ObfuscateRequest, destination_dir: Path,
     )
     advanced = AdvancedConfiguration(
         cycles=payload.config.cycles,
-        string_encryption=payload.config.string_encryption,
         fake_loops=payload.config.fake_loops,
-        symbol_obfuscation=symbol_obf,
         upx_packing=upx_config,
     )
     # Auto-load plugin if passes are requested and no explicit plugin provided
@@ -365,19 +347,10 @@ def _build_config_from_request(payload: ObfuscateRequest, destination_dir: Path,
                 "bogus_control_flow": passes.bogus_control_flow,
                 "split": passes.split,
             },
-            "advanced": {
-                "cycles": advanced.cycles,
-                "string_encryption": advanced.string_encryption,
-                "fake_loops": advanced.fake_loops,
-                "symbol_obfuscation": {
-                    "enabled": symbol_obf.enabled,
-                    "algorithm": symbol_obf.algorithm,
-                    "hash_length": symbol_obf.hash_length,
-                    "prefix_style": symbol_obf.prefix_style,
-                    "salt": symbol_obf.salt,
-                },
-            },
-            "output": {
+                            "advanced": {
+                                "cycles": advanced.cycles,
+                                "fake_loops": advanced.fake_loops,
+                            },            "output": {
                 "directory": str(destination_dir),
                 "report_format": payload.report_formats,
             },
@@ -653,10 +626,10 @@ def _obfuscate_project_sources(
     }
 
     # DEBUG: Log config values to verify they're being passed correctly
-    logger.info(f"[DEBUG] Layer 1 (Symbol Obfuscation) enabled: {config.advanced.symbol_obfuscation.enabled}")
-    logger.info(f"[DEBUG] Layer 2 (String Encryption) enabled: {config.advanced.string_encryption}")
+    # Note: Symbol obfuscation and string encryption are now handled by MLIR pipeline
     has_indirect_calls = hasattr(config.advanced, 'indirect_calls') and hasattr(config.advanced.indirect_calls, 'enabled')
     logger.info(f"[DEBUG] Layer 2.5 (Indirect Calls) enabled: {config.advanced.indirect_calls.enabled if has_indirect_calls else 'N/A (not configured)'}")
+    logger.info("[DEBUG] Layer 1 (Symbol) and Layer 2 (String) are now handled by MLIR pipeline")
 
     # Find all source files
     all_sources: List[Path] = []
@@ -674,27 +647,10 @@ def _obfuscate_project_sources(
             modified = content
             file_modified = False
 
-            # Layer 1: Symbol obfuscation
-            if config.advanced.symbol_obfuscation.enabled:
-                new_content, file_symbols = _apply_symbol_obfuscation(
-                    modified,
-                    symbol_map,
-                    config.advanced.symbol_obfuscation
-                )
-                if new_content != modified:
-                    modified = new_content
-                    results["symbols_renamed"] += file_symbols
-                    file_modified = True
+            # Layer 1 (Symbol) and Layer 2 (String) are now handled by MLIR pipeline
+            # These source-level transformations are deprecated in favor of MLIR passes
 
-            # Layer 2: String encryption
-            if config.advanced.string_encryption:
-                new_content, strings_count = _apply_string_encryption(modified)
-                if new_content != modified:
-                    modified = new_content
-                    results["strings_encrypted"] += strings_count
-                    file_modified = True
-
-            # Layer 2.5: Indirect call obfuscation
+            # Layer 2.5: Indirect call obfuscation (still source-level)
             if hasattr(config.advanced, 'indirect_calls') and config.advanced.indirect_calls.enabled:
                 new_content, calls_count = _apply_indirect_calls(modified)
                 if new_content != modified:

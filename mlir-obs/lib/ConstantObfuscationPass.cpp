@@ -202,39 +202,64 @@ void ConstantObfuscationPass::runOnOperation() {
   }
 
   // Register __obfs_init as a constructor via llvm.global_ctors
-  if (!module.lookupSymbol<LLVM::GlobalOp>("llvm.global_ctors")) {
-    builder.setInsertionPointToEnd(module.getBody());
+  // Use LLVM::GlobalCtorsOp which is the proper MLIR op for this
+  builder.setInsertionPointToEnd(module.getBody());
 
-    auto ctorStructType = LLVM::LLVMStructType::getLiteral(ctx, {i32Type, i8PtrType, i8PtrType});
-    auto ctorArrayType = LLVM::LLVMArrayType::get(ctorStructType, 1);
+  // Check if GlobalCtorsOp already exists
+  LLVM::GlobalCtorsOp existingCtors = nullptr;
+  for (auto &op : module.getBody()->getOperations()) {
+    if (auto ctorsOp = llvm::dyn_cast<LLVM::GlobalCtorsOp>(&op)) {
+      existingCtors = ctorsOp;
+      break;
+    }
+  }
 
-    auto ctorsGlobal = builder.create<LLVM::GlobalOp>(
+  if (existingCtors) {
+    // Append our __obfs_init to existing ctors
+    SmallVector<Attribute> newCtors;
+    SmallVector<Attribute> newPriorities;
+    SmallVector<Attribute> newData;
+
+    // Copy existing entries
+    for (auto attr : existingCtors.getCtors())
+      newCtors.push_back(attr);
+    for (auto attr : existingCtors.getPriorities())
+      newPriorities.push_back(attr);
+    if (auto dataAttr = existingCtors.getData()) {
+      for (auto attr : dataAttr)
+        newData.push_back(attr);
+    }
+
+    // Add our init function with null data (no associated data)
+    newCtors.push_back(FlatSymbolRefAttr::get(ctx, "__obfs_init"));
+    newPriorities.push_back(builder.getI32IntegerAttr(65535));
+    newData.push_back(LLVM::ZeroAttr::get(ctx));
+
+    // Replace the old op with updated one
+    builder.setInsertionPoint(existingCtors);
+    builder.create<LLVM::GlobalCtorsOp>(
         loc,
-        ctorArrayType,
-        /*isConstant=*/false,
-        LLVM::Linkage::Appending,
-        "llvm.global_ctors",
-        Attribute()
+        builder.getArrayAttr(newCtors),
+        builder.getArrayAttr(newPriorities),
+        builder.getArrayAttr(newData)
     );
+    existingCtors.erase();
+  } else {
+    // Create new GlobalCtorsOp
+    SmallVector<Attribute> ctors;
+    SmallVector<Attribute> priorities;
+    SmallVector<Attribute> data;
 
-    // Create initializer region
-    Region &initRegion = ctorsGlobal.getInitializerRegion();
-    Block *initBlock = builder.createBlock(&initRegion);
-    builder.setInsertionPointToStart(initBlock);
+    ctors.push_back(FlatSymbolRefAttr::get(ctx, "__obfs_init"));
+    priorities.push_back(builder.getI32IntegerAttr(65535));
+    data.push_back(LLVM::ZeroAttr::get(ctx));
 
-    Value priority = builder.create<LLVM::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(65535));
-    Value initFuncPtr = builder.create<LLVM::AddressOfOp>(loc, i8PtrType, "__obfs_init");
-    Value nullPtr = builder.create<LLVM::ZeroOp>(loc, i8PtrType);
-
-    Value structVal = builder.create<LLVM::UndefOp>(loc, ctorStructType);
-    structVal = builder.create<LLVM::InsertValueOp>(loc, structVal, priority, ArrayRef<int64_t>{0});
-    structVal = builder.create<LLVM::InsertValueOp>(loc, structVal, initFuncPtr, ArrayRef<int64_t>{1});
-    structVal = builder.create<LLVM::InsertValueOp>(loc, structVal, nullPtr, ArrayRef<int64_t>{2});
-
-    Value arrayVal = builder.create<LLVM::UndefOp>(loc, ctorArrayType);
-    arrayVal = builder.create<LLVM::InsertValueOp>(loc, arrayVal, structVal, ArrayRef<int64_t>{0});
-
-    builder.create<LLVM::ReturnOp>(loc, arrayVal);
+    builder.create<LLVM::GlobalCtorsOp>(
+        loc,
+        builder.getArrayAttr(ctors),
+        builder.getArrayAttr(priorities),
+        builder.getArrayAttr(data)
+    );
   }
 }
 

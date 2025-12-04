@@ -135,11 +135,11 @@ void SymbolObfuscatePass::processLLVMDialect() {
 
   module.walk([&](LLVM::LLVMFuncOp func) {
     StringRef oldName = func.getSymName();
-    
+
     // Don't rename main - it's the entry point
     if (oldName == "main")
       return;
-    
+
     // Don't rename external/declaration-only functions (like printf, strcmp, etc.)
     // These are library functions that must keep their original names.
     // In LLVM dialect, external functions have an empty body region.
@@ -152,7 +152,29 @@ void SymbolObfuscatePass::processLLVMDialect() {
     }
   });
 
-  // Step 2: Update symbol references
+  // Step 1b: Also collect rename map for LLVM global variables
+  // This obfuscates global variable symbol names like ADMIN_PASSWORD, API_KEY, etc.
+  module.walk([&](LLVM::GlobalOp globalOp) {
+    StringRef oldName = globalOp.getSymName();
+
+    // Don't rename system globals
+    if (oldName.starts_with("llvm.") || oldName.starts_with("__obfs_"))
+      return;
+
+    // Don't rename .str, .str.1, etc. - these are compiler-generated
+    // Actually, we SHOULD rename these to further obfuscate
+
+    if (renameMap.find(oldName) == renameMap.end()) {
+      // Use 'g_' prefix for globals to distinguish from functions
+      std::uniform_int_distribution<uint32_t> dist(0, 0xFFFFFFFF);
+      uint32_t num = dist(rng);
+      char buffer[16];
+      snprintf(buffer, sizeof(buffer), "g_%08x", num);
+      renameMap[oldName] = std::string(buffer);
+    }
+  });
+
+  // Step 2: Update symbol references (for both functions and globals)
   module.walk([&](Operation *op) {
     SmallVector<NamedAttribute> updatedAttrs;
     bool changed = false;
@@ -163,6 +185,17 @@ void SymbolObfuscatePass::processLLVMDialect() {
         auto it = renameMap.find(old);
         if (it != renameMap.end()) {
           auto newRef = SymbolRefAttr::get(ctx, it->second);
+          updatedAttrs.emplace_back(attr.getName(), newRef);
+          changed = true;
+          continue;
+        }
+      }
+      // Also check FlatSymbolRefAttr for global references
+      if (auto flatSymAttr = llvm::dyn_cast<FlatSymbolRefAttr>(attr.getValue())) {
+        StringRef old = flatSymAttr.getValue();
+        auto it = renameMap.find(old);
+        if (it != renameMap.end()) {
+          auto newRef = FlatSymbolRefAttr::get(ctx, it->second);
           updatedAttrs.emplace_back(attr.getName(), newRef);
           changed = true;
           continue;
@@ -182,6 +215,15 @@ void SymbolObfuscatePass::processLLVMDialect() {
     auto it = renameMap.find(oldName);
     if (it != renameMap.end()) {
       symbolTable.setSymbolName(func, it->second);
+    }
+  });
+
+  // Step 4: Rename LLVM global variable definitions
+  module.walk([&](LLVM::GlobalOp globalOp) {
+    StringRef oldName = globalOp.getSymName();
+    auto it = renameMap.find(oldName);
+    if (it != renameMap.end()) {
+      symbolTable.setSymbolName(globalOp, it->second);
     }
   });
 }

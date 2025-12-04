@@ -47,6 +47,9 @@ class ObfuscationTestSuite:
         self.program_name = program_name
         self.test_results = {}
         self.metrics = {}
+        # ✅ FIX #5: Initialize metrics reliability tracking
+        self._metrics_reliability = "UNKNOWN"
+        self._functional_passed = None
 
         # Create results subdirectories
         self.baseline_dir = self.results_dir / "baseline" / program_name
@@ -85,14 +88,26 @@ class ObfuscationTestSuite:
 
             # ✅ FIX #1: Check functional correctness and flag if failed
             functional_passed = self.test_results['functional'].get('same_behavior', False)
-            if not functional_passed:
-                logger.warning("⚠️  FUNCTIONAL CORRECTNESS FAILED - Subsequent metrics may be unreliable")
-                logger.warning("    Binary behavior differs between baseline and obfuscated versions")
-                logger.warning("    Performance and execution-dependent metrics should be treated with caution")
-                # Mark all subsequent metrics as potentially unreliable
-                self._metrics_reliability = "COMPROMISED"
+            if functional_passed is False:  # Explicitly check for False, not just falsy
+                logger.error("🔴 CRITICAL: FUNCTIONAL CORRECTNESS FAILED!")
+                logger.error("    Binary behavior differs between baseline and obfuscated versions")
+                logger.error("    This indicates the obfuscation has broken the binary")
+                logger.error("    ALL SUBSEQUENT METRICS ARE UNRELIABLE - Results should NOT be used for comparison")
+                # Mark all subsequent metrics as failed
+                self._metrics_reliability = "FAILED"
+                self._functional_passed = False
+            elif functional_passed is None:
+                logger.warning("⚠️  FUNCTIONAL CORRECTNESS TEST INCONCLUSIVE")
+                logger.warning("    Could not determine if binary behavior is preserved")
+                logger.warning("    Metrics should be treated with caution")
+                self._metrics_reliability = "UNCERTAIN"
+                self._functional_passed = None
             else:
+                logger.info("✅ FUNCTIONAL CORRECTNESS PASSED")
+                logger.info("    Binary behavior preserved between baseline and obfuscated")
+                logger.info("    Metrics are reliable for comparison")
                 self._metrics_reliability = "RELIABLE"
+                self._functional_passed = True
 
             # 4. Control flow metrics
             logger.info("\n[2/11] Computing control flow metrics...")
@@ -319,6 +334,19 @@ class ObfuscationTestSuite:
         """
         logger.info("  Measuring performance...")
 
+        # ✅ FIX #4: Skip performance testing if functional correctness failed
+        if not self._functional_passed:
+            logger.warning("  ⚠️  Skipping performance test - functional correctness test failed")
+            logger.warning("    Performance metrics are unreliable when binary behavior is broken")
+            return {
+                'baseline_ms': None,
+                'obf_ms': None,
+                'overhead_percent': None,
+                'acceptable': False,
+                'status': 'SKIPPED',
+                'reason': 'Binary functional correctness failed - performance testing skipped'
+            }
+
         baseline_time = self._measure_execution_time(self.baseline)
         obf_time = self._measure_execution_time(self.obfuscated)
 
@@ -438,16 +466,23 @@ class ObfuscationTestSuite:
 
     def _generate_all_reports(self):
         """Generate all report formats"""
+        # ✅ FIX #5: Include metrics reliability status in reports
         # Compile all results
         all_results = {
             'metadata': {
                 'timestamp': datetime.now().isoformat(),
                 'program': self.program_name,
                 'baseline': str(self.baseline),
-                'obfuscated': str(self.obfuscated)
+                'obfuscated': str(self.obfuscated),
+                'metrics_reliability': self._metrics_reliability,
+                'functional_correctness_passed': self._functional_passed
             },
             'test_results': self.test_results,
-            'metrics': self.metrics
+            'metrics': self.metrics,
+            'reliability_status': {
+                'level': self._metrics_reliability,
+                'warning': self._get_reliability_warning()
+            }
         }
 
         # Generate JSON report
@@ -460,6 +495,17 @@ class ObfuscationTestSuite:
         self.report_gen.generate_summary(all_results)
 
         logger.info(f"✓ Reports generated in {self.reports_dir}")
+
+    def _get_reliability_warning(self) -> str:
+        """Get warning message based on metrics reliability"""
+        if self._metrics_reliability == "FAILED":
+            return "❌ METRICS ARE UNRELIABLE: Obfuscation broke binary functionality - comparison invalid"
+        elif self._metrics_reliability == "UNCERTAIN":
+            return "⚠️  METRICS ARE UNCERTAIN: Functional correctness test was inconclusive"
+        elif self._metrics_reliability == "RELIABLE":
+            return "✅ METRICS ARE RELIABLE: Binary functionality preserved"
+        else:
+            return "⚠️  METRICS RELIABILITY UNKNOWN"
 
     def _run_advanced_analysis(self) -> Dict[str, Any]:
         """Run Ghidra, Binary Ninja, IDA Pro, and Angr analysis"""

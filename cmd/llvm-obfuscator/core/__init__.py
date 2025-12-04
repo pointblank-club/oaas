@@ -6,6 +6,7 @@ from .comparer import compare_binaries
 from .config import (
     AnalyzeConfig,
     AdvancedConfiguration,
+    Architecture,
     CompareConfig,
     ObfuscationConfig,
     ObfuscationLevel,
@@ -25,6 +26,7 @@ __all__ = [
     "ObfuscationConfig",
     "PassConfiguration",
     "AdvancedConfiguration",
+    "Architecture",
     "OutputConfiguration",
     "Platform",
     "ObfuscationLevel",

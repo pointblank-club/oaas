@@ -24,6 +24,27 @@ class Platform(str, Enum):
             raise ValueError(f"Unsupported platform: {value}") from exc
 
 
+class Architecture(str, Enum):
+    X86_64 = "x86_64"    # 64-bit Intel/AMD (default)
+    ARM64 = "arm64"      # 64-bit ARM (Apple M1/M2, ARM servers)
+    X86 = "i686"         # 32-bit Intel/AMD
+
+    @classmethod
+    def from_string(cls, value: str) -> "Architecture":
+        normalized = value.lower()
+        # Handle common aliases
+        if normalized in ["amd64", "x64"]:
+            normalized = "x86_64"
+        elif normalized in ["aarch64", "arm64"]:
+            normalized = "arm64"
+        elif normalized in ["i386", "i686", "x86", "ia32"]:
+            normalized = "i686"
+        try:
+            return cls(normalized)
+        except ValueError as exc:
+            raise ValueError(f"Unsupported architecture: {value}") from exc
+
+
 class MLIRFrontend(str, Enum):
     """
     MLIR Frontend Selection (ClangIR Pipeline)
@@ -137,6 +158,7 @@ class OutputConfiguration:
 class ObfuscationConfig:
     level: ObfuscationLevel = ObfuscationLevel.MEDIUM
     platform: Platform = Platform.LINUX
+    architecture: Architecture = Architecture.X86_64
     compiler_flags: List[str] = field(default_factory=list)
     passes: PassConfiguration = field(default_factory=PassConfiguration)
     advanced: AdvancedConfiguration = field(default_factory=AdvancedConfiguration)
@@ -151,6 +173,7 @@ class ObfuscationConfig:
     def from_dict(cls, data: Dict) -> "ObfuscationConfig":
         level = ObfuscationLevel(data.get("level", ObfuscationLevel.MEDIUM))
         platform = Platform.from_string(data.get("platform", Platform.LINUX.value))
+        architecture = Architecture.from_string(data.get("architecture", Architecture.X86_64.value))
         compiler_flags = data.get("compiler_flags", [])
         passes_data = data.get("passes", {})
 
@@ -230,6 +253,7 @@ class ObfuscationConfig:
         return cls(
             level=level,
             platform=platform,
+            architecture=architecture,
             compiler_flags=compiler_flags,
             passes=passes,
             advanced=advanced,

@@ -28,6 +28,7 @@ from core import (
     Platform,
     analyze_binary,
 )
+from core.config import Architecture
 from core.comparer import CompareConfig, compare_binaries
 from core.config import AdvancedConfiguration, PassConfiguration, UPXConfiguration
 from core.exceptions import JobNotFoundError, ValidationError
@@ -189,6 +190,7 @@ class ObfuscateRequest(BaseModel):
     source_code: str  # For backward compatibility - single file content
     filename: str
     platform: Platform = Platform.LINUX
+    architecture: Architecture = Architecture.X86_64
     entrypoint_command: Optional[str] = Field(default="./a.out")
     config: ConfigModel = ConfigModel()
     report_formats: Optional[list[str]] = Field(default_factory=lambda: ["json", "markdown"])
@@ -341,6 +343,7 @@ def _build_config_from_request(payload: ObfuscateRequest, destination_dir: Path,
         {
             "level": payload.config.level,
             "platform": payload.platform.value,
+            "architecture": payload.architecture.value,
             "passes": {
                 "flattening": passes.flattening,
                 "substitution": passes.substitution,
@@ -766,8 +769,12 @@ async def api_obfuscate_sync(
     # Validate and sanitize entrypoint command
     entrypoint_cmd = _validate_entrypoint_command(payload.entrypoint_command or "./a.out")
 
-    # Always compile for Linux, regardless of what user selected
-    payload.platform = Platform.LINUX
+    # Build for Linux and Windows only
+    # NOTE: macOS disabled - requires Apple SDK via osxcross
+    target_platforms = [
+        (Platform.LINUX, payload.architecture),
+        (Platform.WINDOWS, payload.architecture),
+    ]
 
     job = job_manager.create_job({
         "filename": payload.filename,
@@ -1250,10 +1257,66 @@ async def api_obfuscate_sync(
         if not binary_path.exists():
             raise HTTPException(status_code=500, detail="Binary generation failed")
 
+        # Build for additional platforms if single-file mode
+        # For multi-platform support, we compile the same source for each target
+        platform_binaries = {"linux": None, "windows": None}
+
+        # First result is for the primary platform
+        primary_platform = payload.platform.value
+        platform_binaries[primary_platform] = str(binary_path)
+
+        # Compile for other platforms
+        # Get the obfuscated source (after source-level transforms)
+        obfuscated_source = result.get("obfuscated_source_path")
+        if obfuscated_source and Path(obfuscated_source).exists():
+            compile_source = Path(obfuscated_source)
+        else:
+            compile_source = source_path
+
+        for target_platform, target_arch in target_platforms:
+            if target_platform.value == primary_platform:
+                continue  # Already compiled for primary platform
+
+            try:
+                # Create platform-specific output directory
+                platform_dir = working_dir / target_platform.value
+                platform_dir.mkdir(exist_ok=True)
+
+                # Build config for this platform
+                platform_payload = payload.model_copy()
+                platform_payload.platform = target_platform
+                platform_payload.architecture = target_arch
+                platform_config = _build_config_from_request(platform_payload, platform_dir)
+
+                # Compile for this platform
+                platform_result = obfuscator.obfuscate(
+                    compile_source,
+                    platform_config,
+                    job_id=f"{job.job_id}_{target_platform.value}"
+                )
+
+                platform_binary = Path(platform_result.get("output_file", ""))
+                if platform_binary.exists():
+                    platform_binaries[target_platform.value] = str(platform_binary)
+                    logger.info(f"Built binary for {target_platform.value}: {platform_binary}")
+                else:
+                    logger.warning(f"Binary generation failed for {target_platform.value}")
+            except Exception as e:
+                logger.warning(f"Failed to build for {target_platform.value}: {e}")
+                # Continue with other platforms even if one fails
+
+        # Store platform binaries in job result
+        result["platform_binaries"] = platform_binaries
+        job_manager.update_job(job.job_id, result=result)
+
         return {
             "job_id": job.job_id,
             "status": "completed",
             "download_url": f"/api/download/{job.job_id}",
+            "download_urls": {
+                "linux": f"/api/download/{job.job_id}/linux" if platform_binaries.get("linux") else None,
+                "windows": f"/api/download/{job.job_id}/windows" if platform_binaries.get("windows") else None,
+            },
             "report_url": f"/api/report/{job.job_id}",
         }
     except Exception as exc:
@@ -1400,16 +1463,24 @@ async def api_download_binary_platform(job_id: str, platform: str):
         raise HTTPException(status_code=400, detail="Job not completed")
 
     # Check if this is a multi-platform build
-    download_urls = result.get("download_urls", {})
-    if download_urls and platform in download_urls:
-        binary_path = Path(download_urls[platform]["path"])
+    platform_binaries = result.get("platform_binaries", {})
+    if platform_binaries and platform in platform_binaries and platform_binaries[platform]:
+        binary_path = Path(platform_binaries[platform])
         if not binary_path.exists():
             raise HTTPException(status_code=404, detail=f"Binary not found for platform {platform}")
+
+        # Determine appropriate filename and extension
+        if platform == "windows":
+            filename = f"obfuscated_{platform}.exe"
+        elif platform == "macos":
+            filename = f"obfuscated_{platform}"
+        else:
+            filename = f"obfuscated_{platform}"
 
         return FileResponse(
             binary_path,
             media_type="application/octet-stream",
-            filename=binary_path.name
+            filename=filename
         )
 
     raise HTTPException(status_code=404, detail=f"Platform {platform} not found for this job")
@@ -1427,13 +1498,13 @@ async def api_download_binary(job_id: str):
         raise HTTPException(status_code=400, detail="Job not completed")
 
     # Check if this is a multi-platform build
-    download_urls = result.get("download_urls", {})
-    if download_urls:
+    platform_binaries = result.get("platform_binaries", {})
+    if platform_binaries:
         # Return Linux binary by default
-        if "linux" in download_urls:
-            binary_path = Path(download_urls["linux"]["path"])
-        elif "windows" in download_urls:
-            binary_path = Path(download_urls["windows"]["path"])
+        if platform_binaries.get("linux"):
+            binary_path = Path(platform_binaries["linux"])
+        elif platform_binaries.get("windows"):
+            binary_path = Path(platform_binaries["windows"])
         else:
             raise HTTPException(status_code=404, detail="No binaries available")
     else:

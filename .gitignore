@@ -32,3 +32,10 @@ cmd/llvm-obfuscator/obfuscated/
 
 # Generated reports - these are test outputs, don't commit
 cmd/llvm-obfuscator/reports/
+<<<<<<< HEAD
+=======
+
+cmd/jotai_results/
+
+plugins/
+>>>>>>> 2817250 (add plugins to .gitignore)

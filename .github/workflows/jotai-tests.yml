@@ -57,31 +57,36 @@ jobs:
         echo "=========================================="
         echo "Downloading LLVM binaries from GCP Cloud Storage"
         echo "=========================================="
-        
-        # Use latest version by default
-        echo "Downloading latest binaries from gs://${GCP_BUCKET}/..."
-        
-        mkdir -p cmd/llvm-obfuscator/plugins/
-        
-        # Download the archive from GCP
-        gsutil cp "gs://${GCP_BUCKET}/llvm-binaries-linux-x86_64-latest.tar.gz" /tmp/llvm-binaries.tar.gz || {
+
+        # Create target directory
+        mkdir -p cmd/llvm-obfuscator/plugins/linux-x86_64
+
+        # Download all individual files from GCP bucket
+        echo "Downloading individual binaries from gs://${GCP_BUCKET}/linux-x86_64/..."
+
+        gsutil -m cp -r "gs://${GCP_BUCKET}/linux-x86_64/*" cmd/llvm-obfuscator/plugins/linux-x86_64/ || {
           echo "❌ ERROR: Failed to download binaries from GCP Cloud Storage"
           echo ""
+          echo "Bucket: ${GCP_BUCKET}"
+          echo "Path: linux-x86_64/"
+          echo ""
           echo "To fix:"
-          echo "  1. Go to Actions → 'Store LLVM Binaries in GCP Cloud Storage'"
-          echo "  2. Run the workflow manually with a version (e.g., v1.0.0)"
-          echo "  3. This will upload binaries to GCP Cloud Storage bucket: ${GCP_BUCKET}"
+          echo "  1. Ensure individual binaries are uploaded to gs://${GCP_BUCKET}/linux-x86_64/"
+          echo "  2. Required files: clang, opt, LLVMObfuscationPlugin.so, libLLVM.so.22.0git, mlir-opt, mlir-translate, clangir, MLIRObfuscation.so"
+          echo "  3. Also ensure lib/clang/22/include/ directory is uploaded"
           echo ""
           exit 1
         }
-        
-        # Extract archive
-        cd cmd/llvm-obfuscator/plugins/
-        tar -xzf /tmp/llvm-binaries.tar.gz
-        rm /tmp/llvm-binaries.tar.gz
-        
-        echo "✅ Binaries extracted successfully"
-        ls -lh linux-x86_64/
+
+        # Make binaries executable
+        chmod +x cmd/llvm-obfuscator/plugins/linux-x86_64/clang || true
+        chmod +x cmd/llvm-obfuscator/plugins/linux-x86_64/opt || true
+        chmod +x cmd/llvm-obfuscator/plugins/linux-x86_64/mlir-opt || true
+        chmod +x cmd/llvm-obfuscator/plugins/linux-x86_64/mlir-translate || true
+        chmod +x cmd/llvm-obfuscator/plugins/linux-x86_64/clangir || true
+
+        echo "✅ Binaries downloaded successfully"
+        ls -lh cmd/llvm-obfuscator/plugins/linux-x86_64/
 
     - name: Verify binaries are present (REQUIRED)
       run: |
@@ -109,6 +114,26 @@ jobs:
           MISSING_BINARIES=1
         else
           echo "✅ Custom opt binary verified"
+        fi
+        
+        # Check mlir-opt (required for MLIR obfuscation passes)
+        if [ ! -f "cmd/llvm-obfuscator/plugins/linux-x86_64/mlir-opt" ] || \
+           ! file cmd/llvm-obfuscator/plugins/linux-x86_64/mlir-opt | grep -q "ELF"; then
+          echo "❌ ERROR: mlir-opt binary missing or invalid"
+          echo "   Run the 'Store LLVM Binaries as Artifacts' workflow first"
+          MISSING_BINARIES=1
+        else
+          echo "✅ Custom mlir-opt binary verified"
+        fi
+        
+        # Check mlir-translate (required for MLIR lowering)
+        if [ ! -f "cmd/llvm-obfuscator/plugins/linux-x86_64/mlir-translate" ] || \
+           ! file cmd/llvm-obfuscator/plugins/linux-x86_64/mlir-translate | grep -q "ELF"; then
+          echo "❌ ERROR: mlir-translate binary missing or invalid"
+          echo "   Run the 'Store LLVM Binaries as Artifacts' workflow first"
+          MISSING_BINARIES=1
+        else
+          echo "✅ Custom mlir-translate binary verified"
         fi
         
         if [ $MISSING_BINARIES -eq 1 ]; then
@@ -139,6 +164,40 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
+
+    - name: Set up LLVM toolchain environment
+      run: |
+        echo "=========================================="
+        echo "Setting up LLVM toolchain environment"
+        echo "=========================================="
+        
+        BIN_DIR="$PWD/cmd/llvm-obfuscator/plugins/linux-x86_64"
+        
+        # Verify binaries are accessible
+        echo "Verifying toolchain binaries..."
+        ls -lh "$BIN_DIR" | grep -E "(clang|opt|mlir-opt|mlir-translate)" || true
+        
+        # Add binaries to PATH (this will be available in subsequent steps)
+        echo "$BIN_DIR" >> $GITHUB_PATH
+        
+        # Set LD_LIBRARY_PATH for shared libraries (if libLLVM.so exists in the same directory)
+        if [ -f "$BIN_DIR/libLLVM.so.22.0git" ] || [ -f "$BIN_DIR/libLLVM.so" ]; then
+          echo "LD_LIBRARY_PATH=$BIN_DIR" >> $GITHUB_ENV
+          echo "✅ LD_LIBRARY_PATH set to $BIN_DIR"
+        fi
+        
+        # Verify mlir-opt is accessible (using full path since PATH update happens in next step)
+        echo ""
+        echo "Verifying mlir-opt binary..."
+        if [ -x "$BIN_DIR/mlir-opt" ]; then
+          echo "✅ mlir-opt binary is executable"
+          "$BIN_DIR/mlir-opt" --version | head -1 || echo "⚠️  mlir-opt version check failed"
+        else
+          echo "❌ ERROR: mlir-opt not found or not executable at $BIN_DIR/mlir-opt"
+          exit 1
+        fi
+        
+        echo "✅ LLVM toolchain environment configured"
 
     - name: Run Jotai CI Tests
       working-directory: cmd/llvm-obfuscator

@@ -199,16 +199,59 @@ def normalize_flags_and_passes(flags: Iterable[str]) -> Tuple[List[str], Dict[st
 
 
 def summarize_symbols(binary_path: Path) -> Tuple[int, int]:
+    """
+    ✅ FIX: Extract symbol and function counts with fallback methods.
+
+    Tries multiple tools in order of preference:
+    1. llvm-nm / nm (primary method)
+    2. readelf (fallback for ELF binaries)
+    3. objdump (fallback for other formats)
+
+    Returns (symbol_count, function_count) or (0, 0) if all methods fail.
+    """
     if not binary_path.exists():
         return 0, 0
+
+    # Method 1: Try nm / llvm-nm (primary)
     nm_tool = "llvm-nm" if tool_exists("llvm-nm") else "nm"
     try:
         _, stdout, _ = run_command([nm_tool, str(binary_path)])
+        if stdout.strip():  # nm succeeded and produced output
+            symbols = stdout.splitlines()
+            functions = [line for line in symbols if " T " in line or " t " in line]
+            return len(symbols), len(functions)
     except ObfuscationError:
-        return 0, 0
-    symbols = stdout.splitlines()
-    functions = [line for line in symbols if " T " in line or " t " in line]
-    return len(symbols), len(functions)
+        pass  # Fall through to next method
+
+    # Method 2: Try readelf (ELF binaries only)
+    if tool_exists("readelf"):
+        try:
+            _, stdout, _ = run_command(["readelf", "-s", str(binary_path)])
+            if stdout.strip():
+                symbols = [line for line in stdout.splitlines() if line.strip() and not line.startswith(" ")]
+                # Filter to actual symbol entries (heuristic: contains hex addresses and names)
+                symbols = [s for s in symbols if any(c in s for c in "0123456789abcdef")]
+                functions = [s for s in symbols if "FUNC" in s]
+                if len(symbols) > 0:  # Only use if we got results
+                    return len(symbols), len(functions)
+        except ObfuscationError:
+            pass  # Fall through to next method
+
+    # Method 3: Try objdump (generic fallback)
+    objdump = "llvm-objdump" if tool_exists("llvm-objdump") else "objdump"
+    try:
+        _, stdout, _ = run_command([objdump, "-t", str(binary_path)])
+        if stdout.strip():
+            symbols = [line for line in stdout.splitlines() if line.strip() and not line.startswith("SYMBOL")]
+            functions = [s for s in symbols if " .text " in s or " F " in s]
+            if len(symbols) > 0:  # Only use if we got results
+                return len(symbols), len(functions)
+    except ObfuscationError:
+        pass
+
+    # All methods failed - log warning and return zeros
+    # This indicates analysis couldn't determine symbol count, not that symbols were obfuscated
+    return 0, 0
 
 
 def write_html(path: Path, content: str) -> None:

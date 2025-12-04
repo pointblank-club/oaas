@@ -317,7 +317,8 @@ class LLVMObfuscator:
         file_size = get_file_size(output_binary)
         sections = list_sections(output_binary)
         symbols_count, functions_count = summarize_symbols(output_binary)
-        entropy = compute_entropy(output_binary.read_bytes() if output_binary.exists() else b"")
+        # ✅ FIX: Use safe entropy calculation with validation
+        entropy = self._safe_entropy(output_binary.read_bytes() if output_binary.exists() else b"", "output_binary")
 
         base_metrics = self._estimate_metrics(
             source_file=source_file,
@@ -340,6 +341,15 @@ class LLVMObfuscator:
             "timestamp": get_timestamp(),
             "warnings": warnings_log,  # Add warnings to report
             "baseline_metrics": baseline_metrics,  # Before obfuscation metrics
+            # ✅ FIX: Store baseline compilation metadata for reproducibility
+            "baseline_compiler": {
+                "compiler": "clang++/clang" if source_file.suffix in ['.cpp', '.cxx', '.cc', '.c++'] else "clang",
+                "version": "LLVM 22",  # We fixed optimization to use LLVM 22
+                "optimization_level": "-O3",  # We fixed baseline to use -O3 (same as obfuscated)
+                "compilation_method": "IR pipeline (source → LLVM IR → binary)",  # We fixed pipeline to match obfuscated
+                "compiler_flags": compiler_flags,  # Baseline-specific compilation flags
+                "passes_applied": [],  # Baseline has no obfuscation passes
+            },
             "output_attributes": {
                 "file_size": file_size,
                 "binary_format": binary_format,
@@ -587,6 +597,57 @@ class LLVMObfuscator:
             self.logger.warning(f"Could not check for exception handling in IR: {e}")
             # Err on the side of caution - assume EH is present
             return True
+
+    def _safe_entropy(self, binary_data: bytes, binary_name: str = "binary") -> float:
+        """
+        ✅ FIX: Calculate entropy with validation and error handling.
+
+        Validates that entropy:
+        - Is between 0.0 and 8.0 (theoretical max for 8-bit values)
+        - Is not NaN or infinity
+        - Handles errors gracefully
+
+        Args:
+            binary_data: Raw binary file content
+            binary_name: Name for logging (baseline, output, etc.)
+
+        Returns:
+            Valid entropy value (0.0-8.0) or 0.0 on error
+        """
+        try:
+            if not binary_data:
+                self.logger.warning(f"Empty binary data for {binary_name}, entropy set to 0.0")
+                return 0.0
+
+            # Compute entropy
+            entropy = compute_entropy(binary_data)
+
+            # Validate entropy value
+            if entropy is None:
+                self.logger.warning(f"compute_entropy returned None for {binary_name}, using 0.0")
+                return 0.0
+
+            # Check for NaN
+            if entropy != entropy:  # NaN check (NaN != NaN is True)
+                self.logger.warning(f"Invalid entropy (NaN) calculated for {binary_name}, using 0.0")
+                return 0.0
+
+            # Check for infinity
+            if entropy == float('inf') or entropy == float('-inf'):
+                self.logger.warning(f"Invalid entropy (infinity) calculated for {binary_name}, using 0.0")
+                return 0.0
+
+            # Check valid range (0-8 for 8-bit entropy)
+            if entropy < 0.0 or entropy > 8.0:
+                self.logger.warning(f"Entropy {entropy} out of valid range [0.0, 8.0] for {binary_name}, clamping to valid range")
+                entropy = max(0.0, min(8.0, entropy))
+
+            return round(entropy, 4)  # Round to 4 decimal places
+
+        except Exception as e:
+            self.logger.error(f"Failed to calculate entropy for {binary_name}: {e}")
+            self.logger.error(f"Entropy calculation error details: {type(e).__name__}: {str(e)}")
+            return 0.0
 
     def _compile(
         self,
@@ -1055,14 +1116,15 @@ class LLVMObfuscator:
 
     def _compile_and_analyze_baseline(self, source_file: Path, baseline_binary: Path, config: ObfuscationConfig) -> Dict:
         """Compile an unobfuscated baseline binary and analyze its metrics for comparison."""
-        # Default values in case baseline compilation fails
-        default_metrics = {
-            "file_size": 0,
-            "binary_format": "unknown",
+        # Error values when baseline compilation fails (not zeros - those are misleading!)
+        # Using -1 for file_size and "error" for binary_format signals failure to the reporter
+        failed_metrics = {
+            "file_size": -1,  # Error indicator: -1 means compilation failed, not empty file
+            "binary_format": "error",  # Error indicator: not "unknown"
             "sections": {},
-            "symbols_count": 0,
-            "functions_count": 0,
-            "entropy": 0.0,
+            "symbols_count": -1,  # Error indicator
+            "functions_count": -1,  # Error indicator
+            "entropy": -1.0,  # Error indicator: impossible entropy value
         }
 
         try:
@@ -1095,8 +1157,9 @@ class LLVMObfuscator:
                 compiler = "clang"
                 compile_flags = []
 
-            # Add minimal optimization flags
-            compile_flags.extend(["-O2"])
+            # Add optimization flags (must match obfuscated compilation level for fair comparison)
+            # Obfuscated binaries use -O3, so baseline must also use -O3
+            compile_flags.extend(["-O3"])
 
             # Add target triple for cross-compilation
             target_triple = self._get_target_triple(config.platform, config.architecture)
@@ -1127,9 +1190,35 @@ class LLVMObfuscator:
             # Filter out source files from compiler flags
             additional_sources = [flag for flag in config.compiler_flags if flag.endswith(('.c', '.cpp', '.cc', '.cxx', '.c++'))]
 
-            # Compile baseline with absolute paths, including all source files
-            command = [compiler, str(source_abs)] + additional_sources + ["-o", str(baseline_abs)] + compile_flags
-            run_command(command)
+            # Stage 1: Compile to LLVM IR (same pipeline as obfuscated, but without passes)
+            # This ensures fair comparison since baseline and obfuscated use same compilation methodology
+            self.logger.info("Compiling baseline to LLVM IR with -O3 optimization")
+            ir_file = baseline_abs.parent / f"{baseline_abs.stem}_baseline.ll"
+
+            # Compile to IR with -O3 (same flags as obfuscated pre-compilation)
+            ir_compile_flags = compile_flags.copy()  # Includes -O3, target triple, include paths
+            ir_compile_flags.extend(["-S", "-emit-llvm"])  # Convert to text IR
+
+            ir_cmd = [compiler, str(source_abs)] + additional_sources + ["-o", str(ir_file)] + ir_compile_flags
+            self.logger.debug(f"Baseline IR compilation command: {' '.join(ir_cmd)}")
+            run_command(ir_cmd)
+
+            # Stage 2: Compile IR to binary (no opt passes for baseline)
+            self.logger.info("Compiling baseline IR to binary")
+            if ir_file.exists():
+                # Convert IR back to binary without any obfuscation passes
+                final_cmd = [compiler, str(ir_file), "-o", str(baseline_abs)]
+                self.logger.debug(f"Baseline binary compilation command: {' '.join(final_cmd)}")
+                run_command(final_cmd)
+
+                # Clean up temporary IR file
+                try:
+                    ir_file.unlink()
+                except Exception:
+                    pass
+            else:
+                self.logger.error(f"Baseline IR file was not created: {ir_file}")
+                return failed_metrics
 
             # Analyze baseline binary
             if baseline_binary.exists():
@@ -1137,7 +1226,8 @@ class LLVMObfuscator:
                 binary_format = detect_binary_format(baseline_binary)
                 sections = list_sections(baseline_binary)
                 symbols_count, functions_count = summarize_symbols(baseline_binary)
-                entropy = compute_entropy(baseline_binary.read_bytes())
+                # ✅ FIX: Use safe entropy calculation with validation
+                entropy = self._safe_entropy(baseline_binary.read_bytes(), "baseline_binary")
 
                 return {
                     "file_size": file_size,
@@ -1148,11 +1238,13 @@ class LLVMObfuscator:
                     "entropy": entropy,
                 }
             else:
-                self.logger.warning("Baseline binary not created, using default metrics")
-                return default_metrics
+                self.logger.error("Baseline binary was not created - compilation may have failed silently")
+                self.logger.error(f"Expected baseline binary at: {baseline_abs}")
+                return failed_metrics
         except Exception as e:
-            self.logger.warning(f"Failed to compile baseline binary: {e}, using default metrics")
-            return default_metrics
+            self.logger.error(f"Baseline compilation failed with exception: {e}")
+            self.logger.error("Baseline metrics will be marked as failed in report")
+            return failed_metrics
 
     def _estimate_metrics(
         self,

@@ -223,11 +223,13 @@ interface ReportData {
     platform: string;
     obfuscation_level: number;
     requested_passes: string[];
-    applied_passes: string[];
+    applied_passes: string[];  // ✅ Fixed: was "enabled_passes" in PDF, now consistent
     compiler_flags: string[];
     timestamp: string;
   };
   warnings?: string[];
+  baseline_status?: "success" | "failed";  // ✅ NEW: indicates if baseline compiled successfully
+  comparison_valid?: boolean;  // ✅ NEW: false if baseline failed, don't show comparison
   baseline_metrics?: {
     file_size: number;
     binary_format: string;
@@ -235,6 +237,15 @@ interface ReportData {
     symbols_count: number;
     functions_count: number;
     entropy: number;
+  };
+  // ✅ NEW: Baseline compiler metadata for reproducibility
+  baseline_compiler?: {
+    compiler: string;
+    version: string;
+    optimization_level: string;
+    compilation_method: string;
+    compiler_flags: string[];
+    passes_applied: string[];
   };
   output_attributes: {
     file_size: number;
@@ -2243,6 +2254,44 @@ function App() {
           <section className="section report-section">
             <h2 className="section-title">[5] OBFUSCATION REPORT</h2>
 
+            {/* ✅ FIX: Show warning if baseline failed */}
+            {report.baseline_status === "failed" && (
+              <div style={{
+                backgroundColor: '#fff3cd',
+                border: '1px solid #ffc107',
+                borderRadius: '4px',
+                padding: '12px',
+                marginBottom: '16px',
+                color: '#856404'
+              }}>
+                <strong>⚠️ Baseline Compilation Failed</strong>
+                <p style={{ margin: '4px 0 0 0', fontSize: '14px' }}>
+                  The baseline binary could not be compiled. Comparison metrics below may not be reliable.
+                </p>
+              </div>
+            )}
+
+            {/* ✅ FIX: Show warning if comparison is not valid */}
+            {report.warnings && report.warnings.length > 0 && (
+              <div style={{
+                backgroundColor: '#f8d7da',
+                border: '1px solid #f5c6cb',
+                borderRadius: '4px',
+                padding: '12px',
+                marginBottom: '16px',
+                color: '#721c24'
+              }}>
+                <strong>⚠️ Warnings:</strong>
+                <ul style={{ margin: '8px 0 0 0', paddingLeft: '20px' }}>
+                  {report.warnings.map((warning, idx) => (
+                    <li key={idx} style={{ fontSize: '14px', marginBottom: '4px' }}>
+                      {warning}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
             <div className="report-grid">
               {/* Input Parameters */}
               <div className="report-block">
@@ -2254,8 +2303,26 @@ function App() {
                 <div className="report-item">Compiler Flags: {report.input_parameters?.compiler_flags?.join(' ') || 'None'}</div>
               </div>
 
-              {/* Before/After Comparison */}
-              {report.baseline_metrics && report.comparison && (
+              {/* ✅ NEW: Baseline Compiler Metadata (Dark mode compatible) */}
+              {report.baseline_compiler && (
+                <div className="report-block" style={{
+                  backgroundColor: 'var(--bg-secondary)',
+                  borderLeft: '4px solid var(--accent)',
+                  padding: '16px',
+                  borderRadius: '4px'
+                }}>
+                  <h3 style={{ color: 'var(--text-primary)', marginTop: 0 }}>📋 BASELINE COMPILATION DETAILS</h3>
+                  <div className="report-item">Compiler: {report.baseline_compiler.compiler || 'N/A'}</div>
+                  <div className="report-item">Version: {report.baseline_compiler.version || 'N/A'}</div>
+                  <div className="report-item">Optimization: {report.baseline_compiler.optimization_level || 'N/A'}</div>
+                  <div className="report-item">Method: {report.baseline_compiler.compilation_method || 'N/A'}</div>
+                  <div className="report-item">Flags: {report.baseline_compiler.compiler_flags?.join(' ') || 'None'}</div>
+                  <div className="report-item">Passes: {report.baseline_compiler.passes_applied?.length ? report.baseline_compiler.passes_applied.join(', ') : 'None (unobfuscated)'}</div>
+                </div>
+              )}
+
+              {/* ✅ FIX: Check comparison_valid instead of just baseline_metrics && comparison */}
+              {report.comparison_valid && report.baseline_metrics && report.comparison && (
                 <div className="report-block comparison-block" style={{ gridColumn: '1 / -1' }}>
                   <h3>⚖️ BEFORE / AFTER COMPARISON</h3>
                   <div className="comparison-grid-ui">
@@ -2330,6 +2397,18 @@ function App() {
                       </div>
                     </div>
                   </div>
+                </div>
+              )}
+
+              {/* ✅ FIX: Show message when comparison is not available */}
+              {!report.comparison_valid && (
+                <div className="report-block" style={{ gridColumn: '1 / -1', backgroundColor: '#fff3cd', borderLeft: '4px solid #ffc107' }}>
+                  <h3 style={{ color: '#856404' }}>⚠️ Comparison Not Available</h3>
+                  <p style={{ margin: '8px 0', color: '#856404' }}>
+                    {report.baseline_status === "failed"
+                      ? "Baseline compilation failed. Comparison metrics are unreliable. Please check the obfuscated binary metrics above instead."
+                      : "Comparison metrics are not available for this report."}
+                  </p>
                 </div>
               )}
 

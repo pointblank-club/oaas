@@ -214,8 +214,21 @@ class LLVMObfuscator:
         baseline_metrics = self._compile_and_analyze_baseline(source_file, baseline_binary, config)
 
         # Symbol and string obfuscation are now handled by MLIR passes.
-        symbol_result = None
-        string_result = None
+        # ✅ FIX: Actually track symbol obfuscation from config
+        symbol_result = {
+            "enabled": config.passes.symbol_obfuscation,
+            "symbols_obfuscated": 0,  # Will be updated after compilation
+            "algorithm": "llvm-symbol-obfuscation" if config.passes.symbol_obfuscation else "none",
+        }
+
+        string_result = {
+            "enabled": config.passes.string_encryption,
+            "total_strings": 0,
+            "encrypted_strings": 0,
+            "encryption_method": "xor-based" if config.passes.string_encryption else "none",
+            "encryption_percentage": 0.0,
+        }
+
         working_source = source_file
 
         # Indirect call obfuscation (if enabled) - applied after string encryption
@@ -368,16 +381,14 @@ class LLVMObfuscator:
                 "entropy": entropy,
                 "obfuscation_methods": actually_applied_passes + (["indirect_calls"] if indirect_call_result else []),
             },
-            "comparison": {
-                "size_change": file_size - baseline_metrics.get("file_size", file_size) if baseline_metrics else 0,
-                "size_change_percent": round(((file_size - baseline_metrics.get("file_size", file_size)) / baseline_metrics.get("file_size", file_size) * 100), 2) if baseline_metrics and baseline_metrics.get("file_size", 0) > 0 else 0,
-                "symbols_removed": baseline_metrics.get("symbols_count", 0) - symbols_count if baseline_metrics else 0,
-                "symbols_removed_percent": round(((baseline_metrics.get("symbols_count", 0) - symbols_count) / baseline_metrics.get("symbols_count", 1) * 100), 2) if baseline_metrics and baseline_metrics.get("symbols_count", 0) > 0 else 0,
-                "functions_removed": baseline_metrics.get("functions_count", 0) - functions_count if baseline_metrics else 0,
-                "functions_removed_percent": round(((baseline_metrics.get("functions_count", 0) - functions_count) / baseline_metrics.get("functions_count", 1) * 100), 2) if baseline_metrics and baseline_metrics.get("functions_count", 0) > 0 else 0,
-                "entropy_increase": round(entropy - baseline_metrics.get("entropy", 0), 3) if baseline_metrics else 0,
-                "entropy_increase_percent": round(((entropy - baseline_metrics.get("entropy", 0)) / baseline_metrics.get("entropy", 1) * 100), 2) if baseline_metrics and baseline_metrics.get("entropy", 0) > 0 else 0,
-            },
+            # ✅ CRITICAL FIX: Check for baseline compilation failure before using metrics
+            "comparison": self._build_comparison_metrics(
+                baseline_metrics,
+                file_size,
+                symbols_count,
+                functions_count,
+                entropy
+            ),
             "bogus_code_info": base_metrics["bogus_code_info"],
             "cycles_completed": base_metrics["cycles_completed"],
             "string_obfuscation": base_metrics["string_obfuscation"],
@@ -391,6 +402,12 @@ class LLVMObfuscator:
             "size_reduction": base_metrics["size_reduction"],
             "entropy_increase": base_metrics["entropy_increase"],
             "estimated_re_effort": base_metrics["estimated_re_effort"],
+            # ✅ NEW: Comprehensive metrics
+            "total_passes_applied": base_metrics["total_passes_applied"],
+            "total_obfuscation_overhead": base_metrics["total_obfuscation_overhead"],
+            "code_complexity_factor": base_metrics["code_complexity_factor"],
+            "detection_difficulty_rating": base_metrics["detection_difficulty_rating"],
+            "protections_applied": base_metrics["protections_applied"],
             "output_file": str(output_binary),
         }
 
@@ -1123,6 +1140,124 @@ class LLVMObfuscator:
             "disabled_passes": []
         }
 
+    def _calculate_detection_difficulty(self, obf_score: float, symbol_reduction: float, entropy_increase: float) -> str:
+        """Calculate how difficult it is to detect obfuscation."""
+        if obf_score >= 80 and symbol_reduction >= 50 and entropy_increase >= 50:
+            return "VERY HIGH"
+        elif obf_score >= 60 and symbol_reduction >= 30:
+            return "HIGH"
+        elif obf_score >= 40:
+            return "MEDIUM"
+        else:
+            return "LOW"
+
+    def _get_protections_summary(self, passes: List[str], symbol_reduction: float, function_reduction: float, fake_loops: List) -> Dict[str, Any]:
+        """Generate summary of applied protections."""
+        protections = {
+            "control_flow_flattening": "flattening" in passes or "fla" in " ".join(passes).lower(),
+            "bogus_control_flow": "bcf" in passes or "bogus" in " ".join(passes).lower(),
+            "symbol_obfuscation": symbol_reduction > 0,
+            "function_hiding": function_reduction > 0,
+            "fake_loops_injected": len(fake_loops) > 0,
+            "string_encryption": "string" in " ".join(passes).lower(),
+            "indirect_calls": "indirect" in " ".join(passes).lower(),
+            "total_protections_enabled": sum(1 for v in [
+                "flattening" in passes or "fla" in " ".join(passes).lower(),
+                "bcf" in passes or "bogus" in " ".join(passes).lower(),
+                symbol_reduction > 0,
+                function_reduction > 0,
+                len(fake_loops) > 0,
+                "string" in " ".join(passes).lower(),
+                "indirect" in " ".join(passes).lower(),
+            ] if v)
+        }
+        return protections
+
+    def _build_comparison_metrics(
+        self,
+        baseline_metrics: Optional[Dict],
+        obf_file_size: int,
+        obf_symbols_count: int,
+        obf_functions_count: int,
+        obf_entropy: float,
+    ) -> Dict:
+        """Build comparison metrics, checking for baseline compilation failure.
+
+        ✅ CRITICAL FIX: Checks for baseline compilation failure (-1 = error indicator)
+        and returns zero metrics instead of using error values in calculations.
+        This prevents negative percentages like -316% in reports.
+        """
+        # Default empty comparison if no baseline
+        if not baseline_metrics:
+            return {
+                "size_change": 0,
+                "size_change_percent": 0,
+                "symbols_removed": 0,
+                "symbols_removed_percent": 0,
+                "functions_removed": 0,
+                "functions_removed_percent": 0,
+                "entropy_increase": 0,
+                "entropy_increase_percent": 0,
+            }
+
+        # Check for baseline compilation failure (-1 = error indicator)
+        baseline_failed = (
+            baseline_metrics.get("file_size", 0) == -1 or
+            baseline_metrics.get("binary_format") == "error"
+        )
+
+        if baseline_failed:
+            # Baseline failed - return zero metrics, don't use -1 values
+            self.logger.warning("⚠️  Baseline compilation failed - comparison metrics set to zero")
+            return {
+                "size_change": 0,
+                "size_change_percent": 0,
+                "symbols_removed": 0,
+                "symbols_removed_percent": 0,
+                "functions_removed": 0,
+                "functions_removed_percent": 0,
+                "entropy_increase": 0,
+                "entropy_increase_percent": 0,
+            }
+
+        # Baseline compilation succeeded - safely extract metrics
+        baseline_file_size = baseline_metrics.get("file_size", 0)
+        baseline_symbols = baseline_metrics.get("symbols_count", 0)
+        baseline_functions = baseline_metrics.get("functions_count", 0)
+        baseline_entropy = baseline_metrics.get("entropy", 0.0)
+
+        # Calculate safe comparisons with zero-check
+        size_change = obf_file_size - baseline_file_size
+        size_change_percent = round(
+            ((obf_file_size - baseline_file_size) / baseline_file_size * 100), 2
+        ) if baseline_file_size > 0 else 0
+
+        symbols_removed = baseline_symbols - obf_symbols_count
+        symbols_removed_percent = round(
+            ((baseline_symbols - obf_symbols_count) / baseline_symbols * 100), 2
+        ) if baseline_symbols > 0 else 0
+
+        functions_removed = baseline_functions - obf_functions_count
+        functions_removed_percent = round(
+            ((baseline_functions - obf_functions_count) / baseline_functions * 100), 2
+        ) if baseline_functions > 0 else 0
+
+        entropy_increase = round(obf_entropy - baseline_entropy, 3)
+        entropy_increase_percent = round(
+            ((obf_entropy - baseline_entropy) / baseline_entropy * 100), 2
+        ) if baseline_entropy > 0 else 0
+
+        return {
+            "size_change": size_change,
+            "size_change_percent": size_change_percent,
+            "symbols_removed": symbols_removed,
+            "symbols_removed_percent": symbols_removed_percent,
+            "functions_removed": functions_removed,
+            "functions_removed_percent": functions_removed_percent,
+            "entropy_increase": entropy_increase,
+            "entropy_increase_percent": entropy_increase_percent,
+        }
+
     def _compile_and_analyze_baseline(self, source_file: Path, baseline_binary: Path, config: ObfuscationConfig) -> Dict:
         """Compile an unobfuscated baseline binary and analyze its metrics for comparison."""
         # Error values when baseline compilation fails (not zeros - those are misleading!)
@@ -1290,39 +1425,79 @@ class LLVMObfuscator:
     ) -> Dict:
         """Calculate real metrics from actual binary analysis, not estimates."""
         # ✅ FIX: Calculate real symbol/function reduction from baseline vs obfuscated
+        # CRITICAL: Check for error indicators (-1) from baseline compilation failures
         baseline_symbols = baseline_metrics.get("symbols_count", 0) if baseline_metrics else 0
         baseline_functions = baseline_metrics.get("functions_count", 0) if baseline_metrics else 0
         baseline_size = baseline_metrics.get("file_size", 0) if baseline_metrics else 0
         baseline_entropy = baseline_metrics.get("entropy", 0) if baseline_metrics else 0
 
+        # ✅ CRITICAL FIX: Detect baseline compilation failure (-1 = error indicator)
+        baseline_failed = baseline_metrics and (
+            baseline_metrics.get("file_size", 0) == -1 or
+            baseline_metrics.get("binary_format") == "error"
+        )
+
+        if baseline_failed:
+            self.logger.warning("⚠️  Baseline compilation failed - using zero values for all metrics")
+            baseline_symbols = 0
+            baseline_functions = 0
+            baseline_size = 0
+            baseline_entropy = 0
+
         # Calculate actual reductions/changes
+        # ✅ FIX #1: Symbol reduction = positive % when symbols decrease (good)
         if baseline_symbols > 0:
             symbol_reduction = round(((baseline_symbols - symbols_count) / baseline_symbols) * 100, 2)
         else:
             symbol_reduction = 0.0
 
+        # ✅ FIX #2: Function reduction = positive % when functions decrease (good)
         if baseline_functions > 0:
             function_reduction = round(((baseline_functions - functions_count) / baseline_functions) * 100, 2)
         else:
             function_reduction = 0.0
 
+        # ✅ FIX #3: Size reduction = NEGATIVE % when size decreases (good), POSITIVE when increases (bad)
+        # Formula: (obf_size - baseline_size) / baseline_size * 100
+        # Negative = smaller (reduction) = good obfuscation
+        # Positive = larger (increase) = overhead, but expected with obfuscation
         if baseline_size > 0:
             size_reduction = round(((file_size - baseline_size) / baseline_size) * 100, 2)
         else:
             size_reduction = 0.0
 
+        # ✅ FIX #4: Entropy increase = positive % when entropy increases (good)
         if baseline_entropy > 0:
             entropy_increase_val = round(((entropy - baseline_entropy) / baseline_entropy) * 100, 2)
         else:
             entropy_increase_val = 0.0
 
-        # ✅ FIX: Calculate obfuscation score based on actual metrics
-        # Score increases with symbol/function reduction and entropy increase
+        # ✅ FIX #5: Calculate obfuscation score based on actual metrics
+        # Score increases with:
+        # - Symbol reduction (positive %)
+        # - Function reduction (positive %)
+        # - Entropy increase (positive %)
+        # - Small binary size (negative size_reduction is good, but don't penalize too much)
         score = 50.0  # Base score
-        score += min(30.0, abs(symbol_reduction) * 0.3)  # Up to 30% for symbol reduction
-        score += min(20.0, abs(function_reduction) * 0.2)  # Up to 20% for function reduction
-        score += min(10.0, entropy_increase_val * 0.1)  # Up to 10% for entropy increase
-        score = min(100.0, score)
+
+        # Reward symbol reduction (naturally positive for good obfuscation)
+        if symbol_reduction > 0:
+            score += min(30.0, symbol_reduction * 0.3)
+
+        # Reward function reduction (naturally positive for good obfuscation)
+        if function_reduction > 0:
+            score += min(20.0, function_reduction * 0.2)
+
+        # Reward entropy increase (naturally positive for good obfuscation)
+        if entropy_increase_val > 0:
+            score += min(10.0, entropy_increase_val * 0.1)
+
+        # Small penalty for binary size increase (but obfuscation always increases size somewhat)
+        # Only penalize if size increase is extreme (>100%)
+        if size_reduction > 100:
+            score -= min(10.0, (size_reduction - 100) * 0.05)
+
+        score = min(100.0, max(0.0, score))
 
         # ✅ FIX: Bogus code info from actual pass count
         # Each pass adds roughly 3 dead blocks, 2 opaque predicates, 5 junk instructions
@@ -1369,7 +1544,12 @@ class LLVMObfuscator:
         else:
             estimated_effort = "2-4 weeks"
 
-        return {
+        # ✅ ENHANCEMENT: Add comprehensive metrics for better visualization
+        # Calculate more detailed metrics
+        total_obfuscation_overhead = len(passes) * 3 + len(fake_loops) * 2 + (50 if len(passes) > 0 else 0)  # Bogus blocks + fake loops + code inflation
+
+        # Build comprehensive metrics dict
+        comprehensive_metrics = {
             "bogus_code_info": bogus_code_info,
             "string_obfuscation": string_obfuscation,
             "fake_loops_inserted": fake_loops_inserted,
@@ -1380,4 +1560,12 @@ class LLVMObfuscator:
             "size_reduction": size_reduction,
             "entropy_increase": entropy_increase_val,
             "estimated_re_effort": estimated_effort,
+            # ✅ NEW: Additional detailed metrics
+            "total_passes_applied": len(passes),
+            "total_obfuscation_overhead": total_obfuscation_overhead,
+            "code_complexity_factor": round(1.0 + (len(passes) * 0.15) + (len(fake_loops) * 0.05), 2),
+            "detection_difficulty_rating": self._calculate_detection_difficulty(score, symbol_reduction, entropy_increase_val),
+            "protections_applied": self._get_protections_summary(passes, symbol_reduction, function_reduction, fake_loops),
         }
+
+        return comprehensive_metrics

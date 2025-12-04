@@ -536,11 +536,17 @@ class JotaiBenchmarkManager:
                 "-Wno-typedef-redefinition",  # Allow typedef redefinition (treat as warning)
             ]
             
-            # Add standard include paths if they exist - CRITICAL for stddef.h
+            # CRITICAL: Use -nostdinc to control include order
+            # This prevents default include paths, allowing us to add clang headers FIRST
+            # so that when system headers (like /usr/include/stdio.h) try to include stddef.h,
+            # they find it in the clang resource directory
+            compile_flags.append("-nostdinc")
+            
+            # Add clang resource directory FIRST - this is where stddef.h lives
             clang_resource_dir = self._find_clang_resource_dir(clang_binary)
             if clang_resource_dir:
                 compile_flags.append(f"-isystem{clang_resource_dir}")
-                self.logger.debug(f"Added clang resource dir to includes: {clang_resource_dir}")
+                self.logger.info(f"✓ Added clang resource dir (first): {clang_resource_dir}")
             else:
                 self.logger.warning(f"WARNING: Could not find clang resource directory for {clang_binary}")
                 # Try to find it relative to clang binary
@@ -548,9 +554,10 @@ class JotaiBenchmarkManager:
                 potential_headers = clang_dir / "lib" / "clang" / "22" / "include"
                 if potential_headers.exists():
                     compile_flags.append(f"-isystem{potential_headers}")
-                    self.logger.info(f"Found headers relative to clang: {potential_headers}")
+                    self.logger.info(f"✓ Found headers relative to clang: {potential_headers}")
             
-            # Add system include paths
+            # Add system include paths AFTER clang headers
+            # This ensures clang headers are found when system headers reference them
             system_includes = [
                 "/usr/include",
                 "/usr/local/include",
@@ -574,10 +581,18 @@ class JotaiBenchmarkManager:
             ]
 
             # Try compilation with multiple strategies if first attempt fails
+            # Strategy 2: Remove -nostdinc and let clang use default includes (may work if system has headers)
+            strategy2_flags = [f for f in compile_flags if f != "-nostdinc"]
+            # Strategy 3: Minimal flags without -nostdinc
+            strategy3_flags = ["-g", "-O1", "-std=c11", "-Wno-everything", "-fno-builtin"]
+            # Add clang resource dir to strategy 3 if available
+            if clang_resource_dir:
+                strategy3_flags.append(f"-isystem{clang_resource_dir}")
+            
             compilation_strategies = [
                 ("standard", compile_flags),
-                ("no-system-includes", [f for f in compile_flags if not f.startswith("-isystem")]),
-                ("minimal", ["-g", "-O1", "-std=c11", "-Wno-everything", "-fno-builtin"]),
+                ("no-nostdinc", strategy2_flags),
+                ("minimal", strategy3_flags),
             ]
             
             last_stderr = ""

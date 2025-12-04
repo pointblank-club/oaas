@@ -540,46 +540,96 @@ class JotaiBenchmarkManager:
             # The bundled headers are incomplete, so we need system clang's resource dir (has stddef.h)
             # Then add system includes. This matches clang-obfuscate script approach.
             
-            # Find system clang's resource directory (where stddef.h lives)
-            # This is needed because custom clang's bundled headers are incomplete
-            system_clang_resource_dir = None
+            # Find clang resource directory (where stddef.h lives)
+            # Priority: 1) System clang headers, 2) Bundled headers from custom clang
+            clang_resource_dir = None
+            
+            # First, try to find system clang headers (any version - they're generally compatible)
+            # Check for complete headers (both stddef.h and __float_header_macro.h)
             system_clang_paths = [
+                "/usr/lib/llvm-22/lib/clang/22/include",
                 "/usr/lib/llvm-19/lib/clang/19/include",
                 "/usr/lib/llvm-18/lib/clang/18/include",
-                "/usr/lib/llvm-22/lib/clang/22/include",
+                "/usr/lib/llvm-17/lib/clang/17/include",
+                "/usr/lib/llvm-16/lib/clang/16/include",
             ]
             # Try to find any system clang headers using glob pattern
             try:
                 llvm_base = Path("/usr/lib")
                 if llvm_base.exists():
                     # Look for llvm-*/lib/clang/*/include directories
-                    for llvm_dir in llvm_base.glob("llvm-*"):
+                    for llvm_dir in sorted(llvm_base.glob("llvm-*"), reverse=True):  # Prefer newer versions
                         clang_dir = llvm_dir / "lib" / "clang"
                         if clang_dir.exists():
-                            for version_dir in clang_dir.glob("*"):
+                            for version_dir in sorted(clang_dir.glob("*"), reverse=True):  # Prefer newer versions
                                 include_dir = version_dir / "include"
                                 if include_dir.exists():
-                                    system_clang_resource_dir = str(include_dir)
-                                    break
-                            if system_clang_resource_dir:
+                                    has_stddef = (include_dir / "stddef.h").exists()
+                                    has_float_macro = (include_dir / "__float_header_macro.h").exists()
+                                    if has_stddef and has_float_macro:
+                                        clang_resource_dir = str(include_dir)
+                                        self.logger.info(f"✓ Found complete system clang headers: {clang_resource_dir}")
+                                        break
+                                    elif has_stddef:
+                                        # Incomplete but usable
+                                        clang_resource_dir = str(include_dir)
+                                        self.logger.info(f"✓ Found system clang headers (partial): {clang_resource_dir}")
+                                        break
+                            if clang_resource_dir:
                                 break
             except Exception:
                 pass
             
-            # Fallback to known paths
-            if not system_clang_resource_dir:
+            # Fallback to known system paths
+            if not clang_resource_dir:
                 for path in system_clang_paths:
                     if os.path.exists(path):
-                        system_clang_resource_dir = path
-                        break
+                        has_stddef = os.path.exists(os.path.join(path, "stddef.h"))
+                        has_float_macro = os.path.exists(os.path.join(path, "__float_header_macro.h"))
+                        if has_stddef and has_float_macro:
+                            clang_resource_dir = path
+                            self.logger.info(f"✓ Found complete system clang headers (known path): {clang_resource_dir}")
+                            break
+                        elif has_stddef:
+                            clang_resource_dir = path
+                            self.logger.info(f"✓ Found system clang headers (known path, partial): {clang_resource_dir}")
+                            break
             
-            # Strategy 1: Use -nostdinc + system clang headers + system includes (like clang-obfuscate)
+            # If no system headers, check bundled headers from custom clang
+            # Use bundled headers even if incomplete (they have stddef.h which is critical)
+            # Clang's auto-discovery may help find missing files
+            if not clang_resource_dir:
+                bundled_headers = self._find_clang_resource_dir(clang_binary)
+                if bundled_headers:
+                    bundled_include = Path(bundled_headers)
+                    has_stddef = (bundled_include / "stddef.h").exists()
+                    has_float_macro = (bundled_include / "__float_header_macro.h").exists()
+                    
+                    if has_stddef:
+                        clang_resource_dir = bundled_headers
+                        if has_float_macro:
+                            self.logger.info(f"✓ Using bundled clang headers (complete): {clang_resource_dir}")
+                        else:
+                            self.logger.warning(f"⚠️  Using bundled headers (incomplete - missing __float_header_macro.h, but has stddef.h): {clang_resource_dir}")
+                    else:
+                        self.logger.warning("⚠️  Bundled headers missing stddef.h")
+                else:
+                    self.logger.warning("⚠️  No clang headers found (neither system nor bundled)")
+            
+            # Strategy 1: Use -I (high priority) for clang headers, let clang auto-discover system paths
+            # This allows system headers to find their dependencies while prioritizing our clang headers
             strategy1_flags = base_flags.copy()
-            strategy1_flags.append("-nostdinc")
-            if system_clang_resource_dir:
-                strategy1_flags.append(f"-isystem{system_clang_resource_dir}")
-                self.logger.info(f"✓ Using system clang headers: {system_clang_resource_dir}")
-            # Add system includes AFTER clang headers
+            if clang_resource_dir:
+                # Use -I instead of -isystem to give clang headers highest priority
+                strategy1_flags.append(f"-I{clang_resource_dir}")
+            
+            # Strategy 2: Use -nostdinc + explicit includes (more control but can break system headers)
+            strategy2_flags = base_flags.copy()
+            strategy2_flags.append("-nostdinc")
+            if clang_resource_dir:
+                # Use -I for clang headers (highest priority)
+                strategy2_flags.append(f"-I{clang_resource_dir}")
+            # Add system includes AFTER clang headers using -isystem (lower priority)
             system_includes = [
                 "/usr/local/include",
                 "/usr/include/x86_64-linux-gnu",
@@ -587,26 +637,24 @@ class JotaiBenchmarkManager:
             ]
             for inc_path in system_includes:
                 if os.path.exists(inc_path):
-                    strategy1_flags.append(f"-isystem{inc_path}")
-            
-            # Strategy 2: Try without -nostdinc (let clang auto-discover)
-            strategy2_flags = base_flags.copy()
-            if system_clang_resource_dir:
-                strategy2_flags.append(f"-isystem{system_clang_resource_dir}")
+                    strategy2_flags.append(f"-isystem{inc_path}")
             
             # Strategy 3: Minimal flags (last resort)
             strategy3_flags = ["-g", "-O1", "-std=c11", "-Wno-everything", "-fno-builtin"]
+            if clang_resource_dir:
+                strategy3_flags.append(f"-I{clang_resource_dir}")
             
             # Handle typedef redefinition conflicts
             problematic_types = ["ssize_t", "size_t", "off_t", "pid_t", "uid_t", "gid_t"]
             for ptype in problematic_types:
                 strategy1_flags.append(f"-U{ptype}")
                 strategy2_flags.append(f"-U{ptype}")
+                strategy3_flags.append(f"-U{ptype}")
             
-            # Try strategies: explicit includes first (most reliable), then auto, then minimal
+            # Try strategies: auto-discover first (most compatible), then explicit, then minimal
             compilation_strategies = [
-                ("explicit-includes", strategy1_flags),
-                ("auto-includes", strategy2_flags),
+                ("auto-includes", strategy1_flags),
+                ("explicit-includes", strategy2_flags),
                 ("minimal", strategy3_flags),
             ]
             

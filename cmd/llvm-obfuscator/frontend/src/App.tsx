@@ -313,7 +313,7 @@ function App() {
   const [pastedSource, setPastedSource] = useState('');
   const [selectedDemo, setSelectedDemo] = useState<string>('');
   const [jobId, setJobId] = useState<string | null>(null);
-  
+
   // GitHub integration state
   const [repoFiles, setRepoFiles] = useState<RepoFile[]>([]);
   const [selectedRepoFile, setSelectedRepoFile] = useState<RepoFile | null>(null);
@@ -322,6 +322,8 @@ function App() {
   const [repoSessionId, setRepoSessionId] = useState<string | null>(null);  // Fast clone session
   const [repoFileCount, setRepoFileCount] = useState<number>(0);  // File count from fast clone
   const [showGitHubModal, setShowGitHubModal] = useState(false);
+  const [loadingSession, setLoadingSession] = useState(false);  // Loading saved session
+  const [uploadingFiles, setUploadingFiles] = useState(false);  // Uploading local files
   const [downloadUrls, setDownloadUrls] = useState<Record<Platform, string | null>>({
     linux: null,
     windows: null,
@@ -399,6 +401,36 @@ function App() {
       .catch(() => setServerStatus('offline'));
   }, []);
 
+  // Restore session on mount
+  useEffect(() => {
+    const savedSessionId = sessionStorage.getItem('repoSessionId');
+    if (savedSessionId) {
+      setLoadingSession(true);
+      fetch(`/api/github/repo/session/${savedSessionId}`)
+        .then(res => {
+          if (res.ok) {
+            return res.json();
+          }
+          throw new Error('Session expired or not found');
+        })
+        .then(data => {
+          setRepoSessionId(data.session_id);
+          setRepoName(data.repo_name);
+          setRepoBranch(data.branch);
+          setRepoFileCount(data.file_count || 0);
+          // Set input mode based on whether it's a local upload or GitHub clone
+          // Local uploads have branch === "local"
+          setInputMode(data.branch === 'local' ? 'file' : 'github');
+          setLoadingSession(false);
+        })
+        .catch(err => {
+          console.log('No valid session to restore:', err);
+          sessionStorage.removeItem('repoSessionId');
+          setLoadingSession(false);
+        });
+    }
+  }, []);
+
   // Auto-detect language
   const detectLanguage = useCallback((filename: string, content?: string): 'c' | 'cpp' => {
     const ext = filename.toLowerCase().split('.').pop();
@@ -423,8 +455,233 @@ function App() {
       setInputMode('file');
       const lang = detectLanguage(nextFile.name);
       setDetectedLanguage(lang);
+      // Clear any existing session since we're switching to single file mode
+      if (repoSessionId) {
+        setRepoSessionId(null);
+        setRepoName('');
+        setRepoBranch('');
+        setRepoFileCount(0);
+        sessionStorage.removeItem('repoSessionId');
+      }
     }
-  }, [detectLanguage]);
+  }, [detectLanguage, repoSessionId]);
+
+  // Handle folder/multiple file upload
+  const onPickFolder = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+
+    setUploadingFiles(true);
+    setFile(null);  // Clear single file
+
+    try {
+      // Create FormData with all files
+      const formData = new FormData();
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        // webkitRelativePath contains the relative path including folder name
+        const relativePath = (file as any).webkitRelativePath || file.name;
+        formData.append('files', file, relativePath);
+      }
+
+      // Upload to backend
+      const response = await fetch('/api/local/folder/upload', {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ detail: response.statusText }));
+        throw new Error(errorData.detail || `Upload failed: ${response.status}`);
+      }
+
+      const data = await response.json();
+
+      // Use the same state management as GitHub clone
+      setRepoSessionId(data.session_id);
+      setRepoName(data.repo_name);
+      setRepoBranch(data.branch);
+      setRepoFileCount(data.file_count);
+      setRepoFiles([]);  // Clear any old files
+      setInputMode('file');  // Stay in file mode but show as project
+
+      // Save session ID for refresh persistence
+      sessionStorage.setItem('repoSessionId', data.session_id);
+
+      // Detect language from first C/C++ file
+      const cppExtensions = ['cpp', 'cc', 'cxx', 'c++'];
+      let detectedLang: 'c' | 'cpp' = 'c';
+      for (let i = 0; i < files.length; i++) {
+        const ext = files[i].name.split('.').pop()?.toLowerCase();
+        if (ext && cppExtensions.includes(ext)) {
+          detectedLang = 'cpp';
+          break;
+        }
+      }
+      setDetectedLanguage(detectedLang);
+
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      setModal({
+        type: 'error',
+        title: 'Upload Failed',
+        message: errorMsg,
+      });
+    } finally {
+      setUploadingFiles(false);
+      // Reset the input so the same folder can be selected again
+      e.target.value = '';
+    }
+  }, []);
+
+  // Handle folder upload from FileList (used by drag and drop)
+  const uploadFolderFiles = useCallback(async (files: FileList) => {
+    if (!files || files.length === 0) return;
+
+    setUploadingFiles(true);
+    setFile(null);  // Clear single file
+
+    try {
+      // Create FormData with all files
+      const formData = new FormData();
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        // For drag and drop, we need to preserve the folder structure
+        const relativePath = (file as any).webkitRelativePath || file.name;
+        formData.append('files', file, relativePath);
+      }
+
+      // Upload to backend
+      const response = await fetch('/api/local/folder/upload', {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ detail: response.statusText }));
+        throw new Error(errorData.detail || `Upload failed: ${response.status}`);
+      }
+
+      const data = await response.json();
+
+      // Use the same state management as GitHub clone
+      setRepoSessionId(data.session_id);
+      setRepoName(data.repo_name);
+      setRepoBranch(data.branch);
+      setRepoFileCount(data.file_count);
+      setRepoFiles([]);  // Clear any old files
+      setInputMode('file');  // Stay in file mode but show as project
+
+      // Save session ID for refresh persistence
+      sessionStorage.setItem('repoSessionId', data.session_id);
+
+      // Detect language from first C/C++ file
+      const cppExtensions = ['cpp', 'cc', 'cxx', 'c++'];
+      let detectedLang: 'c' | 'cpp' = 'c';
+      for (let i = 0; i < files.length; i++) {
+        const ext = files[i].name.split('.').pop()?.toLowerCase();
+        if (ext && cppExtensions.includes(ext)) {
+          detectedLang = 'cpp';
+          break;
+        }
+      }
+      setDetectedLanguage(detectedLang);
+
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      setModal({
+        type: 'error',
+        title: 'Upload Failed',
+        message: errorMsg,
+      });
+    } finally {
+      setUploadingFiles(false);
+    }
+  }, []);
+
+  // Drag and drop state
+  const [isDraggingOver, setIsDraggingOver] = useState(false);
+
+  // Handle drag and drop events
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDraggingOver(true);
+  }, []);
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDraggingOver(false);
+  }, []);
+
+  const handleDrop = useCallback(async (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDraggingOver(false);
+
+    const files = e.dataTransfer.files;
+    
+    if (files.length === 0) {
+      return;
+    }
+
+    // Helper to check if file has valid C/C++ extension
+    const validExtensions = ['c', 'cpp', 'cc', 'cxx', 'c++', 'h', 'hpp', 'hxx', 'h++', 'txt'];
+    const hasValidExtension = (filename: string) => {
+      const ext = filename.toLowerCase().split('.').pop();
+      return ext && validExtensions.includes(ext);
+    };
+
+    // If multiple files are dropped, treat as folder/project upload
+    if (files.length > 1) {
+      // Check if there's at least one valid C/C++ file
+      let hasValidFiles = false;
+      for (let i = 0; i < files.length; i++) {
+        if (hasValidExtension(files[i].name)) {
+          hasValidFiles = true;
+          break;
+        }
+      }
+
+      if (!hasValidFiles) {
+        setModal({
+          type: 'error',
+          title: 'No Valid Files Found',
+          message: `No C/C++ source files found in the dropped files. Please drop files with extensions: ${validExtensions.slice(0, -1).join(', ')}`
+        });
+        return;
+      }
+
+      // Upload all files (backend will filter)
+      await uploadFolderFiles(files);
+    } else {
+      // Single file - check if it's a valid C/C++ file
+      const file = files[0];
+      const ext = file.name.toLowerCase().split('.').pop();
+      
+      if (ext && validExtensions.includes(ext)) {
+        setFile(file);
+        setInputMode('file');
+        const lang = detectLanguage(file.name);
+        setDetectedLanguage(lang);
+        // Clear any existing session
+        if (repoSessionId) {
+          setRepoSessionId(null);
+          setRepoName('');
+          setRepoBranch('');
+          setRepoFileCount(0);
+          sessionStorage.removeItem('repoSessionId');
+        }
+      } else {
+        setModal({
+          type: 'error',
+          title: 'Invalid File Type',
+          message: `File type '.${ext}' is not supported. Please drop a C/C++ source file (.c, .cpp, .cc, .cxx, .c++, .txt).`
+        });
+      }
+    }
+  }, [uploadFolderFiles, detectLanguage, repoSessionId]);
 
   const onGitHubFilesLoaded = useCallback((files: RepoFile[], repoName: string, branch: string) => {
     setRepoFiles(files);
@@ -465,20 +722,23 @@ function App() {
     setRepoFiles([]);  // Clear any old files - we don't need them for fast clone
     setInputMode('github');
     setShowGitHubModal(false);
+
+    // Save session ID to sessionStorage for persistence across page refreshes
+    sessionStorage.setItem('repoSessionId', sessionId);
   }, []);
 
   // Helper function to parse errors into summary and details
   const parseErrorForDisplay = useCallback((error: string): { summary: string; details?: string } => {
     const lines = error.split('\n').filter(line => line.trim());
-    
+
     // Check for build failure pattern
     if (error.includes('Build failed:') || error.includes('Compilation failed')) {
-      const summaryLine = lines.find(l => 
-        l.includes('Build failed') || 
+      const summaryLine = lines.find(l =>
+        l.includes('Build failed') ||
         l.includes('Compilation failed') ||
         l.includes('error:')
       ) || lines[0];
-      
+
       // Extract a short summary
       let summary = 'Compilation failed';
       const errorMatch = error.match(/error:.*$/m);
@@ -487,13 +747,13 @@ function App() {
       } else if (summaryLine) {
         summary = summaryLine.slice(0, 100) + (summaryLine.length > 100 ? '...' : '');
       }
-      
+
       return {
         summary,
         details: lines.length > 1 ? error : undefined
       };
     }
-    
+
     // For other errors, use first line as summary if multi-line
     if (lines.length > 1) {
       return {
@@ -501,7 +761,7 @@ function App() {
         details: error
       };
     }
-    
+
     // Single line error - show as is if short, otherwise truncate with details
     if (error.length > 200) {
       return {
@@ -509,7 +769,7 @@ function App() {
         details: error
       };
     }
-    
+
     return { summary: error };
   }, []);
 
@@ -559,7 +819,7 @@ function App() {
   }, [layer1, layer2, layer2_5, layer3, layer4, layer5, passFlattening, passSubstitution, passBogusControlFlow, passSplitBasicBlocks, flagLTO, flagSymbolHiding, flagOmitFramePointer, flagSpeculativeLoadHardening, flagO3, flagStripSymbols, flagNoBuiltin]);
 
   // Validate source code syntax
-  const validateCode = (code: string, language: 'c' | 'cpp'): { valid: boolean; error?: string } => {
+  const validateCode = (code: string, _language: 'c' | 'cpp'): { valid: boolean; error?: string } => {
     if (!code || code.trim().length === 0) {
       return { valid: false, error: 'Source code is empty' };
     }
@@ -635,11 +895,12 @@ function App() {
 
   const onSubmit = useCallback(async () => {
     // Validation: Check if source is provided
-    if (inputMode === 'file' && !file) {
+    // For file mode: allow either single file OR repoSessionId (folder upload)
+    if (inputMode === 'file' && !file && !repoSessionId) {
       setModal({
         type: 'error',
         title: 'No File Selected',
-        message: 'Please select a C or C++ source file to obfuscate.'
+        message: 'Please select a C or C++ source file or folder to obfuscate.'
       });
       return;
     }
@@ -680,7 +941,8 @@ function App() {
     let language: 'c' | 'cpp';
 
     try {
-      if (inputMode === 'file') {
+      if (inputMode === 'file' && file && !repoSessionId) {
+        // Single file mode
         sourceCode = await new Promise<string>((resolve, reject) => {
           const reader = new FileReader();
           reader.onload = () => resolve(reader.result as string);
@@ -689,6 +951,11 @@ function App() {
         });
         filename = (file as File).name;
         language = detectLanguage(filename, sourceCode);
+      } else if (inputMode === 'file' && repoSessionId) {
+        // Folder upload mode: files are on backend (same as GitHub fast clone)
+        sourceCode = '// Folder upload mode - files on server';
+        filename = 'main.c';  // Placeholder - backend finds actual main file
+        language = 'c';
       } else if (inputMode === 'paste') {
         sourceCode = pastedSource;
         language = detectLanguage('pasted_source', pastedSource);
@@ -727,9 +994,9 @@ function App() {
       }
 
       // Validate code syntax
-      if (inputMode === 'github') {
-        // Skip validation for fast clone mode - backend handles it
-        if (!repoSessionId) {
+      if (inputMode === 'github' || (inputMode === 'file' && repoSessionId)) {
+        // Skip validation for fast clone / folder upload mode - backend handles it
+        if (inputMode === 'github' && !repoSessionId) {
           // Legacy mode: validate that at least one file has main()
           const hasMainFunction = repoFiles.some(f => {
             const ext = f.path.toLowerCase().split('.').pop();
@@ -763,7 +1030,7 @@ function App() {
             return;
           }
         }
-        // For fast clone, backend will validate (it already checks file count > 0)
+        // For fast clone/folder upload, backend will validate (it already checks file count > 0)
       } else {
         // For single file mode, validate the file itself
         const validation = validateCode(sourceCode, language);
@@ -789,11 +1056,11 @@ function App() {
     setBinaryName(null);
     setProgress({ message: 'Initializing...', percent: 0 });
 
-    // Prepare source files for multi-file projects (GitHub mode)
-    // Priority: 1) repoSessionId (fast clone, keeps all files on backend)
+    // Prepare source files for multi-file projects (GitHub mode or folder upload)
+    // Priority: 1) repoSessionId (fast clone/folder upload, keeps all files on backend)
     //           2) repoFiles (legacy, only C/C++ files)
     let sourceFiles = null;
-    const useSessionId = inputMode === 'github' && repoSessionId;
+    const useSessionId = repoSessionId !== null;  // Works for both GitHub and folder upload
 
     if (inputMode === 'github' && repoFiles.length > 0 && !repoSessionId) {
       // Legacy mode: filter only C/C++ source and header files
@@ -812,10 +1079,12 @@ function App() {
     try {
       const fileCountDisplay = useSessionId ? repoFileCount : (sourceFiles ? sourceFiles.length : 1);
       setProgress({
-        message: inputMode === 'file' ? 'Uploading file...' : inputMode === 'github' ? `Processing ${fileCountDisplay} repository file${fileCountDisplay > 1 ? 's' : ''}...` : 'Encoding source...',
+        message: useSessionId ? `Processing ${fileCountDisplay} file${fileCountDisplay > 1 ? 's' : ''}...` : (inputMode === 'file' ? 'Uploading file...' : inputMode === 'github' ? `Processing ${fileCountDisplay} repository file${fileCountDisplay > 1 ? 's' : ''}...` : 'Encoding source...'),
         percent: 10
       });
-      const source_b64 = inputMode === 'file' ? await fileToBase64(file as File) : stringToBase64(sourceCode);
+      // If using repo session ID (folder upload or GitHub fast clone), don't encode file
+      // Files are already uploaded to backend
+      const source_b64 = useSessionId ? '' : (inputMode === 'file' && file ? await fileToBase64(file) : stringToBase64(sourceCode));
 
       // Build compiler flags based on Layer 4 (Compiler Flags) - only selected flags
       const flags: string[] = [];
@@ -920,6 +1189,11 @@ function App() {
       setBinaryName(customBinaryName);
       setProgress({ message: 'Complete!', percent: 100 });
 
+      // Clear session storage since backend cleaned up the session
+      if (repoSessionId) {
+        sessionStorage.removeItem('repoSessionId');
+      }
+
       // Show success modal
       setModal({
         type: 'success',
@@ -979,7 +1253,7 @@ function App() {
       showErrorModal('Obfuscation Failed', userFriendlyError);
     } finally {
       setLoading(false);
-      setProgress(null); 
+      setProgress(null);
     }
   }, [
     file, inputMode, pastedSource, obfuscationLevel, cycles, targetPlatform, entrypointCommand,
@@ -1036,7 +1310,7 @@ function App() {
               <p>{modal.message}</p>
               {modal.details && (
                 <div className="error-details-section">
-                  <button 
+                  <button
                     className="error-details-toggle"
                     onClick={() => setShowErrorDetails(!showErrorDetails)}
                   >
@@ -1127,15 +1401,129 @@ function App() {
             </div>
           )}
 
-          {inputMode === 'file' ? (
-            <div className="file-input">
-              <label className="file-label">
-                <input type="file" accept=".c,.cpp,.cc,.cxx,.txt" onChange={onPick} />
-                SELECT FILE
-              </label>
-              {file && <span className="file-name">{file.name}</span>}
+          {loadingSession && (
+            <div style={{ padding: '20px', textAlign: 'center', color: 'var(--text-secondary)' }}>
+              <p>Restoring previous session...</p>
             </div>
-          ) : inputMode === 'paste' ? (
+          )}
+
+          {!loadingSession && inputMode === 'file' ? (
+            <div className="file-input">
+              {/* Show project info if session is active (local folder upload) */}
+              {repoSessionId ? (
+                <div className="github-repo-loaded">
+                  <div className="repo-info">
+                    <h4>📁 {repoName} ({repoBranch})</h4>
+                    <p>{repoFileCount} C/C++ source files ready</p>
+                    <p style={{ fontSize: '0.9em', color: 'var(--text-secondary)', marginTop: '5px' }}>
+                      ✓ Files uploaded to server (includes build system files: CMakeLists.txt, configure, etc.)
+                    </p>
+                    <p style={{ fontSize: '0.9em', color: 'var(--text-secondary)', marginTop: '3px' }}>
+                      ℹ️ All C/C++ files will be compiled together into a single obfuscated binary
+                    </p>
+                    <button
+                      className="clear-repo-btn"
+                      onClick={() => {
+                        setRepoSessionId(null);
+                        setRepoName('');
+                        setRepoBranch('');
+                        setRepoFileCount(0);
+                        setFile(null);
+                        sessionStorage.removeItem('repoSessionId');
+                      }}
+                      style={{
+                        marginTop: '10px',
+                        padding: '8px 16px',
+                        backgroundColor: 'var(--danger)',
+                        color: 'white',
+                        border: 'none',
+                        borderRadius: '4px',
+                        cursor: 'pointer',
+                        fontSize: '0.9em'
+                      }}
+                    >
+                      Clear Project
+                    </button>
+                  </div>
+                  <div className="github-content">
+                    <div className="file-preview" style={{ width: '100%' }}>
+                      <div className="file-preview-header">
+                        <h5>🚀 Ready to obfuscate</h5>
+                      </div>
+                      <div style={{ padding: '20px', textAlign: 'center', color: 'var(--text-secondary)' }}>
+                        <p>Project is uploaded and ready for obfuscation.</p>
+                        <p style={{ fontSize: '0.9em', marginTop: '10px' }}>
+                          Select your obfuscation layers above and click "Obfuscate" to begin.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  {/* Single file and folder upload - side by side */}
+                  <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                    <label className="file-label">
+                      <input type="file" accept=".c,.cpp,.cc,.cxx,.txt" onChange={onPick} />
+                      SELECT FILE
+                    </label>
+                    <label className="file-label" style={{ opacity: uploadingFiles ? 0.6 : 1 }}>
+                      <input
+                        type="file"
+                        /* @ts-ignore - webkitdirectory is a non-standard but widely supported attribute */
+                        webkitdirectory=""
+                        directory=""
+                        multiple
+                        onChange={onPickFolder}
+                        disabled={uploadingFiles}
+                      />
+                      {uploadingFiles ? 'UPLOADING...' : 'SELECT FOLDER'}
+                    </label>
+                  </div>
+                  {file && <span className="file-name">{file.name}</span>}
+                  
+                  {/* Drag and drop zone */}
+                  <div
+                    className={`drag-drop-zone ${isDraggingOver ? 'dragging-over' : ''}`}
+                    onDragOver={handleDragOver}
+                    onDragLeave={handleDragLeave}
+                    onDrop={handleDrop}
+                    style={{
+                      marginTop: '20px',
+                      padding: '40px 20px',
+                      border: isDraggingOver ? '2px dashed var(--accent)' : '2px dashed var(--border)',
+                      borderRadius: '8px',
+                      textAlign: 'center',
+                      backgroundColor: isDraggingOver ? 'var(--bg-secondary)' : 'transparent',
+                      transition: 'all 0.2s ease',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    <div style={{ fontSize: '2em', marginBottom: '10px' }}>
+                      {isDraggingOver ? '📂' : '📁'}
+                    </div>
+                    <div style={{ color: 'var(--text-secondary)', fontSize: '0.95em' }}>
+                      {isDraggingOver ? (
+                        <strong>Drop files or folder here</strong>
+                      ) : (
+                        <>
+                          <strong>Drag & Drop files or folders here</strong>
+                          <br />
+                          <span style={{ fontSize: '0.85em' }}>
+                            Single file: .c, .cpp, .cc, .cxx, .c++, .txt
+                            <br />
+                            Folder or multiple files: Uploaded as a project
+                            <br />
+                            <span style={{ opacity: 0.7 }}>Note: Non-C/C++ files will be included for build system support</span>
+                          </span>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+          ) : !loadingSession && inputMode === 'paste' ? (
             <textarea
               className="code-input"
               placeholder="// Paste your C/C++ source code here..."
@@ -1144,7 +1532,7 @@ function App() {
               rows={20}
               style={{ minHeight: '400px', fontFamily: 'monospace', fontSize: '14px' }}
             />
-          ) : (
+          ) : !loadingSession ? (
             <div className="github-input">
               {/* Fast clone mode: files are on backend */}
               {repoSessionId ? (
@@ -1158,6 +1546,28 @@ function App() {
                     <p style={{ fontSize: '0.9em', color: 'var(--text-secondary)', marginTop: '3px' }}>
                       ℹ️ All C/C++ files will be compiled together into a single obfuscated binary
                     </p>
+                    <button
+                      className="clear-repo-btn"
+                      onClick={() => {
+                        setRepoSessionId(null);
+                        setRepoName('');
+                        setRepoBranch('');
+                        setRepoFileCount(0);
+                        sessionStorage.removeItem('repoSessionId');
+                      }}
+                      style={{
+                        marginTop: '10px',
+                        padding: '8px 16px',
+                        backgroundColor: 'var(--danger)',
+                        color: 'white',
+                        border: 'none',
+                        borderRadius: '4px',
+                        cursor: 'pointer',
+                        fontSize: '0.9em'
+                      }}
+                    >
+                      Clear Repository
+                    </button>
                   </div>
                   <div className="github-content">
                     <div className="file-preview" style={{ width: '100%' }}>
@@ -1217,7 +1627,7 @@ function App() {
                 </div>
               )}
             </div>
-          )}
+          ) : null}
         </section>
 
         {/* Layer Selection */}
@@ -1728,9 +2138,9 @@ function App() {
             className="submit-btn"
             onClick={onSubmit}
             disabled={loading || (
-              inputMode === 'file' ? !file :
-              inputMode === 'paste' ? pastedSource.trim().length === 0 :
-              inputMode === 'github' ? (!repoSessionId && repoFiles.length === 0) : true
+              inputMode === 'file' ? (!file && !repoSessionId) :
+                inputMode === 'paste' ? pastedSource.trim().length === 0 :
+                  inputMode === 'github' ? (!repoSessionId && repoFiles.length === 0) : true
             )}
           >
             {loading ? 'PROCESSING...' : '► OBFUSCATE'}

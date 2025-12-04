@@ -12,7 +12,6 @@ __pycache__/
 # Build artifacts
 bin/
 dist/
-binaries/
 
 # Editor settings
 .vscode/
@@ -26,16 +25,14 @@ cmd/llvm-obfuscator/test_*/simple_auth
 cmd/llvm-obfuscator/test_*/*_test
 cmd/llvm-obfuscator/obfuscated/
 *.bak
-*.bak
-
-# Bundled compiler headers
-!cmd/llvm-obfuscator/plugins/*/lib/clang/*/include/
 
 # Generated reports - these are test outputs, don't commit
 cmd/llvm-obfuscator/reports/
 
 cmd/jotai_results/
 
-# Ignore plugins directory (binaries)
+# macOS SDK for cross-compilation (downloaded from GCP, ~366MB)
+cmd/llvm-obfuscator/macos-sdk/
+
+# LLVM plugins directory - binaries downloaded from GCP (gs://llvmbins/)
 cmd/llvm-obfuscator/plugins/
-cmd/llvm-obfuscator/plugins/linux-x86_64

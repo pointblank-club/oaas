@@ -1536,6 +1536,7 @@ async def api_obfuscate_sync(
                 "download_urls": {
                     "linux": f"/api/download/{job.job_id}/linux" if platform_binaries.get("linux") else None,
                     "windows": f"/api/download/{job.job_id}/windows" if platform_binaries.get("windows") else None,
+                    "macos": f"/api/download/{job.job_id}/macos" if platform_binaries.get("macos") else None,
                 },
                 "report_url": f"/api/report/{job.job_id}",
             }

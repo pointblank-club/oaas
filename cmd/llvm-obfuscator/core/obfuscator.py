@@ -1149,17 +1149,36 @@ class LLVMObfuscator:
             except Exception as e:
                 self.logger.debug(f"Stub header generation skipped: {e}")
 
-            # Detect compiler
+            # Detect compiler - use LLVM 22 for consistent compilation
+            # ✅ FIX: Use LLVM 22 clang/clang++ to match obfuscated compilation
             if source_file.suffix in ['.cpp', '.cxx', '.cc', '.c++']:
-                compiler = "clang++"
+                # Try LLVM 22 clang++, fall back to system clang++
+                llvm_clangxx = Path("/usr/local/llvm-obfuscator/bin/clang++")
+                if llvm_clangxx.exists():
+                    compiler = str(llvm_clangxx)
+                else:
+                    compiler = "clang++"
                 compile_flags = ["-lstdc++"]
             else:
-                compiler = "clang"
+                # Try LLVM 22 clang, fall back to system clang
+                llvm_clang = Path("/usr/local/llvm-obfuscator/bin/clang")
+                if llvm_clang.exists():
+                    compiler = str(llvm_clang)
+                else:
+                    compiler = "clang"
                 compile_flags = []
 
             # Add optimization flags (must match obfuscated compilation level for fair comparison)
             # Obfuscated binaries use -O3, so baseline must also use -O3
             compile_flags.extend(["-O3"])
+
+            # Log which compiler is being used for transparency
+            self.logger.info(f"Baseline compilation using: {compiler}")
+            if "llvm-obfuscator" in compiler:
+                self.logger.info("✓ Using LLVM 22 compiler for baseline (matches obfuscated compilation)")
+            else:
+                self.logger.warning("⚠️  Using system compiler for baseline - this may cause baseline/obfuscated comparison issues")
+                self.logger.warning("    Consider installing LLVM 22 at /usr/local/llvm-obfuscator/ for better accuracy")
 
             # Add target triple for cross-compilation
             target_triple = self._get_target_triple(config.platform, config.architecture)

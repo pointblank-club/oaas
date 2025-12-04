@@ -43,11 +43,12 @@ The LLVM Binary Obfuscator is a comprehensive code protection toolkit that makes
 5. [Usage Examples](#usage-examples)
 6. [CLI Reference](#cli-reference)
 7. [Best Practices](#best-practices)
-8. [Research & Testing](#research--testing)
-9. [API Documentation](#api-documentation)
-10. [Deployment](#deployment)
-11. [Contributing](#contributing)
-12. [License](#license)
+8. [MLIR-Based Obfuscation (Advanced)](#mlir-based-obfuscation-advanced)
+9. [Research & Testing](#research--testing)
+10. [API Documentation](#api-documentation)
+11. [Deployment](#deployment)
+12. [Contributing](#contributing)
+13. [License](#license)
 
 ---
 
@@ -58,8 +59,10 @@ The LLVM Binary Obfuscator is a comprehensive code protection toolkit that makes
 - Python 3.10+
 - Clang 15+ (or GCC 11+)
 - CMake 3.20+
-- LLVM 19+ (for Layer 3 OLLVM passes)
-- OpenSSL (for Layer 1 symbol obfuscation)
+- **LLVM 22** (for OLLVM passes and MLIR obfuscation)
+- **MLIR 22** (for MLIR-based passes - included with LLVM 22)
+- **OpenSSL** (for cryptographic symbol hashing)
+- **ClangIR** (optional - for advanced C/C++ pipeline, see [CLANGIR_PIPELINE_GUIDE.md](CLANGIR_PIPELINE_GUIDE.md))
 
 ### Option 1: Quick Install (Recommended)
 
@@ -72,13 +75,19 @@ cd llvm-obfuscator
 cd cmd/llvm-obfuscator
 pip install -r requirements.txt
 
-# Build symbol obfuscator (Layer 1)
-cd ../../symbol-obfuscator
+# Build MLIR obfuscation library (for MLIR passes)
+cd ../../mlir-obs
+./build.sh
+cd ..
+
+# Build symbol obfuscator (optional - legacy)
+cd symbol-obfuscator
 mkdir build && cd build
 cmake .. && make
+cd ../..
 
 # Verify installation
-python3 -m cli.obfuscate --help
+python3 -m cmd.llvm-obfuscator.cli.obfuscate --help
 ```
 
 ### Option 2: Full Build (with OLLVM Layer 2)
@@ -858,6 +867,55 @@ jobs:
           name: obfuscated-binary
           path: release/main
 ```
+
+---
+
+## MLIR-Based Obfuscation (Advanced)
+
+In addition to the 4-layer system, the obfuscator now supports **MLIR-based obfuscation** for advanced control-flow and constant transformations.
+
+### Two Pipeline Options
+
+**1. Default Pipeline (CLANG)** - Stable, Production-Ready
+```bash
+python3 -m cli.obfuscate compile source.c \
+  --enable-string-encrypt \
+  --enable-crypto-hash \
+  --output ./output
+```
+
+**2. ClangIR Pipeline (CLANGIR)** - Advanced C/C++ Semantics
+```bash
+python3 -m cli.obfuscate compile source.c \
+  --mlir-frontend clangir \
+  --enable-string-encrypt \
+  --enable-crypto-hash \
+  --enable-constant-obfuscate \
+  --output ./output
+```
+
+### MLIR Passes Available
+
+| Pass | Description | Flag |
+|------|-------------|------|
+| **String Encryption** | XOR-based string literal encryption | `--enable-string-encrypt` |
+| **Symbol Obfuscation** | Random hex symbol names (RNG-based) | `--enable-symbol-obfuscate` |
+| **Crypto Hash** | Cryptographic symbol hashing (SHA256/BLAKE2B/SipHash) | `--enable-crypto-hash` |
+| **Constant Obfuscation** | Obfuscate ALL constants (int/float/string/array) | `--enable-constant-obfuscate` |
+
+### ClangIR Advantages
+
+✅ **Preserves high-level C/C++ semantics** for better obfuscation quality
+✅ **More accurate control flow analysis** at MLIR level
+✅ **Native LLVM 22 support** - officially part of LLVM project
+✅ **Better type preservation** compared to lowered LLVM IR
+✅ **Future-proof** - active development by LLVM community
+
+### Documentation
+
+- **MLIR Integration Guide**: [MLIR_INTEGRATION_GUIDE.md](MLIR_INTEGRATION_GUIDE.md) - Quick start and usage examples
+- **ClangIR Pipeline Guide**: [CLANGIR_PIPELINE_GUIDE.md](CLANGIR_PIPELINE_GUIDE.md) - Comprehensive ClangIR documentation
+- **MLIR Passes README**: [mlir-obs/README.md](mlir-obs/README.md) - Pass implementation details
 
 ---
 

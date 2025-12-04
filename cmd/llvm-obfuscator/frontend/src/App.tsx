@@ -1902,21 +1902,26 @@ function App() {
                   className="select-all-btn"
                   style={{ marginBottom: '10px', fontSize: '0.9em' }}
                   onClick={() => {
-                    const allFlagsSelected = flagSymbolHiding &&
+                    // When Layer 3 is enabled, LTO is incompatible, so exclude it from Select All logic
+                    const allCompatibleFlagsSelected = flagSymbolHiding &&
                       flagOmitFramePointer && flagSpeculativeLoadHardening &&
-                      flagO3 && flagStripSymbols && flagNoBuiltin && flagLTO;
-                    const newValue = !allFlagsSelected;
+                      flagO3 && flagStripSymbols && flagNoBuiltin &&
+                      (layer3 ? true : flagLTO); // Ignore LTO when Layer 3 is active
+                    const newValue = !allCompatibleFlagsSelected;
                     setFlagSymbolHiding(newValue);
                     setFlagOmitFramePointer(newValue);
                     setFlagSpeculativeLoadHardening(newValue);
                     setFlagO3(newValue);
                     setFlagStripSymbols(newValue);
                     setFlagNoBuiltin(newValue);
-                    setFlagLTO(newValue);
+                    // Only toggle LTO if Layer 3 is not enabled (LTO is incompatible with OLLVM)
+                    if (!layer3) {
+                      setFlagLTO(newValue);
+                    }
                   }}
                 >
                   {flagSymbolHiding && flagOmitFramePointer && flagSpeculativeLoadHardening &&
-                    flagO3 && flagStripSymbols && flagNoBuiltin && flagLTO
+                    flagO3 && flagStripSymbols && flagNoBuiltin && (layer3 ? true : flagLTO)
                     ? 'Deselect All' : 'Select All'}
                 </button>
                 <label className="sub-option">

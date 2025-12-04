@@ -525,7 +525,7 @@ class JotaiBenchmarkManager:
             
             # Build compilation flags - Jotai benchmarks are extracted functions
             # Use very permissive flags to handle incomplete extracted code
-            compile_flags = [
+            base_flags = [
                 "-g", "-O1",
                 "-std=c11",
                 "-Wno-everything",  # Ignore all warnings
@@ -536,51 +536,130 @@ class JotaiBenchmarkManager:
                 "-Wno-typedef-redefinition",  # Allow typedef redefinition (treat as warning)
             ]
             
-            # Add standard include paths if they exist - CRITICAL for stddef.h
-            clang_resource_dir = self._find_clang_resource_dir(clang_binary)
-            if clang_resource_dir:
-                compile_flags.append(f"-isystem{clang_resource_dir}")
-                self.logger.debug(f"Added clang resource dir to includes: {clang_resource_dir}")
-            else:
-                self.logger.warning(f"WARNING: Could not find clang resource directory for {clang_binary}")
-                # Try to find it relative to clang binary
-                clang_dir = clang_binary.parent
-                potential_headers = clang_dir / "lib" / "clang" / "22" / "include"
-                if potential_headers.exists():
-                    compile_flags.append(f"-isystem{potential_headers}")
-                    self.logger.info(f"Found headers relative to clang: {potential_headers}")
+            # KEY INSIGHT: Use custom clang binary (for obfuscation) but with SYSTEM clang headers
+            # The bundled headers are incomplete, so we need system clang's resource dir (has stddef.h)
+            # Then add system includes. This matches clang-obfuscate script approach.
             
-            # Add system include paths
+            # Find clang resource directory (where stddef.h lives)
+            # Priority: 1) System clang headers, 2) Bundled headers from custom clang
+            clang_resource_dir = None
+            
+            # First, try to find system clang headers (any version - they're generally compatible)
+            # Check for complete headers (both stddef.h and __float_header_macro.h)
+            system_clang_paths = [
+                "/usr/lib/llvm-22/lib/clang/22/include",
+                "/usr/lib/llvm-19/lib/clang/19/include",
+                "/usr/lib/llvm-18/lib/clang/18/include",
+                "/usr/lib/llvm-17/lib/clang/17/include",
+                "/usr/lib/llvm-16/lib/clang/16/include",
+            ]
+            # Try to find any system clang headers using glob pattern
+            try:
+                llvm_base = Path("/usr/lib")
+                if llvm_base.exists():
+                    # Look for llvm-*/lib/clang/*/include directories
+                    for llvm_dir in sorted(llvm_base.glob("llvm-*"), reverse=True):  # Prefer newer versions
+                        clang_dir = llvm_dir / "lib" / "clang"
+                        if clang_dir.exists():
+                            for version_dir in sorted(clang_dir.glob("*"), reverse=True):  # Prefer newer versions
+                                include_dir = version_dir / "include"
+                                if include_dir.exists():
+                                    has_stddef = (include_dir / "stddef.h").exists()
+                                    has_float_macro = (include_dir / "__float_header_macro.h").exists()
+                                    if has_stddef and has_float_macro:
+                                        clang_resource_dir = str(include_dir)
+                                        self.logger.info(f"✓ Found complete system clang headers: {clang_resource_dir}")
+                                        break
+                                    elif has_stddef:
+                                        # Incomplete but usable
+                                        clang_resource_dir = str(include_dir)
+                                        self.logger.info(f"✓ Found system clang headers (partial): {clang_resource_dir}")
+                                        break
+                            if clang_resource_dir:
+                                break
+            except Exception:
+                pass
+            
+            # Fallback to known system paths
+            if not clang_resource_dir:
+                for path in system_clang_paths:
+                    if os.path.exists(path):
+                        has_stddef = os.path.exists(os.path.join(path, "stddef.h"))
+                        has_float_macro = os.path.exists(os.path.join(path, "__float_header_macro.h"))
+                        if has_stddef and has_float_macro:
+                            clang_resource_dir = path
+                            self.logger.info(f"✓ Found complete system clang headers (known path): {clang_resource_dir}")
+                            break
+                        elif has_stddef:
+                            clang_resource_dir = path
+                            self.logger.info(f"✓ Found system clang headers (known path, partial): {clang_resource_dir}")
+                            break
+            
+            # If no system headers, check bundled headers from custom clang
+            # Use bundled headers even if incomplete (they have stddef.h which is critical)
+            # Clang's auto-discovery may help find missing files
+            if not clang_resource_dir:
+                bundled_headers = self._find_clang_resource_dir(clang_binary)
+                if bundled_headers:
+                    bundled_include = Path(bundled_headers)
+                    has_stddef = (bundled_include / "stddef.h").exists()
+                    has_float_macro = (bundled_include / "__float_header_macro.h").exists()
+                    
+                    if has_stddef:
+                        clang_resource_dir = bundled_headers
+                        if has_float_macro:
+                            self.logger.info(f"✓ Using bundled clang headers (complete): {clang_resource_dir}")
+                        else:
+                            self.logger.warning(f"⚠️  Using bundled headers (incomplete - missing __float_header_macro.h, but has stddef.h): {clang_resource_dir}")
+                    else:
+                        self.logger.warning("⚠️  Bundled headers missing stddef.h")
+                else:
+                    self.logger.warning("⚠️  No clang headers found (neither system nor bundled)")
+            
+            # Strategy 1: Use -I (high priority) for clang headers, let clang auto-discover system paths
+            # This allows system headers to find their dependencies while prioritizing our clang headers
+            strategy1_flags = base_flags.copy()
+            if clang_resource_dir:
+                # Use -I instead of -isystem to give clang headers highest priority
+                strategy1_flags.append(f"-I{clang_resource_dir}")
+            
+            # Strategy 2: Use -nostdinc + explicit includes (more control but can break system headers)
+            strategy2_flags = base_flags.copy()
+            strategy2_flags.append("-nostdinc")
+            if clang_resource_dir:
+                # Use -I for clang headers (highest priority)
+                strategy2_flags.append(f"-I{clang_resource_dir}")
+            # Add system includes AFTER clang headers using -isystem (lower priority)
             system_includes = [
-                "/usr/include",
                 "/usr/local/include",
-                "/usr/include/x86_64-linux-gnu",  # Linux-specific
+                "/usr/include/x86_64-linux-gnu",
+                "/usr/include",
             ]
             for inc_path in system_includes:
                 if os.path.exists(inc_path):
-                    compile_flags.append(f"-isystem{inc_path}")
+                    strategy2_flags.append(f"-isystem{inc_path}")
             
-            # Handle typedef redefinition conflicts by undefining system types
+            # Strategy 3: Minimal flags (last resort)
+            strategy3_flags = ["-g", "-O1", "-std=c11", "-Wno-everything", "-fno-builtin"]
+            if clang_resource_dir:
+                strategy3_flags.append(f"-I{clang_resource_dir}")
+            
+            # Handle typedef redefinition conflicts
             problematic_types = ["ssize_t", "size_t", "off_t", "pid_t", "uid_t", "gid_t"]
             for ptype in problematic_types:
-                compile_flags.append(f"-U{ptype}")
+                strategy1_flags.append(f"-U{ptype}")
+                strategy2_flags.append(f"-U{ptype}")
+                strategy3_flags.append(f"-U{ptype}")
             
-            compile_cmd = [
-                str(clang_binary)
-            ] + compile_flags + [
-                str(benchmark_path),
-                "-o", str(baseline_binary),
-                "-lm",  # Link math library (some benchmarks use math functions)
-            ]
-
-            # Try compilation with multiple strategies if first attempt fails
+            # Try strategies: auto-discover first (most compatible), then explicit, then minimal
             compilation_strategies = [
-                ("standard", compile_flags),
-                ("no-system-includes", [f for f in compile_flags if not f.startswith("-isystem")]),
-                ("minimal", ["-g", "-O1", "-std=c11", "-Wno-everything", "-fno-builtin"]),
+                ("auto-includes", strategy1_flags),
+                ("explicit-includes", strategy2_flags),
+                ("minimal", strategy3_flags),
             ]
             
             last_stderr = ""
+            successful_flags = None  # Will store flags that worked for baseline compilation
             for strategy_name, strategy_flags in compilation_strategies:
                 strategy_cmd = [str(clang_binary)] + strategy_flags + [
                     str(benchmark_path),
@@ -599,10 +678,17 @@ class JotaiBenchmarkManager:
                     returncode = process.returncode
                     
                     if returncode == 0:
-                        # Success!
-                        if strategy_name != "standard":
+                        # Success! Store the successful flags for obfuscation
+                        if strategy_name != "explicit-includes":
                             self.logger.info(f"✓ Compiled with {strategy_name} strategy")
-                        break
+                        result.baseline_binary = baseline_binary
+                        result.compilation_success = True
+                        result.size_baseline = baseline_binary.stat().st_size if baseline_binary.exists() else 0
+                        self.logger.info(f"✓ Baseline binary created: {baseline_binary.name} ({result.size_baseline} bytes)")
+                        
+                        # Store successful compilation flags to pass to obfuscator
+                        successful_flags = strategy_flags.copy()
+                        break  # Exit strategy loop, continue to obfuscation
                     else:
                         # Failed, try next strategy
                         last_stderr = stderr
@@ -633,47 +719,70 @@ class JotaiBenchmarkManager:
                         return result
                     continue
             
-            # If we get here, compilation succeeded with one of the strategies
-
-            result.baseline_binary = baseline_binary
-            result.compilation_success = True
-            result.size_baseline = baseline_binary.stat().st_size if baseline_binary.exists() else 0
-            self.logger.info(f"✓ Baseline binary created: {baseline_binary.name} ({result.size_baseline} bytes)")
+            # Check if compilation succeeded
+            if not result.compilation_success:
+                # All strategies failed
+                return result
 
             # 2. Obfuscate the binary using LLVM obfuscator
             # The obfuscator takes source and produces obfuscated binary
+            # IMPORTANT: Pass the successful compilation flags to the obfuscator
+            # so it can compile with the same include paths that worked for baseline
             self.logger.info(f"Step 2: Obfuscating binary using LLVM obfuscator...")
             try:
                 # Update config output directory
                 config.output.directory = obfuscated_dir
                 
+                # Pass successful compilation flags to obfuscator
+                # This ensures obfuscator uses the same include paths that worked for baseline
+                original_flags = config.compiler_flags.copy() if config.compiler_flags else []
+                config.compiler_flags = successful_flags.copy()
+                self.logger.info(f"Using compilation flags that worked for baseline: {len(successful_flags)} flags")
+                
                 # Run obfuscation on source file (produces obfuscated binary)
+                self.logger.info(f"Calling obfuscator.obfuscate() for {benchmark_path.name}...")
                 obf_result = obfuscator.obfuscate(
                     source_file=benchmark_path,
                     config=config
                 )
+                
+                # Restore original flags
+                config.compiler_flags = original_flags
+                self.logger.info(f"Obfuscation call completed. Result keys: {list(obf_result.keys()) if isinstance(obf_result, dict) else 'not a dict'}")
 
                 # Find the obfuscated binary (obfuscator creates it with the source file name)
                 # The binary is typically named after the source file without extension
                 expected_binary = obfuscated_dir / benchmark_path.stem
+                self.logger.info(f"Looking for obfuscated binary at: {expected_binary}")
+                self.logger.info(f"Output directory contents: {list(obfuscated_dir.glob('*')) if obfuscated_dir.exists() else 'directory does not exist'}")
+                
                 if not expected_binary.exists():
                     # Try to find any binary file in the output directory
                     obfuscated_files = list(obfuscated_dir.glob(f"{benchmark_path.stem}*"))
                     # Filter for executable files
                     obfuscated_files = [f for f in obfuscated_files if f.is_file() and not f.suffix in ['.c', '.cpp', '.ll', '.json', '.md']]
+                    self.logger.info(f"Found {len(obfuscated_files)} potential obfuscated binaries: {[str(f) for f in obfuscated_files]}")
                     if obfuscated_files:
                         result.obfuscated_binary = obfuscated_files[0]
+                        self.logger.info(f"Using obfuscated binary: {result.obfuscated_binary}")
                     else:
-                        result.error_message = "Obfuscated binary not found"
+                        result.error_message = f"Obfuscated binary not found in {obfuscated_dir}. Expected: {expected_binary}"
+                        self.logger.error(result.error_message)
                         return result
                 else:
                     result.obfuscated_binary = expected_binary
+                    self.logger.info(f"Found obfuscated binary: {result.obfuscated_binary}")
                 
                 result.obfuscation_success = True
                 result.size_obfuscated = result.obfuscated_binary.stat().st_size
+                self.logger.info(f"✓ Obfuscation successful: {result.obfuscated_binary.name} ({result.size_obfuscated} bytes)")
 
             except Exception as e:
+                import traceback
+                error_details = traceback.format_exc()
                 result.error_message = f"Obfuscation failed: {str(e)}"
+                self.logger.error(f"❌ Obfuscation exception for {benchmark_path.name}:")
+                self.logger.error(error_details)
                 return result
 
             # 3. Functional testing

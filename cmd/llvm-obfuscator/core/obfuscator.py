@@ -216,8 +216,8 @@ class LLVMObfuscator:
         require_tool("clang")
         require_tool("mlir-opt")
         require_tool("mlir-translate")
-        if config.platform == Platform.WINDOWS:
-            require_tool("x86_64-w64-mingw32-gcc")
+        # Windows cross-compilation uses clang --target=x86_64-w64-mingw32
+        # MinGW libraries are needed but not the GCC binary itself
 
         source_content = source_file.read_text(encoding="utf-8", errors="ignore")
 

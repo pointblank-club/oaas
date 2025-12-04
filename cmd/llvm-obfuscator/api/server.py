@@ -28,9 +28,8 @@ from core import (
     Platform,
     analyze_binary,
 )
-from core.config import Architecture
 from core.comparer import CompareConfig, compare_binaries
-from core.config import AdvancedConfiguration, PassConfiguration, UPXConfiguration
+from core.config import AdvancedConfiguration, PassConfiguration, UPXConfiguration, Architecture
 from core.exceptions import JobNotFoundError, ValidationError
 from core.job_manager import JobManager
 from core.progress import ProgressEvent, ProgressTracker
@@ -1107,6 +1106,15 @@ async def api_obfuscate_sync(
                                 "functions_count": baseline_functions,
                                 "entropy": baseline_entropy,
                             },
+                            # ✅ FIX: Store baseline compiler metadata for reproducibility
+                            "baseline_compiler": {
+                                "compiler": "clang++/clang",
+                                "version": "LLVM 22",
+                                "optimization_level": "-O3",
+                                "compilation_method": "IR pipeline (bitcode → clang → object → link)",
+                                "compiler_flags": config.compiler_flags if config else [],
+                                "passes_applied": [],  # Baseline has no obfuscation passes
+                            },
                             "output_attributes": {
                                 "file_size": output_size,
                                 "binary_format": detect_binary_format(final_binary),
@@ -1141,15 +1149,15 @@ async def api_obfuscate_sync(
                                     }
                                 ],
                             },
-                            "string_obfuscation": {"enabled": config.advanced.string_encryption if config else False},
+                            "string_obfuscation": {"enabled": (config.passes.string_encrypt or payload.config.string_encryption) if config else False},
                             "fake_loops_inserted": {
                                 "count": 0,
                                 "types": [],
                                 "locations": [],
                             },
-                            "symbol_obfuscation": {"enabled": config.advanced.symbol_obfuscation.enabled if config and hasattr(config.advanced, 'symbol_obfuscation') else False},
-                            "indirect_calls": {"enabled": False},
-                            "upx_packing": {"enabled": False},
+                            "symbol_obfuscation": {"enabled": config.passes.symbol_obfuscate if config else False},
+                            "indirect_calls": {"enabled": (hasattr(config.advanced, 'indirect_calls') and config.advanced.indirect_calls.enabled) if config else False},
+                            "upx_packing": {"enabled": (config.advanced.upx_packing.enabled if config else False)},
                             "obfuscation_score": int(entropy_increase * 10) if entropy_increase > 0 else 0,  # Simple score based on entropy
                             "symbol_reduction": baseline_symbols - output_symbols,
                             "function_reduction": baseline_functions - output_functions,
@@ -1273,68 +1281,77 @@ async def api_obfuscate_sync(
         if not binary_path.exists():
             raise HTTPException(status_code=500, detail="Binary generation failed")
 
-        # Build for additional platforms if single-file mode
-        # For multi-platform support, we compile the same source for each target
-        platform_binaries = {"linux": None, "windows": None}
+        # Build for additional platforms only in single-file mode
+        if not is_multi_file:
+            # For multi-platform support, we compile the same source for each target
+            platform_binaries = {"linux": None, "windows": None}
 
-        # First result is for the primary platform
-        primary_platform = payload.platform.value
-        platform_binaries[primary_platform] = str(binary_path)
+            # First result is for the primary platform
+            primary_platform = payload.platform.value
+            platform_binaries[primary_platform] = str(binary_path)
 
-        # Compile for other platforms
-        # Get the obfuscated source (after source-level transforms)
-        obfuscated_source = result.get("obfuscated_source_path")
-        if obfuscated_source and Path(obfuscated_source).exists():
-            compile_source = Path(obfuscated_source)
+            # Compile for other platforms
+            # Get the obfuscated source (after source-level transforms)
+            obfuscated_source = result.get("obfuscated_source_path")
+            if obfuscated_source and Path(obfuscated_source).exists():
+                compile_source = Path(obfuscated_source)
+            else:
+                compile_source = source_path
+
+            for target_platform, target_arch in target_platforms:
+                if target_platform.value == primary_platform:
+                    continue  # Already compiled for primary platform
+
+                try:
+                    # Create platform-specific output directory
+                    platform_dir = working_dir / target_platform.value
+                    platform_dir.mkdir(exist_ok=True)
+
+                    # Build config for this platform
+                    platform_payload = payload.model_copy()
+                    platform_payload.platform = target_platform
+                    platform_payload.architecture = target_arch
+                    platform_config = _build_config_from_request(platform_payload, platform_dir)
+
+                    # Compile for this platform
+                    platform_result = obfuscator.obfuscate(
+                        compile_source,
+                        platform_config,
+                        job_id=f"{job.job_id}_{target_platform.value}"
+                    )
+
+                    platform_binary = Path(platform_result.get("output_file", ""))
+                    if platform_binary.exists():
+                        platform_binaries[target_platform.value] = str(platform_binary)
+                        logger.info(f"Built binary for {target_platform.value}: {platform_binary}")
+                    else:
+                        logger.warning(f"Binary generation failed for {target_platform.value}")
+                except Exception as e:
+                    logger.warning(f"Failed to build for {target_platform.value}: {e}")
+                    # Continue with other platforms even if one fails
+
+            # Store platform binaries in job result
+            result["platform_binaries"] = platform_binaries
+            job_manager.update_job(job.job_id, result=result)
+
+            return {
+                "job_id": job.job_id,
+                "status": "completed",
+                "download_url": f"/api/download/{job.job_id}",
+                "download_urls": {
+                    "linux": f"/api/download/{job.job_id}/linux" if platform_binaries.get("linux") else None,
+                    "windows": f"/api/download/{job.job_id}/windows" if platform_binaries.get("windows") else None,
+                },
+                "report_url": f"/api/report/{job.job_id}",
+            }
         else:
-            compile_source = source_path
-
-        for target_platform, target_arch in target_platforms:
-            if target_platform.value == primary_platform:
-                continue  # Already compiled for primary platform
-
-            try:
-                # Create platform-specific output directory
-                platform_dir = working_dir / target_platform.value
-                platform_dir.mkdir(exist_ok=True)
-
-                # Build config for this platform
-                platform_payload = payload.model_copy()
-                platform_payload.platform = target_platform
-                platform_payload.architecture = target_arch
-                platform_config = _build_config_from_request(platform_payload, platform_dir)
-
-                # Compile for this platform
-                platform_result = obfuscator.obfuscate(
-                    compile_source,
-                    platform_config,
-                    job_id=f"{job.job_id}_{target_platform.value}"
-                )
-
-                platform_binary = Path(platform_result.get("output_file", ""))
-                if platform_binary.exists():
-                    platform_binaries[target_platform.value] = str(platform_binary)
-                    logger.info(f"Built binary for {target_platform.value}: {platform_binary}")
-                else:
-                    logger.warning(f"Binary generation failed for {target_platform.value}")
-            except Exception as e:
-                logger.warning(f"Failed to build for {target_platform.value}: {e}")
-                # Continue with other platforms even if one fails
-
-        # Store platform binaries in job result
-        result["platform_binaries"] = platform_binaries
-        job_manager.update_job(job.job_id, result=result)
-
-        return {
-            "job_id": job.job_id,
-            "status": "completed",
-            "download_url": f"/api/download/{job.job_id}",
-            "download_urls": {
-                "linux": f"/api/download/{job.job_id}/linux" if platform_binaries.get("linux") else None,
-                "windows": f"/api/download/{job.job_id}/windows" if platform_binaries.get("windows") else None,
-            },
-            "report_url": f"/api/report/{job.job_id}",
-        }
+            # Multi-file mode - return single platform response
+            return {
+                "job_id": job.job_id,
+                "status": "completed",
+                "download_url": f"/api/download/{job.job_id}",
+                "report_url": f"/api/report/{job.job_id}",
+            }
     except Exception as exc:
         logger.exception("Job %s failed", job.job_id)
         job_manager.update_job(job.job_id, status="failed", error=str(exc))
@@ -1567,27 +1584,27 @@ async def github_repo_session_status(session_id: str):
 async def github_repo_session_delete(session_id: str):
     """Manually delete a repository session."""
     success = cleanup_repo_session(session_id)
-    
+
     if not success:
         raise HTTPException(status_code=404, detail="Session not found")
-    
+
     return JSONResponse({"success": True, "message": "Session deleted"})
 
 
 @app.post("/api/github/repo/session/{session_id}")
 async def github_repo_session_cleanup_beacon(session_id: str):
     """Cleanup repository session via sendBeacon (called on page unload).
-    
+
     This endpoint accepts POST requests from navigator.sendBeacon() which is used
     for reliable cleanup when the user closes or navigates away from the page.
     """
     success = cleanup_repo_session(session_id)
-    
+
     # Don't raise error if session not found - it may have already been cleaned up
     # Just log and return success to avoid errors in browser console
     if not success:
         logger.info(f"Session cleanup called but session not found: {session_id}")
-    
+
     return JSONResponse({"success": True, "message": "Session cleanup completed"})
 
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import json
 import logging
 import os
 import re
@@ -1304,6 +1305,73 @@ async def api_obfuscate_sync(
             config = _build_config_from_request(payload, working_dir)
 
             result = obfuscator.obfuscate(source_path, config, job_id=job.job_id)
+
+        # ✅ NEW: Run tests for ALL build modes (multifile, simple, custom)
+        # This runs AFTER obfuscation but BEFORE report attachment
+        # The baseline binary is created during obfuscation in the output_directory
+        try:
+            output_dir = Path(config.output.directory) if config and config.output else None
+            obfuscated_binary = Path(result.get("output_file", ""))
+
+            if output_dir and obfuscated_binary.exists():
+                # Baseline binary is created during obfuscation
+                source_stem = source_path.stem if 'source_path' in locals() else (
+                    main_file_path.stem if 'main_file_path' in locals() else "program"
+                )
+                baseline_binary = output_dir / f"{source_stem}_baseline"
+
+                if baseline_binary.exists():
+                    logger.info(f"Running tests for obfuscation result...")
+                    logger.info(f"  Baseline: {baseline_binary}")
+                    logger.info(f"  Obfuscated: {obfuscated_binary}")
+
+                    # Try full test suite first, then lightweight as fallback
+                    test_results = run_obfuscation_tests(
+                        baseline_binary=baseline_binary,
+                        obfuscated_binary=obfuscated_binary,
+                        program_name=payload.name or source_stem,
+                        results_dir=Path(job.job_id)
+                    )
+
+                    if not test_results:
+                        logger.info("Running lightweight tests as fallback...")
+                        test_results = run_lightweight_tests(
+                            baseline_binary=baseline_binary,
+                            obfuscated_binary=obfuscated_binary,
+                            program_name=payload.name or source_stem
+                        )
+
+                    if test_results:
+                        logger.info("✅ Test results obtained, updating report...")
+                        # Merge test results into the existing report JSON
+                        report_path = result.get("report_paths", {}).get("json")
+                        if report_path and Path(report_path).exists():
+                            try:
+                                with open(report_path, 'r') as f:
+                                    report_data = json.load(f)
+
+                                # Add test results to report
+                                report_data["metadata"] = test_results.get("metadata")
+                                report_data["test_results"] = test_results.get("test_results")
+                                report_data["test_metrics"] = test_results.get("metrics", {})
+                                report_data["reliability_status"] = test_results.get("reliability_status")
+
+                                # Write updated report
+                                with open(report_path, 'w') as f:
+                                    json.dump(report_data, f, indent=2)
+
+                                logger.info(f"✅ Report updated with test results at: {report_path}")
+                            except Exception as e:
+                                logger.warning(f"Could not update report with test results: {e}")
+                        else:
+                            logger.warning(f"Could not find JSON report to update: {report_path}")
+                    else:
+                        logger.warning("No test results available")
+                else:
+                    logger.debug(f"Baseline binary not found at: {baseline_binary}")
+        except Exception as e:
+            logger.warning(f"Failed to run tests for multifile/simple mode: {e}")
+            # Continue without tests rather than blocking the job
 
         job_manager.update_job(job.job_id, status="completed", result=result)
         reports_to_attach = result.get("report_paths", {})

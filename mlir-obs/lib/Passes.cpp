@@ -36,31 +36,31 @@ void StringEncryptPass::runOnOperation() {
       StringRef attrName = attr.getName().getValue();
 
       // Skip all metadata/structural attributes - these should never be encrypted
-      // Only encrypt actual string data content (the "value" attr on global string constants)
       if (attrName == "sym_name" ||
+          attrName == "sym_visibility" ||
           attrName == "function_ref" ||
           attrName == "callee" ||
-          attrName == "target_cpu" ||
-          attrName == "tune_cpu" ||
           attrName == "llvm.target_triple" ||
           attrName == "llvm.ident" ||
+          attrName == "llvm.module_asm" ||
+          attrName == "target_cpu" ||
+          attrName == "tune_cpu" ||
           attrName == "target_features" ||
           attrName == "frame_pointer" ||
           attrName == "uwtable_kind" ||
           attrName == "linkage" ||
           attrName == "visibility" ||
           attrName == "dso_local" ||
-          attrName == "alignment" ||
           attrName == "addr_space" ||
-          attrName == "dlti.dl_spec" ||
-          attrName == "llvm.module_asm" ||
-          attrName.starts_with("passthrough") ||
-          attrName.starts_with("dlti.")) {
+          attrName == "alignment" ||
+          attrName == "passthrough" ||
+          attrName.starts_with("dlti.") ||
+          attrName.starts_with("llvm.")) {
         newAttrs.push_back(attr);
-        continue;  // Skip to next attribute - don't encrypt metadata
+        continue;
       }
 
-      // Only encrypt string attributes named "value" on global ops (actual string data)
+      // Only encrypt string attributes that are actual data (like "value" for global strings)
       if (attrName == "value") {
         if (auto strAttr = llvm::dyn_cast<StringAttr>(attr.getValue())) {
           std::string original = strAttr.getValue().str();

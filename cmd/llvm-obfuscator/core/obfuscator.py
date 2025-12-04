@@ -725,8 +725,9 @@ class LLVMObfuscator:
 
             import re
             # Fix target triple and datalayout
-            ir_content = re.sub(r'target triple = ".*"', f'target triple = "{target_triple}"', ir_content)
-            ir_content = re.sub(r'target datalayout = ".*"', f'target datalayout = "{data_layout}"', ir_content)
+            # Use re.DOTALL to handle multi-line target triple values (MLIR sometimes outputs newlines inside quotes)
+            ir_content = re.sub(r'target triple = "[^"]*"', f'target triple = "{target_triple}"', ir_content, flags=re.DOTALL)
+            ir_content = re.sub(r'target datalayout = "[^"]*"', f'target datalayout = "{data_layout}"', ir_content, flags=re.DOTALL)
 
             # Remove corrupted CPU attributes
             ir_content = re.sub(r'"target-cpu"="[^"]*"', '', ir_content)
@@ -836,35 +837,19 @@ class LLVMObfuscator:
 
             # Only continue with OLLVM if we still have passes enabled
             if ollvm_passes:
-                # Apply OLLVM passes multiple times based on cycles parameter
+                # Apply OLLVM passes
+                obfuscated_ir = destination_abs.parent / f"{destination_abs.stem}_obfuscated.bc"
                 passes_pipeline = ",".join(ollvm_passes)
-
-                for cycle_num in range(1, cycles + 1):
-                    if cycles > 1:
-                        self.logger.info(f"OLLVM cycle {cycle_num}/{cycles}: Applying passes ({passes_pipeline})")
-                    else:
-                        self.logger.info("Applying OLLVM passes via opt")
-
-                    # Output file for this cycle
-                    obfuscated_ir = destination_abs.parent / f"{destination_abs.stem}_obfuscated_c{cycle_num}.bc"
-
-                    opt_cmd = [
-                        str(opt_binary),
-                        "-load-pass-plugin=" + str(plugin_path),
-                        f"-passes={passes_pipeline}",
-                        str(current_input),
-                        "-o", str(obfuscated_ir)
-                    ]
-                    run_command(opt_cmd, cwd=source_abs.parent)
-
-                    # Clean up previous cycle's IR (except original source)
-                    if current_input != source_abs and current_input.exists() and current_input.suffix in ['.ll', '.bc']:
-                        current_input.unlink()
-
-                    current_input = obfuscated_ir
-
-                if cycles > 1:
-                    self.logger.info(f"Completed {cycles} OLLVM obfuscation cycles")
+                opt_cmd = [
+                    str(opt_binary),
+                    "-load-pass-plugin=" + str(plugin_path),
+                    f"-passes={passes_pipeline}",
+                    str(current_input),
+                    "-o", str(obfuscated_ir)
+                ]
+                self.logger.info("Applying OLLVM passes via opt")
+                run_command(opt_cmd, cwd=source_abs.parent)
+                current_input = obfuscated_ir
 
         # Stage 3: Compile to binary
         self.logger.info("Compiling final IR to binary...")
@@ -991,8 +976,9 @@ class LLVMObfuscator:
         with open(str(llvm_ir_file), 'r') as f:
             ir_content = f.read()
 
-        ir_content = re.sub(r'target triple = ".*"', f'target triple = "{target_triple}"', ir_content)
-        ir_content = re.sub(r'target datalayout = ".*"', f'target datalayout = "{data_layout}"', ir_content)
+        # Use re.DOTALL to handle multi-line target triple values (MLIR sometimes outputs newlines inside quotes)
+        ir_content = re.sub(r'target triple = "[^"]*"', f'target triple = "{target_triple}"', ir_content, flags=re.DOTALL)
+        ir_content = re.sub(r'target datalayout = "[^"]*"', f'target datalayout = "{data_layout}"', ir_content, flags=re.DOTALL)
         ir_content = re.sub(r'"target-cpu"="[^"]*"', '', ir_content)
         ir_content = re.sub(r'"target-features"="[^"]*"', '', ir_content)
         ir_content = re.sub(r'"tune-cpu"="[^"]*"', '', ir_content)

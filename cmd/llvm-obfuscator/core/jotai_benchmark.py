@@ -525,7 +525,7 @@ class JotaiBenchmarkManager:
             
             # Build compilation flags - Jotai benchmarks are extracted functions
             # Use very permissive flags to handle incomplete extracted code
-            compile_flags = [
+            base_flags = [
                 "-g", "-O1",
                 "-std=c11",
                 "-Wno-everything",  # Ignore all warnings
@@ -536,28 +536,23 @@ class JotaiBenchmarkManager:
                 "-Wno-typedef-redefinition",  # Allow typedef redefinition (treat as warning)
             ]
             
-            # CRITICAL: Use -nostdinc to control include order
-            # This prevents default include paths, allowing us to add clang headers FIRST
-            # so that when system headers (like /usr/include/stdio.h) try to include stddef.h,
-            # they find it in the clang resource directory
-            compile_flags.append("-nostdinc")
-            
-            # Add clang resource directory FIRST - this is where stddef.h lives
+            # Find clang resource directory
             clang_resource_dir = self._find_clang_resource_dir(clang_binary)
-            if clang_resource_dir:
-                compile_flags.append(f"-isystem{clang_resource_dir}")
-                self.logger.info(f"✓ Added clang resource dir (first): {clang_resource_dir}")
-            else:
-                self.logger.warning(f"WARNING: Could not find clang resource directory for {clang_binary}")
-                # Try to find it relative to clang binary
-                clang_dir = clang_binary.parent
-                potential_headers = clang_dir / "lib" / "clang" / "22" / "include"
-                if potential_headers.exists():
-                    compile_flags.append(f"-isystem{potential_headers}")
-                    self.logger.info(f"✓ Found headers relative to clang: {potential_headers}")
             
-            # Add system include paths AFTER clang headers
-            # This ensures clang headers are found when system headers reference them
+            # Strategy 1: Use clang's default includes (most reliable - clang knows where its headers are)
+            # This works best because clang automatically finds its resource directory
+            strategy1_flags = base_flags.copy()
+            # Optionally add clang resource dir as additional include (clang will use its own anyway)
+            if clang_resource_dir:
+                strategy1_flags.append(f"-isystem{clang_resource_dir}")
+            
+            # Strategy 2: Use -nostdinc with explicit include order (for when bundled headers are complete)
+            strategy2_flags = base_flags.copy()
+            strategy2_flags.append("-nostdinc")
+            if clang_resource_dir:
+                strategy2_flags.append(f"-isystem{clang_resource_dir}")
+                self.logger.info(f"✓ Added clang resource dir: {clang_resource_dir}")
+            # Add system includes after clang headers
             system_includes = [
                 "/usr/include",
                 "/usr/local/include",
@@ -565,33 +560,23 @@ class JotaiBenchmarkManager:
             ]
             for inc_path in system_includes:
                 if os.path.exists(inc_path):
-                    compile_flags.append(f"-isystem{inc_path}")
+                    strategy2_flags.append(f"-isystem{inc_path}")
+            
+            # Strategy 3: Minimal flags (last resort)
+            strategy3_flags = ["-g", "-O1", "-std=c11", "-Wno-everything", "-fno-builtin"]
+            if clang_resource_dir:
+                strategy3_flags.append(f"-isystem{clang_resource_dir}")
             
             # Handle typedef redefinition conflicts by undefining system types
             problematic_types = ["ssize_t", "size_t", "off_t", "pid_t", "uid_t", "gid_t"]
             for ptype in problematic_types:
-                compile_flags.append(f"-U{ptype}")
+                strategy1_flags.append(f"-U{ptype}")
+                strategy2_flags.append(f"-U{ptype}")
             
-            compile_cmd = [
-                str(clang_binary)
-            ] + compile_flags + [
-                str(benchmark_path),
-                "-o", str(baseline_binary),
-                "-lm",  # Link math library (some benchmarks use math functions)
-            ]
-
-            # Try compilation with multiple strategies if first attempt fails
-            # Strategy 2: Remove -nostdinc and let clang use default includes (may work if system has headers)
-            strategy2_flags = [f for f in compile_flags if f != "-nostdinc"]
-            # Strategy 3: Minimal flags without -nostdinc
-            strategy3_flags = ["-g", "-O1", "-std=c11", "-Wno-everything", "-fno-builtin"]
-            # Add clang resource dir to strategy 3 if available
-            if clang_resource_dir:
-                strategy3_flags.append(f"-isystem{clang_resource_dir}")
-            
+            # Try strategies in order: default includes first (most reliable), then -nostdinc, then minimal
             compilation_strategies = [
-                ("standard", compile_flags),
-                ("no-nostdinc", strategy2_flags),
+                ("default-includes", strategy1_flags),
+                ("explicit-includes", strategy2_flags),
                 ("minimal", strategy3_flags),
             ]
             
@@ -615,9 +600,13 @@ class JotaiBenchmarkManager:
                     
                     if returncode == 0:
                         # Success!
-                        if strategy_name != "standard":
+                        if strategy_name != "default-includes":
                             self.logger.info(f"✓ Compiled with {strategy_name} strategy")
-                        break
+                        result.baseline_binary = baseline_binary
+                        result.compilation_success = True
+                        result.size_baseline = baseline_binary.stat().st_size if baseline_binary.exists() else 0
+                        self.logger.info(f"✓ Baseline binary created: {baseline_binary.name} ({result.size_baseline} bytes)")
+                        return result  # Exit early on success
                     else:
                         # Failed, try next strategy
                         last_stderr = stderr

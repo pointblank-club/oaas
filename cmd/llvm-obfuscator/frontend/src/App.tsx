@@ -374,6 +374,7 @@ function App() {
   const [passSubstitution, setPassSubstitution] = useState(false);
   const [passBogusControlFlow, setPassBogusControlFlow] = useState(false);
   const [passSplitBasicBlocks, setPassSplitBasicBlocks] = useState(false);
+  const [passLinearMBA, setPassLinearMBA] = useState(false);
   const [cycles, setCycles] = useState<number | string>(1);
 
   // Layer 4: Compiler Flags sub-options
@@ -824,11 +825,11 @@ function App() {
     if (layer1) count++; // Symbol obfuscation
     if (layer2) count++; // String encryption
     if (layer2_5) count++; // Indirect calls
-    if (layer3 && (passFlattening || passSubstitution || passBogusControlFlow || passSplitBasicBlocks)) count++; // OLLVM passes
+    if (layer3 && (passFlattening || passSubstitution || passBogusControlFlow || passSplitBasicBlocks || passLinearMBA)) count++; // OLLVM passes
     if (layer4 && (flagLTO || flagSymbolHiding || flagOmitFramePointer || flagSpeculativeLoadHardening || flagO3 || flagStripSymbols || flagNoBuiltin)) count++; // Compiler flags
     if (layer5) count++; // UPX packing
     return count;
-  }, [layer1, layer2, layer2_5, layer3, layer4, layer5, passFlattening, passSubstitution, passBogusControlFlow, passSplitBasicBlocks, flagLTO, flagSymbolHiding, flagOmitFramePointer, flagSpeculativeLoadHardening, flagO3, flagStripSymbols, flagNoBuiltin]);
+  }, [layer1, layer2, layer2_5, layer3, layer4, layer5, passFlattening, passSubstitution, passBogusControlFlow, passSplitBasicBlocks, passLinearMBA, flagLTO, flagSymbolHiding, flagOmitFramePointer, flagSpeculativeLoadHardening, flagO3, flagStripSymbols, flagNoBuiltin]);
 
   // Validate source code syntax
   const validateCode = (code: string, _language: 'c' | 'cpp'): { valid: boolean; error?: string } => {
@@ -1137,7 +1138,8 @@ function App() {
             flattening: layer3 && passFlattening,
             substitution: layer3 && passSubstitution,
             bogus_control_flow: layer3 && passBogusControlFlow,
-            split: layer3 && passSplitBasicBlocks
+            split: layer3 && passSplitBasicBlocks,
+            linear_mba: layer3 && passLinearMBA
           },
           cycles: layer3 ? (typeof cycles === 'number' ? cycles : parseInt(String(cycles)) || 1) : 1,
           string_encryption: layer2,
@@ -1276,7 +1278,7 @@ function App() {
     layer1, layer2, layer3, layer4, layer2_5, layer5,
     symbolAlgorithm, symbolHashLength, symbolPrefix, symbolSalt,
     fakeLoops, indirectStdlib, indirectCustom,
-    passFlattening, passSubstitution, passBogusControlFlow, passSplitBasicBlocks,
+    passFlattening, passSubstitution, passBogusControlFlow, passSplitBasicBlocks, passLinearMBA,
     flagLTO, flagSymbolHiding, flagOmitFramePointer, flagSpeculativeLoadHardening,
     flagO3, flagStripSymbols, flagNoBuiltin,
     upxCompression, upxLzma, upxPreserveOriginal,
@@ -1657,7 +1659,7 @@ function App() {
               className="select-all-btn"
               onClick={() => {
                 const allSelected = layer1 && layer2 && layer2_5 && layer3 && layer4 && layer5 &&
-                  passFlattening && passSubstitution && passBogusControlFlow && passSplitBasicBlocks &&
+                  passFlattening && passSubstitution && passBogusControlFlow && passSplitBasicBlocks && passLinearMBA &&
                   flagLTO && flagSymbolHiding && flagOmitFramePointer && flagSpeculativeLoadHardening &&
                   flagO3 && flagStripSymbols && flagNoBuiltin;
 
@@ -1672,6 +1674,7 @@ function App() {
                 setPassSubstitution(newValue);
                 setPassBogusControlFlow(newValue);
                 setPassSplitBasicBlocks(newValue);
+                setPassLinearMBA(newValue);
                 setFlagLTO(newValue);
                 setFlagSymbolHiding(newValue);
                 setFlagOmitFramePointer(newValue);
@@ -1682,7 +1685,7 @@ function App() {
               }}
             >
               {layer1 && layer2 && layer2_5 && layer3 && layer4 && layer5 &&
-                passFlattening && passSubstitution && passBogusControlFlow && passSplitBasicBlocks &&
+                passFlattening && passSubstitution && passBogusControlFlow && passSplitBasicBlocks && passLinearMBA &&
                 flagLTO && flagSymbolHiding && flagOmitFramePointer && flagSpeculativeLoadHardening &&
                 flagO3 && flagStripSymbols && flagNoBuiltin
                 ? 'Deselect All' : 'Select All'}
@@ -1819,15 +1822,16 @@ function App() {
                   style={{ marginBottom: '10px', fontSize: '0.9em' }}
                   onClick={() => {
                     const allPassesSelected = passFlattening && passSubstitution &&
-                      passBogusControlFlow && passSplitBasicBlocks;
+                      passBogusControlFlow && passSplitBasicBlocks && passLinearMBA;
                     const newValue = !allPassesSelected;
                     setPassFlattening(newValue);
                     setPassSubstitution(newValue);
                     setPassBogusControlFlow(newValue);
                     setPassSplitBasicBlocks(newValue);
+                    setPassLinearMBA(newValue);
                   }}
                 >
-                  {passFlattening && passSubstitution && passBogusControlFlow && passSplitBasicBlocks
+                  {passFlattening && passSubstitution && passBogusControlFlow && passSplitBasicBlocks && passLinearMBA
                     ? 'Deselect All' : 'Select All'}
                 </button>
                 <label className="sub-option">
@@ -1861,6 +1865,17 @@ function App() {
                     onChange={(e) => setPassSplitBasicBlocks(e.target.checked)}
                   />
                   Split Basic Blocks
+                </label>
+                <label className="sub-option">
+                  <input
+                    type="checkbox"
+                    checked={passLinearMBA}
+                    onChange={(e) => setPassLinearMBA(e.target.checked)}
+                  />
+                  Linear MBA (Mixed Boolean-Arithmetic)
+                  <small style={{ display: 'block', color: '#888', marginTop: '2px', marginLeft: '20px' }}>
+                    Replaces AND/OR/XOR with per-bit reconstruction
+                  </small>
                 </label>
                 <label>
                   Cycle Count (1-5):

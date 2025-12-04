@@ -2,8 +2,8 @@ import { useState, useCallback, useEffect } from 'react';
 import './App.css';
 import { GitHubIntegration, FileTree, TestResults } from './components';
 
-type Platform = 'linux' | 'windows';  // macOS disabled - requires Apple SDK
-type Architecture = 'x86_64' | 'arm64' | 'i686';
+type Platform = 'linux' | 'windows' | 'macos';
+type Architecture = 'x86_64' | 'arm64';
 
 // Demo Programs
 const DEMO_PROGRAMS = {
@@ -339,6 +339,7 @@ function App() {
   const [downloadUrls, setDownloadUrls] = useState<Record<Platform, string | null>>({
     linux: null,
     windows: null,
+    macos: null,
   });
   const [binaryName, setBinaryName] = useState<string | null>(null);
   const [report, setReport] = useState<ReportData | null>(null);
@@ -1065,7 +1066,7 @@ function App() {
 
     setLoading(true);
     setReport(null);
-    setDownloadUrls({ linux: null, windows: null });
+    setDownloadUrls({ linux: null, windows: null, macos: null });
     setBinaryName(null);
     setProgress({ message: 'Initializing...', percent: 0 });
 
@@ -1192,12 +1193,14 @@ function App() {
       const downloadUrlsMap: Record<Platform, string | null> = {
         linux: null,
         windows: null,
+        macos: null,
       };
 
       if (data.download_urls) {
         // Multi-platform build - use platform-specific URLs
         downloadUrlsMap.linux = data.download_urls.linux || null;
         downloadUrlsMap.windows = data.download_urls.windows || null;
+        downloadUrlsMap.macos = data.download_urls.macos || null;
       } else if (data.download_url) {
         // Legacy single platform build
         downloadUrlsMap.linux = data.download_url;
@@ -2089,6 +2092,7 @@ function App() {
               >
                 <option value="linux">Linux</option>
                 <option value="windows">Windows</option>
+                <option value="macos">macOS (ARM64)</option>
               </select>
             </label>
 
@@ -2100,7 +2104,6 @@ function App() {
               >
                 <option value="x86_64">x86_64 (64-bit Intel/AMD)</option>
                 <option value="arm64">ARM64 (Apple M1/M2, ARM servers)</option>
-                <option value="i686">i686 (32-bit x86)</option>
               </select>
             </label>
 

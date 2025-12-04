@@ -170,9 +170,9 @@ class LLVMObfuscator:
             (Platform.WINDOWS, Architecture.X86): "i686-w64-mingw32",
             # macOS/Darwin targets
             (Platform.MACOS, Architecture.X86_64): "x86_64-apple-darwin",
-            (Platform.MACOS, Architecture.ARM64): "aarch64-apple-darwin",
+            (Platform.MACOS, Architecture.ARM64): "arm64-apple-darwin",
             (Platform.DARWIN, Architecture.X86_64): "x86_64-apple-darwin",
-            (Platform.DARWIN, Architecture.ARM64): "aarch64-apple-darwin",
+            (Platform.DARWIN, Architecture.ARM64): "arm64-apple-darwin",
         }
 
         triple = target_triples.get((platform, arch))
@@ -183,6 +183,63 @@ class LLVMObfuscator:
         # Fallback to x86_64 Linux if combination not found
         self.logger.warning(f"Unknown platform/arch combination: {platform.value}/{arch.value}, defaulting to x86_64-unknown-linux-gnu")
         return "x86_64-unknown-linux-gnu"
+
+    def _get_macos_cross_compile_flags(self, platform: Platform) -> List[str]:
+        """Get additional flags needed for macOS cross-compilation."""
+        if platform not in [Platform.MACOS, Platform.DARWIN]:
+            return []
+
+        flags = []
+
+        # Find macOS SDK
+        sdk_candidates = [
+            Path("/usr/local/macos-sdk/MacOSX15.4.sdk"),
+            Path("/usr/local/macos-sdk/MacOSX.sdk"),
+            Path("/app/macos-sdk/MacOSX15.4.sdk"),
+            Path.home() / "Documents" / "compilers" / "macos-sdk" / "MacOSX15.4.sdk",
+        ]
+
+        for sdk_path in sdk_candidates:
+            if sdk_path.exists():
+                flags.extend(["-isysroot", str(sdk_path)])
+                self.logger.info(f"Using macOS SDK: {sdk_path}")
+                break
+        else:
+            self.logger.warning("macOS SDK not found - compilation may fail")
+
+        # Use ld64.lld linker for Mach-O output (not ld.lld which is for ELF)
+        import shutil
+
+        # First check for bundled ld64.lld in plugins directory
+        bundled_ld64_candidates = [
+            Path(__file__).parent.parent / "plugins" / "linux-x86_64" / "ld64.lld",
+            Path("/usr/local/llvm-obfuscator/bin/ld64.lld"),
+            Path("/app/plugins/linux-x86_64/ld64.lld"),
+        ]
+
+        ld64_path = None
+        for candidate in bundled_ld64_candidates:
+            if candidate.exists():
+                ld64_path = str(candidate)
+                break
+
+        # Fall back to system ld64.lld
+        if not ld64_path:
+            ld64_path = (
+                shutil.which("ld64.lld") or
+                shutil.which("ld64.lld-18") or
+                shutil.which("/usr/bin/ld64.lld-18")
+            )
+
+        if ld64_path:
+            flags.append(f"-fuse-ld={ld64_path}")
+            # ld64.lld requires -platform_version instead of -macosx_version_min
+            flags.append("-Wl,-platform_version,macos,15.4.0,15.4.0")
+        else:
+            self.logger.warning("ld64.lld not found - macOS linking may fail")
+            flags.append("-fuse-ld=lld")
+
+        return flags
 
     def obfuscate(self, source_file: Path, config: ObfuscationConfig, job_id: Optional[str] = None) -> Dict:
         if not source_file.exists():
@@ -720,12 +777,15 @@ class LLVMObfuscator:
 
         compiler = base_compiler
 
+        # Check if target is macOS (for cross-compilation flags)
+        is_macos_target = config.platform in [Platform.MACOS, Platform.DARWIN]
+
         mlir_passes = [p for p in enabled_passes if p in ["string-encrypt", "symbol-obfuscate", "crypto-hash", "constant-obfuscate"]]
         ollvm_passes = [p for p in enabled_passes if p not in mlir_passes]
 
         # The input for the current stage of the pipeline
         current_input = source_abs
-        
+
         # Stage 1: MLIR Obfuscation
         if mlir_passes:
             self.logger.info("Running MLIR pipeline with passes: %s", ", ".join(mlir_passes))
@@ -750,6 +810,13 @@ class LLVMObfuscator:
             # Add target triple for cross-compilation
             target_triple = self._get_target_triple(config.platform, config.architecture)
             ir_cmd.extend([f"--target={target_triple}"])
+            # Add macOS-specific flags (sysroot)
+            macos_flags = self._get_macos_cross_compile_flags(config.platform)
+            # Only add sysroot for IR generation, not linker flags
+            for i, flag in enumerate(macos_flags):
+                if flag == "-isysroot" and i + 1 < len(macos_flags):
+                    ir_cmd.extend(["-isysroot", macos_flags[i + 1]])
+                    break
             run_command(ir_cmd, cwd=source_abs.parent)
 
             # 1b: Convert LLVM IR to MLIR
@@ -856,6 +923,12 @@ class LLVMObfuscator:
                 # Add target triple for cross-compilation
                 target_triple = self._get_target_triple(config.platform, config.architecture)
                 ir_cmd.extend([f"--target={target_triple}"])
+                # Add macOS-specific flags (sysroot)
+                macos_flags = self._get_macos_cross_compile_flags(config.platform)
+                for i, flag in enumerate(macos_flags):
+                    if flag == "-isysroot" and i + 1 < len(macos_flags):
+                        ir_cmd.extend(["-isysroot", macos_flags[i + 1]])
+                        break
                 run_command(ir_cmd, cwd=source_abs.parent)
                 current_input = ir_file
 
@@ -882,6 +955,7 @@ class LLVMObfuscator:
             if bundled_opt.exists():
                 self.logger.info("Using bundled opt: %s", bundled_opt)
                 opt_binary = bundled_opt
+                # Use bundled clang (has X86 and AArch64 support)
                 if bundled_clang.exists():
                     self.logger.info("Using bundled clang from LLVM 22: %s", bundled_clang)
                     compiler = str(bundled_clang)
@@ -927,6 +1001,10 @@ class LLVMObfuscator:
         # Add target triple for cross-compilation
         target_triple = self._get_target_triple(config.platform, config.architecture)
         final_cmd.extend([f"--target={target_triple}"])
+        # Add macOS-specific flags (sysroot, lld linker)
+        macos_flags = self._get_macos_cross_compile_flags(config.platform)
+        if macos_flags:
+            final_cmd.extend(macos_flags)
         run_command(final_cmd, cwd=source_abs.parent)
 
         # Cleanup any remaining intermediate files
@@ -973,6 +1051,9 @@ class LLVMObfuscator:
             base_compiler = "clang"
 
         compiler = base_compiler
+
+        # Check if target is macOS (for cross-compilation flags)
+        is_macos_target = config.platform in [Platform.MACOS, Platform.DARWIN]
 
         mlir_passes = [p for p in enabled_passes if p in ["string-encrypt", "symbol-obfuscate", "crypto-hash", "constant-obfuscate"]]
         ollvm_passes = [p for p in enabled_passes if p not in mlir_passes]
@@ -1107,6 +1188,10 @@ class LLVMObfuscator:
         # Add target triple for cross-compilation
         target_triple = self._get_target_triple(config.platform, config.architecture)
         final_cmd.extend([f"--target={target_triple}"])
+        # Add macOS-specific flags (sysroot, lld linker)
+        macos_flags = self._get_macos_cross_compile_flags(config.platform)
+        if macos_flags:
+            final_cmd.extend(macos_flags)
         run_command(final_cmd, cwd=source_abs.parent)
 
         # Cleanup intermediate files
@@ -1192,6 +1277,11 @@ class LLVMObfuscator:
             # Add target triple for cross-compilation
             target_triple = self._get_target_triple(config.platform, config.architecture)
             compile_flags.append(f"--target={target_triple}")
+
+            # Add macOS-specific flags (sysroot, lld linker)
+            macos_flags = self._get_macos_cross_compile_flags(config.platform)
+            if macos_flags:
+                compile_flags.extend(macos_flags)
 
             # Add include paths for common directories in the project
             include_dirs = set()

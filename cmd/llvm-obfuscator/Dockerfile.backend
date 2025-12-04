@@ -80,6 +80,14 @@ COPY plugins/linux-x86_64/MLIRObfuscation.so /usr/local/llvm-obfuscator/lib/
 COPY plugins/linux-x86_64/libLLVM.so.22.0git /usr/local/llvm-obfuscator/lib/
 COPY plugins/linux-x86_64/lib/clang/22 /usr/local/llvm-obfuscator/lib/clang/22
 
+# Copy lld linker and create symlinks for ld.lld and ld64.lld (macOS Mach-O linker)
+COPY plugins/linux-x86_64/lld /usr/local/llvm-obfuscator/bin/lld
+RUN ln -sf /usr/local/llvm-obfuscator/bin/lld /usr/local/llvm-obfuscator/bin/ld.lld
+RUN ln -sf /usr/local/llvm-obfuscator/bin/lld /usr/local/llvm-obfuscator/bin/ld64.lld
+
+# Copy macOS SDK for cross-compilation (minimal: headers + libs only, ~130MB)
+COPY macos-sdk/MacOSX15.4.sdk /app/macos-sdk/MacOSX15.4.sdk
+
 # Copy OLLVM wrapper scripts (these apply OLLVM passes via opt tool)
 COPY scripts/clang-obfuscate /usr/local/llvm-obfuscator/bin/clang-obfuscate
 COPY scripts/clang++-obfuscate /usr/local/llvm-obfuscator/bin/clang++-obfuscate
@@ -89,6 +97,7 @@ RUN ln -sf /usr/local/llvm-obfuscator/bin/clang.real /usr/local/llvm-obfuscator/
 # Make binaries executable
 RUN chmod +x /usr/local/llvm-obfuscator/bin/clang.real
 RUN chmod +x /usr/local/llvm-obfuscator/bin/opt
+RUN chmod +x /usr/local/llvm-obfuscator/bin/lld
 RUN chmod +x /usr/local/llvm-obfuscator/bin/mlir-opt
 RUN chmod +x /usr/local/llvm-obfuscator/bin/mlir-translate
 RUN chmod +x /usr/local/llvm-obfuscator/bin/clangir

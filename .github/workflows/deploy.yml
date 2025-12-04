@@ -36,10 +36,10 @@ jobs:
               exit 1
             fi
             
-            echo "✅ Using existing docker-compose.yml"
+            echo "✅ Using docker-compose.yml from repository"
             
             # Create necessary directories if they don't exist
-            mkdir -p reports logs
+            mkdir -p cmd/llvm-obfuscator/reports logs
             
             # Pull latest images from Docker Hub
             echo "📦 Pulling latest images from Docker Hub..."

@@ -12,6 +12,7 @@ __pycache__/
 # Build artifacts
 bin/
 dist/
+binaries/
 
 # Editor settings
 .vscode/

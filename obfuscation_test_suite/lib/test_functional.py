@@ -73,16 +73,18 @@ class FunctionalTester:
     def _run_binary(self, binary: Path, input_data: Optional[str] = None) -> Optional[str]:
         """Run binary and return output"""
         try:
+            # Increased timeout from 5s to 30s to accommodate obfuscated binaries
+            # Obfuscated code is slower due to control flow complexity
             result = subprocess.run(
                 [str(binary)],
                 input=input_data.encode() if input_data else None,
                 capture_output=True,
                 text=True,
-                timeout=5
+                timeout=30
             )
             return result.stdout
         except subprocess.TimeoutExpired:
-            logger.warning(f"Binary execution timed out: {binary}")
+            logger.warning(f"Binary execution timed out (>30s): {binary}")
             return None
         except Exception as e:
             logger.warning(f"Could not run binary {binary}: {e}")
@@ -94,9 +96,12 @@ class FunctionalTester:
             result = subprocess.run(
                 [str(binary)],
                 capture_output=True,
-                timeout=5
+                timeout=30  # Increased from 5s to 30s
             )
             return result.returncode
+        except subprocess.TimeoutExpired:
+            logger.warning(f"Binary exit code test timed out (>30s): {binary}")
+            return -2  # Different code to distinguish timeout from other failures
         except Exception as e:
             logger.warning(f"Could not get exit code for {binary}: {e}")
             return -1

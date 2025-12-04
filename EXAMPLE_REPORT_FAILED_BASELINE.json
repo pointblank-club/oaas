@@ -1,0 +1,119 @@
+{
+  "_comment": "Example LLVM Obfuscation Report - Failed Baseline Scenario",
+  "_example_type": "Failed Baseline - Shows baseline_status and comparison_valid Fixes",
+  "_note": "When baseline compilation fails, the report now properly indicates failure instead of returning fake zero metrics",
+  "input_parameters": {
+    "source_file": "complex_cpp_project.cpp",
+    "platform": "linux-x86_64",
+    "obfuscation_level": 2,
+    "requested_passes": [
+      "flattening",
+      "string_encryption"
+    ],
+    "applied_passes": [
+      "flattening",
+      "string_encryption"
+    ],
+    "compiler_flags": [
+      "-O3",
+      "-fexceptions"
+    ],
+    "timestamp": "2025-12-04T14:15:30Z"
+  },
+  "warnings": [
+    "Baseline compilation failed with error: undefined reference to 'std::exception'",
+    "Comparison metrics are unreliable - use obfuscated binary metrics only"
+  ],
+  "baseline_status": "failed",
+  "baseline_metrics": {
+    "file_size": -1,
+    "binary_format": "error",
+    "sections": {},
+    "symbols_count": 0,
+    "functions_count": 0,
+    "entropy": 0.0,
+    "_note": "All metrics are zero/error because baseline compilation failed"
+  },
+  "output_attributes": {
+    "file_size": 125440,
+    "binary_format": "ELF64",
+    "symbols_count": 12,
+    "functions_count": 5,
+    "entropy": 7.2,
+    "obfuscation_methods": [
+      "control_flow_flattening",
+      "string_encryption"
+    ],
+    "sections": {
+      ".text": 89344,
+      ".rodata": 24576,
+      ".data": 8192,
+      ".bss": 3328
+    }
+  },
+  "comparison": {
+    "_note": "All comparison metrics are invalid when baseline_status is failed",
+    "size_increase_bytes": null,
+    "size_increase_percent": null,
+    "symbol_reduction_count": null,
+    "symbol_reduction_percent": null,
+    "function_reduction_count": null,
+    "function_reduction_percent": null,
+    "entropy_increase": null
+  },
+  "comparison_valid": false,
+  "bogus_code_info": {
+    "dead_code_blocks": 0,
+    "opaque_predicates": 0,
+    "junk_instructions": 0,
+    "code_bloat_percentage": 0.0,
+    "_note": "Using safe defaults because baseline metrics unavailable"
+  },
+  "cycles_completed": {
+    "total_cycles": 1,
+    "per_cycle_metrics": [
+      {
+        "cycle": 1,
+        "passes_applied": [
+          "flattening",
+          "string_encryption"
+        ],
+        "duration_ms": 1847
+      }
+    ]
+  },
+  "string_obfuscation": {
+    "total_strings": 89,
+    "encrypted_strings": 67,
+    "encryption_method": "aes_with_key_derivation",
+    "encryption_percentage": 75.28,
+    "_note": "Obfuscated metrics available, but no baseline comparison"
+  },
+  "fake_loops_inserted": {
+    "count": 23,
+    "types": [
+      "while_loop",
+      "for_loop"
+    ],
+    "locations": [
+      "0x4040c0",
+      "0x4041ff"
+    ]
+  },
+  "symbol_obfuscation": {
+    "enabled": true,
+    "symbols_obfuscated": 78,
+    "algorithm": "hash_based_mangling"
+  },
+  "obfuscation_score": 82.1,
+  "symbol_reduction": null,
+  "function_reduction": null,
+  "size_reduction": null,
+  "entropy_increase": null,
+  "estimated_re_effort": "4-5 weeks",
+  "_critical_fix_explanation": {
+    "before_fix": "Old behavior would return all zeros: file_size=0, symbols_count=0, entropy=0.0, making it appear the obfuscation completely stripped everything (100% reduction)",
+    "after_fix": "New behavior returns baseline_status='failed' and comparison_valid=false, plus warnings explaining why metrics are unreliable. Frontend can detect this and show appropriate message.",
+    "reason": "Different compilation toolchains or missing dependencies cause baseline to fail. Returning fake zeros misleads users about obfuscation effectiveness. Now the failure is explicit and frontend can handle it appropriately."
+  }
+}

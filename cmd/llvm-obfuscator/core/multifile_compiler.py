@@ -772,7 +772,7 @@ def compile_multifile_ir_workflow(
             )
             logger.warning(warning_msg)
             warnings.append(warning_msg)
-            
+
             # Remove only flattening pass (Hikari approach)
             original_passes = list(enabled_passes)
             enabled_passes = [p for p in enabled_passes if p != "flattening"]

@@ -65,27 +65,9 @@ class LLVMObfuscator:
             import platform
             import os
 
-            if target_platform:
-                # Use target platform specified by user (for cross-compilation)
-                if target_platform == Platform.LINUX:
-                    system = "linux"
-                    arch = "x86_64"  # Default to x86_64 for Linux
-                    ext = "so"
-                elif target_platform == Platform.WINDOWS:
-                    system = "windows"
-                    arch = "x86_64"
-                    ext = "dll"
-                elif target_platform in [Platform.MACOS, Platform.DARWIN]:
-                    system = "darwin"
-                    arch = platform.machine().lower()  # Use current arch (arm64 or x86_64)
-                    if arch == "aarch64":
-                        arch = "arm64"
-                    ext = "dylib"
-                else:
-                    # For unknown, fall back to current platform detection
-                    target_platform = None
-
-            if not target_platform:
+            # Always use HOST platform for plugin - it runs during compilation, not in the binary
+            # The --target flag handles the output format (Windows .exe, Linux ELF, etc.)
+            if True:
                 # Auto-detect current platform
                 system = platform.system().lower()  # darwin, linux, windows
                 machine = platform.machine().lower()  # arm64, x86_64, amd64

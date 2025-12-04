@@ -83,6 +83,17 @@ class ObfuscationTestSuite:
             logger.info("\n[1/11] Running functional correctness tests...")
             self.test_results['functional'] = self._test_functional_correctness()
 
+            # ✅ FIX #1: Check functional correctness and flag if failed
+            functional_passed = self.test_results['functional'].get('same_behavior', False)
+            if not functional_passed:
+                logger.warning("⚠️  FUNCTIONAL CORRECTNESS FAILED - Subsequent metrics may be unreliable")
+                logger.warning("    Binary behavior differs between baseline and obfuscated versions")
+                logger.warning("    Performance and execution-dependent metrics should be treated with caution")
+                # Mark all subsequent metrics as potentially unreliable
+                self._metrics_reliability = "COMPROMISED"
+            else:
+                self._metrics_reliability = "RELIABLE"
+
             # 4. Control flow metrics
             logger.info("\n[2/11] Computing control flow metrics...")
             self.metrics['cfg_metrics'] = compute_cfg_metrics(
@@ -301,21 +312,48 @@ class ObfuscationTestSuite:
         return results
 
     def _test_performance(self) -> Dict[str, Any]:
-        """Measure performance overhead of obfuscation"""
+        """Measure performance overhead of obfuscation
+
+        ✅ FIX #3: Validate measurements before returning
+        Returns error status if binaries didn't execute properly
+        """
         logger.info("  Measuring performance...")
 
         baseline_time = self._measure_execution_time(self.baseline)
         obf_time = self._measure_execution_time(self.obfuscated)
 
-        overhead = 0
-        if baseline_time > 0:
-            overhead = 100 * (obf_time - baseline_time) / baseline_time
+        # ✅ FIX #3d: Check for error codes from measurement
+        if baseline_time < 0:
+            logger.warning("  ✗ Baseline binary execution failed/timed out - skipping overhead calculation")
+            return {
+                'baseline_ms': baseline_time,
+                'obf_ms': obf_time,
+                'overhead_percent': None,
+                'acceptable': None,
+                'status': 'FAILED' if baseline_time == -1.0 else 'TIMEOUT',
+                'reason': 'Baseline binary could not execute properly'
+            }
+
+        if obf_time < 0:
+            logger.warning("  ✗ Obfuscated binary execution failed/timed out - skipping overhead calculation")
+            return {
+                'baseline_ms': baseline_time,
+                'obf_ms': obf_time,
+                'overhead_percent': None,
+                'acceptable': None,
+                'status': 'FAILED' if obf_time == -1.0 else 'TIMEOUT',
+                'reason': 'Obfuscated binary could not execute properly'
+            }
+
+        # Both binaries executed successfully - calculate overhead
+        overhead = 100 * (obf_time - baseline_time) / baseline_time if baseline_time > 0 else 0
 
         results = {
             'baseline_ms': round(baseline_time, 2),
             'obf_ms': round(obf_time, 2),
             'overhead_percent': round(overhead, 2),
-            'acceptable': overhead < 100
+            'acceptable': overhead < 100,
+            'status': 'SUCCESS'
         }
 
         logger.info(f"  ✓ Baseline: {baseline_time:.2f}ms")
@@ -584,21 +622,47 @@ class ObfuscationTestSuite:
             return []
 
     def _measure_execution_time(self, filepath: Path, iterations: int = 3) -> float:
-        """Measure average execution time"""
+        """Measure average execution time
+
+        Returns:
+            float: Average execution time in ms, or negative value if binary failed
+                  -1.0: Binary execution failed
+                  -2.0: Binary timed out
+        """
         times = []
+        timeout_count = 0
+        failure_count = 0
+
         for _ in range(iterations):
             try:
                 start = time.time()
-                subprocess.run([str(filepath)], timeout=5, capture_output=True)
+                # ✅ FIX #3a: Increased timeout from 5s to 30s to accommodate obfuscated binaries
+                result = subprocess.run([str(filepath)], timeout=30, capture_output=True)
                 elapsed = (time.time() - start) * 1000  # Convert to ms
                 times.append(elapsed)
             except subprocess.TimeoutExpired:
-                times.append(5000)
+                # ✅ FIX #3b: Track timeouts instead of fabricating data
+                logger.warning(f"Execution timeout for {filepath.name} (exceeded 30s)")
+                timeout_count += 1
             except Exception as e:
-                logger.warning(f"Could not measure execution time: {e}")
-                return 0.0
+                logger.warning(f"Could not measure execution time for {filepath.name}: {e}")
+                failure_count += 1
 
-        return sum(times) / len(times) if times else 0.0
+        # ✅ FIX #3c: Return error codes if binary didn't execute properly
+        if failure_count > 0:
+            logger.warning(f"  ⚠️  Binary execution failed for {filepath.name}")
+            return -1.0  # Error code for failure
+
+        if timeout_count >= iterations:
+            logger.warning(f"  ⚠️  All execution attempts timed out for {filepath.name}")
+            return -2.0  # Error code for timeout
+
+        if not times:
+            return -1.0  # Error: no successful measurements
+
+        avg_time = sum(times) / len(times)
+        logger.info(f"  ℹ️  {filepath.name}: {avg_time:.2f}ms (successful runs: {len(times)}/{iterations})")
+        return avg_time
 
     def _has_debug_info(self, filepath: str) -> bool:
         """Check if binary has debug info"""

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import base64
-import json
 import logging
 import os
 import re
@@ -29,14 +28,10 @@ from core import (
     Platform,
     analyze_binary,
 )
+from core.config import Architecture
 from core.comparer import CompareConfig, compare_binaries
-from core.config import AdvancedConfiguration, PassConfiguration, UPXConfiguration, Architecture
+from core.config import AdvancedConfiguration, PassConfiguration, UPXConfiguration
 from core.exceptions import JobNotFoundError, ValidationError
-from core.test_suite_integration import (
-    run_obfuscation_tests,
-    run_lightweight_tests,
-    merge_test_results_into_report
-)
 from core.job_manager import JobManager
 from core.progress import ProgressEvent, ProgressTracker
 from core.utils import (
@@ -1112,15 +1107,6 @@ async def api_obfuscate_sync(
                                 "functions_count": baseline_functions,
                                 "entropy": baseline_entropy,
                             },
-                            # ✅ FIX: Store baseline compiler metadata for reproducibility
-                            "baseline_compiler": {
-                                "compiler": "clang++/clang",
-                                "version": "LLVM 22",
-                                "optimization_level": "-O3",
-                                "compilation_method": "IR pipeline (bitcode → clang → object → link)",
-                                "compiler_flags": config.compiler_flags if config else [],
-                                "passes_applied": [],  # Baseline has no obfuscation passes
-                            },
                             "output_attributes": {
                                 "file_size": output_size,
                                 "binary_format": detect_binary_format(final_binary),
@@ -1155,15 +1141,15 @@ async def api_obfuscate_sync(
                                     }
                                 ],
                             },
-                            "string_obfuscation": {"enabled": (config.passes.string_encrypt or payload.config.string_encryption) if config else False},
+                            "string_obfuscation": {"enabled": config.advanced.string_encryption if config else False},
                             "fake_loops_inserted": {
                                 "count": 0,
                                 "types": [],
                                 "locations": [],
                             },
-                            "symbol_obfuscation": {"enabled": config.passes.symbol_obfuscate if config else False},
-                            "indirect_calls": {"enabled": (hasattr(config.advanced, 'indirect_calls') and config.advanced.indirect_calls.enabled) if config else False},
-                            "upx_packing": {"enabled": (config.advanced.upx_packing.enabled if config else False)},
+                            "symbol_obfuscation": {"enabled": config.advanced.symbol_obfuscation.enabled if config and hasattr(config.advanced, 'symbol_obfuscation') else False},
+                            "indirect_calls": {"enabled": False},
+                            "upx_packing": {"enabled": False},
                             "obfuscation_score": int(entropy_increase * 10) if entropy_increase > 0 else 0,  # Simple score based on entropy
                             "symbol_reduction": baseline_symbols - output_symbols,
                             "function_reduction": baseline_functions - output_functions,
@@ -1174,34 +1160,6 @@ async def api_obfuscate_sync(
                             "build_system": payload.build_system,
                             "source_obfuscation": obf_results,
                         }
-
-                        # ✅ NEW: Run test suite to verify obfuscation correctness
-                        try:
-                            logger.info("Running obfuscation test suite...")
-                            test_results = run_obfuscation_tests(
-                                baseline_binary=Path(baseline_for_metrics),
-                                obfuscated_binary=Path(final_binary),
-                                program_name=payload.name or "program",
-                                results_dir=Path(job.job_id)
-                            )
-
-                            # Fallback to lightweight tests if full suite not available
-                            if not test_results:
-                                logger.info("Full test suite not available, running lightweight tests...")
-                                test_results = run_lightweight_tests(
-                                    baseline_binary=Path(baseline_for_metrics),
-                                    obfuscated_binary=Path(final_binary),
-                                    program_name=payload.name or "program"
-                                )
-
-                            if test_results:
-                                merge_test_results_into_report(job_data, test_results)
-                                logger.info("✅ Test results merged into report")
-                            else:
-                                logger.warning("No test results available (both full and lightweight tests failed)")
-                        except Exception as e:
-                            logger.warning(f"Failed to run test suite: {e}")
-                            # Continue without test results rather than failing the job
 
                         # Generate and export reports
                         report = reporter.generate_report(job_data)
@@ -1306,160 +1264,6 @@ async def api_obfuscate_sync(
 
             result = obfuscator.obfuscate(source_path, config, job_id=job.job_id)
 
-        # ✅ NEW: Run tests for ALL build modes (multifile, simple, custom)
-        # This runs AFTER obfuscation but BEFORE report attachment
-        # The baseline binary is created during obfuscation in the output_directory
-        logger.info("=" * 80)
-        logger.info("ATTEMPTING TO RUN OBFUSCATION TESTS")
-        logger.info("=" * 80)
-        try:
-            # Get output directory and obfuscated binary path
-            output_dir = None
-            source_stem = "program"
-
-            # Determine output_dir and source_stem based on build mode
-            if 'config' in locals() and config and hasattr(config, 'output') and config.output:
-                output_dir = Path(config.output.directory)
-                logger.info(f"Output directory: {output_dir}")
-            else:
-                logger.warning("Could not determine output directory from config")
-
-            # Get the obfuscated binary path
-            obfuscated_binary_path = result.get("output_file", "")
-            logger.info(f"Obfuscated binary from result: {obfuscated_binary_path}")
-
-            if not obfuscated_binary_path:
-                logger.warning("No obfuscated binary found in result")
-                raise ValueError("output_file not in result")
-
-            obfuscated_binary = Path(obfuscated_binary_path)
-            logger.info(f"Obfuscated binary exists: {obfuscated_binary.exists()}")
-
-            if not obfuscated_binary.exists():
-                logger.warning(f"Obfuscated binary does not exist at: {obfuscated_binary}")
-                raise FileNotFoundError(f"Obfuscated binary not found: {obfuscated_binary}")
-
-            # Determine source stem from the binary name (more reliable method)
-            if obfuscated_binary.name:
-                # Remove common prefixes and suffixes to get original name
-                stem = obfuscated_binary.stem
-                logger.info(f"Original binary stem: {stem}")
-
-                # Remove PREFIXES
-                for prefix in ['obfuscated_', 'obf_']:
-                    if stem.startswith(prefix):
-                        stem = stem[len(prefix):]
-                        logger.info(f"  Removed prefix, now: {stem}")
-                        break
-
-                # Remove SUFFIXES
-                for suffix in ['_obfuscated', '.obfuscated', '_obf']:
-                    if stem.endswith(suffix):
-                        stem = stem[:-len(suffix)]
-                        logger.info(f"  Removed suffix, now: {stem}")
-                        break
-
-                source_stem = stem
-                logger.info(f"Source stem determined from binary: {source_stem}")
-
-            # Find baseline binary
-            baseline_candidates = []
-            if output_dir and output_dir.exists():
-                logger.info(f"Searching for baseline binary in: {output_dir}")
-                # Look for files with _baseline suffix
-                for candidate in output_dir.glob(f"*_baseline"):
-                    logger.info(f"  Found candidate: {candidate}")
-                    baseline_candidates.append(candidate)
-
-                # Try multiple expected names
-                expected_names = [
-                    f"{source_stem}_baseline",  # tsvc_baseline
-                    f"obfuscated_{source_stem}_baseline",  # obfuscated_tsvc_baseline
-                    source_stem,  # If baseline wasn't suffixed
-                ]
-
-                for expected_name in expected_names:
-                    expected_baseline = output_dir / expected_name
-                    logger.info(f"Checking: {expected_baseline}")
-                    if expected_baseline.exists():
-                        logger.info(f"  ✓ Found: {expected_name}")
-                        if expected_baseline not in baseline_candidates:
-                            baseline_candidates.insert(0, expected_baseline)
-                        break
-                    else:
-                        logger.info(f"  ✗ Not found: {expected_name}")
-
-            if not baseline_candidates:
-                logger.warning(f"No baseline binaries found in {output_dir}")
-                logger.warning("Listing files in output directory:")
-                if output_dir and output_dir.exists():
-                    for item in output_dir.iterdir():
-                        logger.warning(f"  {item.name}")
-                raise FileNotFoundError(f"No baseline binary found for {source_stem}")
-
-            baseline_binary = baseline_candidates[0]
-            logger.info(f"Using baseline binary: {baseline_binary}")
-            logger.info(f"Baseline exists: {baseline_binary.exists()}")
-
-            if not baseline_binary.exists():
-                logger.error(f"Baseline binary path exists but file is not accessible: {baseline_binary}")
-                raise FileNotFoundError(f"Baseline binary not found: {baseline_binary}")
-
-            # Run tests
-            logger.info(f"Running tests comparing:")
-            logger.info(f"  Baseline: {baseline_binary}")
-            logger.info(f"  Obfuscated: {obfuscated_binary}")
-
-            # Try full test suite first, then lightweight as fallback
-            test_results = run_obfuscation_tests(
-                baseline_binary=baseline_binary,
-                obfuscated_binary=obfuscated_binary,
-                program_name=payload.name or source_stem,
-                results_dir=Path(job.job_id)
-            )
-
-            if not test_results:
-                logger.info("Full test suite not available, running lightweight tests...")
-                test_results = run_lightweight_tests(
-                    baseline_binary=baseline_binary,
-                    obfuscated_binary=obfuscated_binary,
-                    program_name=payload.name or source_stem
-                )
-
-            if test_results:
-                logger.info("✅ Test results obtained, updating report...")
-                # Merge test results into the existing report JSON
-                report_path = result.get("report_paths", {}).get("json")
-                logger.info(f"Looking for JSON report at: {report_path}")
-
-                if report_path and Path(report_path).exists():
-                    try:
-                        with open(report_path, 'r') as f:
-                            report_data = json.load(f)
-
-                        # Add test results to report
-                        report_data["metadata"] = test_results.get("metadata")
-                        report_data["test_results"] = test_results.get("test_results")
-                        report_data["test_metrics"] = test_results.get("metrics", {})
-                        report_data["reliability_status"] = test_results.get("reliability_status")
-
-                        # Write updated report
-                        with open(report_path, 'w') as f:
-                            json.dump(report_data, f, indent=2)
-
-                        logger.info(f"✅ Report successfully updated with test results at: {report_path}")
-                    except Exception as e:
-                        logger.error(f"Could not update report with test results: {e}", exc_info=True)
-                else:
-                    logger.warning(f"JSON report not found at: {report_path}")
-            else:
-                logger.warning("No test results available (both full and lightweight tests failed)")
-
-        except Exception as e:
-            logger.error(f"Failed to run tests: {e}", exc_info=True)
-            logger.info("Continuing without test results (non-blocking failure)")
-            # Continue without tests rather than blocking the job
-
         job_manager.update_job(job.job_id, status="completed", result=result)
         reports_to_attach = result.get("report_paths", {})
         logger.info(f"[REPORT DEBUG] Attaching reports for job {job.job_id}: {reports_to_attach}")
@@ -1469,77 +1273,68 @@ async def api_obfuscate_sync(
         if not binary_path.exists():
             raise HTTPException(status_code=500, detail="Binary generation failed")
 
-        # Build for additional platforms only in single-file mode
-        if not is_multi_file:
-            # For multi-platform support, we compile the same source for each target
-            platform_binaries = {"linux": None, "windows": None}
+        # Build for additional platforms if single-file mode
+        # For multi-platform support, we compile the same source for each target
+        platform_binaries = {"linux": None, "windows": None}
 
-            # First result is for the primary platform
-            primary_platform = payload.platform.value
-            platform_binaries[primary_platform] = str(binary_path)
+        # First result is for the primary platform
+        primary_platform = payload.platform.value
+        platform_binaries[primary_platform] = str(binary_path)
 
-            # Compile for other platforms
-            # Get the obfuscated source (after source-level transforms)
-            obfuscated_source = result.get("obfuscated_source_path")
-            if obfuscated_source and Path(obfuscated_source).exists():
-                compile_source = Path(obfuscated_source)
-            else:
-                compile_source = source_path
-
-            for target_platform, target_arch in target_platforms:
-                if target_platform.value == primary_platform:
-                    continue  # Already compiled for primary platform
-
-                try:
-                    # Create platform-specific output directory
-                    platform_dir = working_dir / target_platform.value
-                    platform_dir.mkdir(exist_ok=True)
-
-                    # Build config for this platform
-                    platform_payload = payload.model_copy()
-                    platform_payload.platform = target_platform
-                    platform_payload.architecture = target_arch
-                    platform_config = _build_config_from_request(platform_payload, platform_dir)
-
-                    # Compile for this platform
-                    platform_result = obfuscator.obfuscate(
-                        compile_source,
-                        platform_config,
-                        job_id=f"{job.job_id}_{target_platform.value}"
-                    )
-
-                    platform_binary = Path(platform_result.get("output_file", ""))
-                    if platform_binary.exists():
-                        platform_binaries[target_platform.value] = str(platform_binary)
-                        logger.info(f"Built binary for {target_platform.value}: {platform_binary}")
-                    else:
-                        logger.warning(f"Binary generation failed for {target_platform.value}")
-                except Exception as e:
-                    logger.warning(f"Failed to build for {target_platform.value}: {e}")
-                    # Continue with other platforms even if one fails
-
-            # Store platform binaries in job result
-            result["platform_binaries"] = platform_binaries
-            job_manager.update_job(job.job_id, result=result)
-
-            return {
-                "job_id": job.job_id,
-                "status": "completed",
-                "download_url": f"/api/download/{job.job_id}",
-                "download_urls": {
-                    "linux": f"/api/download/{job.job_id}/linux" if platform_binaries.get("linux") else None,
-                    "windows": f"/api/download/{job.job_id}/windows" if platform_binaries.get("windows") else None,
-                },
-                "report_url": f"/api/report/{job.job_id}",
-            }
+        # Compile for other platforms
+        # Get the obfuscated source (after source-level transforms)
+        obfuscated_source = result.get("obfuscated_source_path")
+        if obfuscated_source and Path(obfuscated_source).exists():
+            compile_source = Path(obfuscated_source)
         else:
-            # Multi-file mode - return single platform response
-            return {
-                "job_id": job.job_id,
-                "status": "completed",
-                "download_url": f"/api/download/{job.job_id}",
-                "report_url": f"/api/report/{job.job_id}",
-            }
+            compile_source = source_path
+
+        for target_platform, target_arch in target_platforms:
+            if target_platform.value == primary_platform:
+                continue  # Already compiled for primary platform
+
+            try:
+                # Create platform-specific output directory
+                platform_dir = working_dir / target_platform.value
+                platform_dir.mkdir(exist_ok=True)
+
+                # Build config for this platform
+                platform_payload = payload.model_copy()
+                platform_payload.platform = target_platform
+                platform_payload.architecture = target_arch
+                platform_config = _build_config_from_request(platform_payload, platform_dir)
+
+                # Compile for this platform
+                platform_result = obfuscator.obfuscate(
+                    compile_source,
+                    platform_config,
+                    job_id=f"{job.job_id}_{target_platform.value}"
+                )
+
+                platform_binary = Path(platform_result.get("output_file", ""))
+                if platform_binary.exists():
+                    platform_binaries[target_platform.value] = str(platform_binary)
+                    logger.info(f"Built binary for {target_platform.value}: {platform_binary}")
+                else:
+                    logger.warning(f"Binary generation failed for {target_platform.value}")
+            except Exception as e:
+                logger.warning(f"Failed to build for {target_platform.value}: {e}")
+                # Continue with other platforms even if one fails
+
+        # Store platform binaries in job result
+        result["platform_binaries"] = platform_binaries
+        job_manager.update_job(job.job_id, result=result)
+
+        return {
+            "job_id": job.job_id,
+            "status": "completed",
+            "download_url": f"/api/download/{job.job_id}",
+            "download_urls": {
+                "linux": f"/api/download/{job.job_id}/linux" if platform_binaries.get("linux") else None,
+                "windows": f"/api/download/{job.job_id}/windows" if platform_binaries.get("windows") else None,
+            },
+            "report_url": f"/api/report/{job.job_id}",
+        }
     except Exception as exc:
         logger.exception("Job %s failed", job.job_id)
         job_manager.update_job(job.job_id, status="failed", error=str(exc))
@@ -1772,27 +1567,27 @@ async def github_repo_session_status(session_id: str):
 async def github_repo_session_delete(session_id: str):
     """Manually delete a repository session."""
     success = cleanup_repo_session(session_id)
-
+    
     if not success:
         raise HTTPException(status_code=404, detail="Session not found")
-
+    
     return JSONResponse({"success": True, "message": "Session deleted"})
 
 
 @app.post("/api/github/repo/session/{session_id}")
 async def github_repo_session_cleanup_beacon(session_id: str):
     """Cleanup repository session via sendBeacon (called on page unload).
-
+    
     This endpoint accepts POST requests from navigator.sendBeacon() which is used
     for reliable cleanup when the user closes or navigates away from the page.
     """
     success = cleanup_repo_session(session_id)
-
+    
     # Don't raise error if session not found - it may have already been cleaned up
     # Just log and return success to avoid errors in browser console
     if not success:
         logger.info(f"Session cleanup called but session not found: {session_id}")
-
+    
     return JSONResponse({"success": True, "message": "Session cleanup completed"})
 
 

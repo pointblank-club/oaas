@@ -46,6 +46,7 @@ class LLVMObfuscator:
         "substitution",
         "boguscf",
         "split",
+        "linear-mba",
         "string-encrypt",
         "symbol-obfuscate",
         "crypto-hash",

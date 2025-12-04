@@ -36,6 +36,6 @@ cmd/llvm-obfuscator/reports/
 
 cmd/jotai_results/
 
+# Ignore plugins directory (binaries)
 cmd/llvm-obfuscator/plugins/
-
 cmd/llvm-obfuscator/plugins/linux-x86_64

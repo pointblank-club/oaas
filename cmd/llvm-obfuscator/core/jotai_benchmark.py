@@ -536,23 +536,17 @@ class JotaiBenchmarkManager:
                 "-Wno-typedef-redefinition",  # Allow typedef redefinition (treat as warning)
             ]
             
-            # Find clang resource directory
-            clang_resource_dir = self._find_clang_resource_dir(clang_binary)
+            # KEY INSIGHT: Use custom clang binary (for obfuscation) but with SYSTEM headers
+            # The bundled headers are incomplete, so we need to use system headers
+            # Custom clang will still work for obfuscation even with system headers
             
-            # Strategy 1: Use clang's default includes (most reliable - clang knows where its headers are)
-            # This works best because clang automatically finds its resource directory
+            # Strategy 1: Use custom clang with system headers (let clang find system headers automatically)
+            # This works because clang will use its own resource dir discovery + system headers
             strategy1_flags = base_flags.copy()
-            # Optionally add clang resource dir as additional include (clang will use its own anyway)
-            if clang_resource_dir:
-                strategy1_flags.append(f"-isystem{clang_resource_dir}")
             
-            # Strategy 2: Use -nostdinc with explicit include order (for when bundled headers are complete)
+            # Strategy 2: Explicitly add system headers if clang doesn't find them automatically
             strategy2_flags = base_flags.copy()
-            strategy2_flags.append("-nostdinc")
-            if clang_resource_dir:
-                strategy2_flags.append(f"-isystem{clang_resource_dir}")
-                self.logger.info(f"✓ Added clang resource dir: {clang_resource_dir}")
-            # Add system includes after clang headers
+            # Add system include paths (these have complete headers)
             system_includes = [
                 "/usr/include",
                 "/usr/local/include",
@@ -564,8 +558,6 @@ class JotaiBenchmarkManager:
             
             # Strategy 3: Minimal flags (last resort)
             strategy3_flags = ["-g", "-O1", "-std=c11", "-Wno-everything", "-fno-builtin"]
-            if clang_resource_dir:
-                strategy3_flags.append(f"-isystem{clang_resource_dir}")
             
             # Handle typedef redefinition conflicts by undefining system types
             problematic_types = ["ssize_t", "size_t", "off_t", "pid_t", "uid_t", "gid_t"]
@@ -573,10 +565,10 @@ class JotaiBenchmarkManager:
                 strategy1_flags.append(f"-U{ptype}")
                 strategy2_flags.append(f"-U{ptype}")
             
-            # Try strategies in order: default includes first (most reliable), then -nostdinc, then minimal
+            # Try strategies: let clang auto-discover first, then explicit system headers, then minimal
             compilation_strategies = [
-                ("default-includes", strategy1_flags),
-                ("explicit-includes", strategy2_flags),
+                ("auto-includes", strategy1_flags),
+                ("system-includes", strategy2_flags),
                 ("minimal", strategy3_flags),
             ]
             
@@ -600,7 +592,7 @@ class JotaiBenchmarkManager:
                     
                     if returncode == 0:
                         # Success!
-                        if strategy_name != "default-includes":
+                        if strategy_name != "auto-includes":
                             self.logger.info(f"✓ Compiled with {strategy_name} strategy")
                         result.baseline_binary = baseline_binary
                         result.compilation_success = True

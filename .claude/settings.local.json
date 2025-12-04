@@ -12,7 +12,9 @@
       "WebFetch(domain:github.com)",
       "Bash(cat:*)",
       "Bash(git log:*)",
-      "Bash(git submodule:*)"
+      "Bash(git submodule:*)",
+      "mcp__playwright__browser_navigate",
+      "mcp__playwright__browser_click"
     ],
     "deny": [],
     "ask": []

@@ -1658,9 +1658,11 @@ function App() {
             <button
               className="select-all-btn"
               onClick={() => {
+                // LTO is incompatible with Layer 3, so exclude it from "all selected" check
+                // since Select All always enables Layer 3
                 const allSelected = layer1 && layer2 && layer2_5 && layer3 && layer4 && layer5 &&
                   passFlattening && passSubstitution && passBogusControlFlow && passSplitBasicBlocks && passLinearMBA &&
-                  flagLTO && flagSymbolHiding && flagOmitFramePointer && flagSpeculativeLoadHardening &&
+                  flagSymbolHiding && flagOmitFramePointer && flagSpeculativeLoadHardening &&
                   flagO3 && flagStripSymbols && flagNoBuiltin;
 
                 const newValue = !allSelected;
@@ -1675,7 +1677,11 @@ function App() {
                 setPassBogusControlFlow(newValue);
                 setPassSplitBasicBlocks(newValue);
                 setPassLinearMBA(newValue);
-                setFlagLTO(newValue);
+                // Never enable LTO via global Select All since Layer 3 will be enabled
+                // Only allow deselecting LTO
+                if (!newValue) {
+                  setFlagLTO(false);
+                }
                 setFlagSymbolHiding(newValue);
                 setFlagOmitFramePointer(newValue);
                 setFlagSpeculativeLoadHardening(newValue);
@@ -1686,7 +1692,7 @@ function App() {
             >
               {layer1 && layer2 && layer2_5 && layer3 && layer4 && layer5 &&
                 passFlattening && passSubstitution && passBogusControlFlow && passSplitBasicBlocks && passLinearMBA &&
-                flagLTO && flagSymbolHiding && flagOmitFramePointer && flagSpeculativeLoadHardening &&
+                flagSymbolHiding && flagOmitFramePointer && flagSpeculativeLoadHardening &&
                 flagO3 && flagStripSymbols && flagNoBuiltin
                 ? 'Deselect All' : 'Select All'}
             </button>

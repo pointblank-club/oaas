@@ -15,7 +15,38 @@ class ObfuscationReport:
         self.output_dir = output_dir
 
     def generate_report(self, job_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Generate comprehensive obfuscation report with proper null-safety and validation."""
         try:
+            # ✅ FIX: Add baseline failure handling
+            baseline_metrics = job_data.get("baseline_metrics", {})
+            baseline_status = "success"
+            if baseline_metrics and baseline_metrics.get("file_size", 0) <= 0:
+                baseline_status = "failed"
+
+            # ✅ FIX: Validate numeric fields with safe defaults
+            def safe_float(val, default=0.0):
+                try:
+                    f = float(val) if val is not None else default
+                    return f if not (f != f) else default  # NaN check
+                except (TypeError, ValueError):
+                    return default
+
+            def safe_int(val, default=0):
+                try:
+                    return int(val) if val is not None else default
+                except (TypeError, ValueError):
+                    return default
+
+            # ✅ FIX: Handle null sections with safe defaults
+            string_obf = job_data.get("string_obfuscation") or {}
+            symbol_obf = job_data.get("symbol_obfuscation") or {}
+            fake_loops = job_data.get("fake_loops_inserted") or {}
+            bogus_code = job_data.get("bogus_code_info") or {}
+            cycles = job_data.get("cycles_completed") or {}
+            comparison = job_data.get("comparison") or {}
+            # ✅ FIX: Get baseline compiler metadata (for reproducibility)
+            baseline_compiler = job_data.get("baseline_compiler") or {}
+
             report = {
                 "input_parameters": {
                     "source_file": job_data.get("source_file"),
@@ -27,24 +58,72 @@ class ObfuscationReport:
                     "timestamp": job_data.get("timestamp", get_timestamp()),
                 },
                 "warnings": job_data.get("warnings", []),  # Warnings from obfuscation process
-                "baseline_metrics": job_data.get("baseline_metrics", {}),  # Before obfuscation metrics
+                "baseline_status": baseline_status,  # ✅ NEW: Indicate if baseline failed
+                "baseline_metrics": baseline_metrics,  # Before obfuscation metrics
+                # ✅ FIX: Add baseline compiler metadata for reproducibility and verification
+                "baseline_compiler": baseline_compiler,
                 "output_attributes": job_data.get("output_attributes", {}),
-                "comparison": job_data.get("comparison", {}),  # Before/after comparison
-                "bogus_code_info": job_data.get("bogus_code_info", {}),
-                "cycles_completed": job_data.get("cycles_completed", {}),
-                "string_obfuscation": job_data.get("string_obfuscation", {}),
-                "fake_loops_inserted": job_data.get("fake_loops_inserted", {}),
-                "symbol_obfuscation": job_data.get("symbol_obfuscation", {}),
-                "obfuscation_score": job_data.get("obfuscation_score", 0.0),
-                "symbol_reduction": job_data.get("symbol_reduction", 0.0),
-                "function_reduction": job_data.get("function_reduction", 0.0),
-                "size_reduction": job_data.get("size_reduction", 0.0),
-                "entropy_increase": job_data.get("entropy_increase", 0.0),
+                "comparison": comparison,  # Before/after comparison
+                "comparison_valid": baseline_status == "success",  # ✅ NEW: Validity flag
+                "bogus_code_info": bogus_code if bogus_code else self._default_bogus_code(),
+                "cycles_completed": cycles if cycles else {"total_cycles": 0, "per_cycle_metrics": []},
+                "string_obfuscation": string_obf if string_obf else self._default_string_obfuscation(),
+                "fake_loops_inserted": fake_loops if fake_loops else self._default_fake_loops(),
+                "symbol_obfuscation": symbol_obf if symbol_obf else self._default_symbol_obfuscation(),
+                "obfuscation_score": safe_float(job_data.get("obfuscation_score"), 0.0),
+                "symbol_reduction": safe_float(job_data.get("symbol_reduction"), 0.0),
+                "function_reduction": safe_float(job_data.get("function_reduction"), 0.0),
+                "size_reduction": safe_float(job_data.get("size_reduction"), 0.0),
+                "entropy_increase": safe_float(job_data.get("entropy_increase"), 0.0),
                 "estimated_re_effort": job_data.get("estimated_re_effort", "4-6 weeks"),
+                # ✅ NEW: Test suite results (optional, if tests were run)
+                "metadata": job_data.get("metadata"),  # Optional test suite metadata
+                "test_results": job_data.get("test_results"),  # Optional test suite results
+                "test_metrics": job_data.get("test_metrics"),  # Optional test metrics
+                "metrics_reliability": job_data.get("metrics_reliability"),  # Optional reliability status
+                "functional_correctness_passed": job_data.get("functional_correctness_passed"),  # Optional functional test result
+                "reliability_status": {
+                    "level": job_data.get("metrics_reliability", "UNKNOWN"),
+                    "warning": job_data.get("reliability_warning", "")
+                } if job_data.get("test_results") else None,  # Only include if test results exist
             }
         except Exception as exc:  # pragma: no cover - defensive
             raise ReportGenerationError("Failed to assemble report") from exc
         return report
+
+    def _default_bogus_code(self) -> Dict[str, Any]:
+        """✅ FIX: Default safe values for bogus code section."""
+        return {
+            "dead_code_blocks": 0,
+            "opaque_predicates": 0,
+            "junk_instructions": 0,
+            "code_bloat_percentage": 0,
+        }
+
+    def _default_string_obfuscation(self) -> Dict[str, Any]:
+        """✅ FIX: Default safe values for string obfuscation section."""
+        return {
+            "total_strings": 0,
+            "encrypted_strings": 0,
+            "encryption_method": "none",
+            "encryption_percentage": 0.0,
+        }
+
+    def _default_fake_loops(self) -> Dict[str, Any]:
+        """✅ FIX: Default safe values for fake loops section."""
+        return {
+            "count": 0,
+            "types": [],
+            "locations": [],
+        }
+
+    def _default_symbol_obfuscation(self) -> Dict[str, Any]:
+        """✅ FIX: Default safe values for symbol obfuscation section."""
+        return {
+            "enabled": False,
+            "symbols_obfuscated": 0,
+            "algorithm": "N/A",
+        }
 
     def export(self, report: Dict[str, Any], job_id: str, formats: List[str]) -> Dict[str, Path]:
         outputs: Dict[str, Path] = {}
@@ -900,7 +979,7 @@ class ObfuscationReport:
             ['Source File', str(input_params.get('source_file', 'N/A'))],
             ['Platform', str(input_params.get('platform', 'unknown'))],
             ['Obfuscation Level', f"Level {input_params.get('obfuscation_level', 0)}"],
-            ['Enabled Passes', ", ".join(input_params.get('enabled_passes', [])) or "None"],
+            ['Applied Passes', ", ".join(input_params.get('applied_passes', [])) or "None"],
         ]
         input_table = Table(input_data, colWidths=[2.5*inch, 3.5*inch])
         input_table.setStyle(TableStyle([

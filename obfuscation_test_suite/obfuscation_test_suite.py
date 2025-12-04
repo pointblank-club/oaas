@@ -47,6 +47,9 @@ class ObfuscationTestSuite:
         self.program_name = program_name
         self.test_results = {}
         self.metrics = {}
+        # ✅ FIX #5: Initialize metrics reliability tracking
+        self._metrics_reliability = "UNKNOWN"
+        self._functional_passed = None
 
         # Create results subdirectories
         self.baseline_dir = self.results_dir / "baseline" / program_name
@@ -82,6 +85,29 @@ class ObfuscationTestSuite:
             # 3. Functional correctness tests
             logger.info("\n[1/11] Running functional correctness tests...")
             self.test_results['functional'] = self._test_functional_correctness()
+
+            # ✅ FIX #1: Check functional correctness and flag if failed
+            functional_passed = self.test_results['functional'].get('same_behavior', False)
+            if functional_passed is False:  # Explicitly check for False, not just falsy
+                logger.error("🔴 CRITICAL: FUNCTIONAL CORRECTNESS FAILED!")
+                logger.error("    Binary behavior differs between baseline and obfuscated versions")
+                logger.error("    This indicates the obfuscation has broken the binary")
+                logger.error("    ALL SUBSEQUENT METRICS ARE UNRELIABLE - Results should NOT be used for comparison")
+                # Mark all subsequent metrics as failed
+                self._metrics_reliability = "FAILED"
+                self._functional_passed = False
+            elif functional_passed is None:
+                logger.warning("⚠️  FUNCTIONAL CORRECTNESS TEST INCONCLUSIVE")
+                logger.warning("    Could not determine if binary behavior is preserved")
+                logger.warning("    Metrics should be treated with caution")
+                self._metrics_reliability = "UNCERTAIN"
+                self._functional_passed = None
+            else:
+                logger.info("✅ FUNCTIONAL CORRECTNESS PASSED")
+                logger.info("    Binary behavior preserved between baseline and obfuscated")
+                logger.info("    Metrics are reliable for comparison")
+                self._metrics_reliability = "RELIABLE"
+                self._functional_passed = True
 
             # 4. Control flow metrics
             logger.info("\n[2/11] Computing control flow metrics...")
@@ -301,21 +327,61 @@ class ObfuscationTestSuite:
         return results
 
     def _test_performance(self) -> Dict[str, Any]:
-        """Measure performance overhead of obfuscation"""
+        """Measure performance overhead of obfuscation
+
+        ✅ FIX #3: Validate measurements before returning
+        Returns error status if binaries didn't execute properly
+        """
         logger.info("  Measuring performance...")
+
+        # ✅ FIX #4: Skip performance testing if functional correctness failed
+        if not self._functional_passed:
+            logger.warning("  ⚠️  Skipping performance test - functional correctness test failed")
+            logger.warning("    Performance metrics are unreliable when binary behavior is broken")
+            return {
+                'baseline_ms': None,
+                'obf_ms': None,
+                'overhead_percent': None,
+                'acceptable': False,
+                'status': 'SKIPPED',
+                'reason': 'Binary functional correctness failed - performance testing skipped'
+            }
 
         baseline_time = self._measure_execution_time(self.baseline)
         obf_time = self._measure_execution_time(self.obfuscated)
 
-        overhead = 0
-        if baseline_time > 0:
-            overhead = 100 * (obf_time - baseline_time) / baseline_time
+        # ✅ FIX #3d: Check for error codes from measurement
+        if baseline_time < 0:
+            logger.warning("  ✗ Baseline binary execution failed/timed out - skipping overhead calculation")
+            return {
+                'baseline_ms': baseline_time,
+                'obf_ms': obf_time,
+                'overhead_percent': None,
+                'acceptable': None,
+                'status': 'FAILED' if baseline_time == -1.0 else 'TIMEOUT',
+                'reason': 'Baseline binary could not execute properly'
+            }
+
+        if obf_time < 0:
+            logger.warning("  ✗ Obfuscated binary execution failed/timed out - skipping overhead calculation")
+            return {
+                'baseline_ms': baseline_time,
+                'obf_ms': obf_time,
+                'overhead_percent': None,
+                'acceptable': None,
+                'status': 'FAILED' if obf_time == -1.0 else 'TIMEOUT',
+                'reason': 'Obfuscated binary could not execute properly'
+            }
+
+        # Both binaries executed successfully - calculate overhead
+        overhead = 100 * (obf_time - baseline_time) / baseline_time if baseline_time > 0 else 0
 
         results = {
             'baseline_ms': round(baseline_time, 2),
             'obf_ms': round(obf_time, 2),
             'overhead_percent': round(overhead, 2),
-            'acceptable': overhead < 100
+            'acceptable': overhead < 100,
+            'status': 'SUCCESS'
         }
 
         logger.info(f"  ✓ Baseline: {baseline_time:.2f}ms")
@@ -400,16 +466,23 @@ class ObfuscationTestSuite:
 
     def _generate_all_reports(self):
         """Generate all report formats"""
+        # ✅ FIX #5: Include metrics reliability status in reports
         # Compile all results
         all_results = {
             'metadata': {
                 'timestamp': datetime.now().isoformat(),
                 'program': self.program_name,
                 'baseline': str(self.baseline),
-                'obfuscated': str(self.obfuscated)
+                'obfuscated': str(self.obfuscated),
+                'metrics_reliability': self._metrics_reliability,
+                'functional_correctness_passed': self._functional_passed
             },
             'test_results': self.test_results,
-            'metrics': self.metrics
+            'metrics': self.metrics,
+            'reliability_status': {
+                'level': self._metrics_reliability,
+                'warning': self._get_reliability_warning()
+            }
         }
 
         # Generate JSON report
@@ -422,6 +495,17 @@ class ObfuscationTestSuite:
         self.report_gen.generate_summary(all_results)
 
         logger.info(f"✓ Reports generated in {self.reports_dir}")
+
+    def _get_reliability_warning(self) -> str:
+        """Get warning message based on metrics reliability"""
+        if self._metrics_reliability == "FAILED":
+            return "❌ METRICS ARE UNRELIABLE: Obfuscation broke binary functionality - comparison invalid"
+        elif self._metrics_reliability == "UNCERTAIN":
+            return "⚠️  METRICS ARE UNCERTAIN: Functional correctness test was inconclusive"
+        elif self._metrics_reliability == "RELIABLE":
+            return "✅ METRICS ARE RELIABLE: Binary functionality preserved"
+        else:
+            return "⚠️  METRICS RELIABILITY UNKNOWN"
 
     def _run_advanced_analysis(self) -> Dict[str, Any]:
         """Run Ghidra, Binary Ninja, IDA Pro, and Angr analysis"""
@@ -584,21 +668,47 @@ class ObfuscationTestSuite:
             return []
 
     def _measure_execution_time(self, filepath: Path, iterations: int = 3) -> float:
-        """Measure average execution time"""
+        """Measure average execution time
+
+        Returns:
+            float: Average execution time in ms, or negative value if binary failed
+                  -1.0: Binary execution failed
+                  -2.0: Binary timed out
+        """
         times = []
+        timeout_count = 0
+        failure_count = 0
+
         for _ in range(iterations):
             try:
                 start = time.time()
-                subprocess.run([str(filepath)], timeout=5, capture_output=True)
+                # ✅ FIX #3a: Increased timeout from 5s to 30s to accommodate obfuscated binaries
+                result = subprocess.run([str(filepath)], timeout=30, capture_output=True)
                 elapsed = (time.time() - start) * 1000  # Convert to ms
                 times.append(elapsed)
             except subprocess.TimeoutExpired:
-                times.append(5000)
+                # ✅ FIX #3b: Track timeouts instead of fabricating data
+                logger.warning(f"Execution timeout for {filepath.name} (exceeded 30s)")
+                timeout_count += 1
             except Exception as e:
-                logger.warning(f"Could not measure execution time: {e}")
-                return 0.0
+                logger.warning(f"Could not measure execution time for {filepath.name}: {e}")
+                failure_count += 1
 
-        return sum(times) / len(times) if times else 0.0
+        # ✅ FIX #3c: Return error codes if binary didn't execute properly
+        if failure_count > 0:
+            logger.warning(f"  ⚠️  Binary execution failed for {filepath.name}")
+            return -1.0  # Error code for failure
+
+        if timeout_count >= iterations:
+            logger.warning(f"  ⚠️  All execution attempts timed out for {filepath.name}")
+            return -2.0  # Error code for timeout
+
+        if not times:
+            return -1.0  # Error: no successful measurements
+
+        avg_time = sum(times) / len(times)
+        logger.info(f"  ℹ️  {filepath.name}: {avg_time:.2f}ms (successful runs: {len(times)}/{iterations})")
+        return avg_time
 
     def _has_debug_info(self, filepath: str) -> bool:
         """Check if binary has debug info"""

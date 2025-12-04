@@ -65,27 +65,9 @@ class LLVMObfuscator:
             import platform
             import os
 
-            if target_platform:
-                # Use target platform specified by user (for cross-compilation)
-                if target_platform == Platform.LINUX:
-                    system = "linux"
-                    arch = "x86_64"  # Default to x86_64 for Linux
-                    ext = "so"
-                elif target_platform == Platform.WINDOWS:
-                    system = "windows"
-                    arch = "x86_64"
-                    ext = "dll"
-                elif target_platform in [Platform.MACOS, Platform.DARWIN]:
-                    system = "darwin"
-                    arch = platform.machine().lower()  # Use current arch (arm64 or x86_64)
-                    if arch == "aarch64":
-                        arch = "arm64"
-                    ext = "dylib"
-                else:
-                    # For unknown, fall back to current platform detection
-                    target_platform = None
-
-            if not target_platform:
+            # Always use HOST platform for plugin - it runs during compilation, not in the binary
+            # The --target flag handles the output format (Windows .exe, Linux ELF, etc.)
+            if True:
                 # Auto-detect current platform
                 system = platform.system().lower()  # darwin, linux, windows
                 machine = platform.machine().lower()  # arm64, x86_64, amd64
@@ -261,45 +243,49 @@ class LLVMObfuscator:
                 self.logger.error(f"Indirect call obfuscation failed: {e}")
                 indirect_call_result = None
 
+        # Insert fake loops into source code (if enabled)
         fake_loops = []
-        if config.advanced.fake_loops:
-            fake_loops = self.fake_loop_generator.generate(config.advanced.fake_loops, source_file.name)
+        if config.advanced.fake_loops and config.advanced.fake_loops > 0:
+            self.logger.info(f"Inserting {config.advanced.fake_loops} fake loops into source code...")
+            fake_loop_source = output_directory / f"{working_source.stem}_fakeloops{working_source.suffix}"
+            try:
+                modified_content, fake_loops = self.fake_loop_generator.insert_fake_loops(
+                    working_source,
+                    config.advanced.fake_loops,
+                    fake_loop_source
+                )
+                if fake_loops:
+                    self.logger.info(f"Successfully inserted {len(fake_loops)} fake loops")
+                    working_source = fake_loop_source  # Use the modified source
+                else:
+                    self.logger.warning("No suitable insertion points found for fake loops")
+            except Exception as e:
+                self.logger.error(f"Fake loop insertion failed: {e}")
+                # Continue with original source if insertion fails
 
         enabled_passes = config.passes.enabled_passes()
         compiler_flags = merge_flags(self.BASE_FLAGS, config.compiler_flags)
 
-        # IMPORTANT: Cycles only make sense for source code recompilation
-        # Once we have a binary, we can't feed it back through the compiler
-        # So if OLLVM passes are enabled, limit to 1 cycle
-        effective_cycles = 1 if enabled_passes else config.advanced.cycles
-        if enabled_passes and config.advanced.cycles > 1:
-            self.logger.warning(
-                "Multiple cycles (%d) requested with OLLVM passes enabled. "
-                "Cycles only apply to source code compilation. "
-                "Running 1 cycle with all OLLVM passes instead.",
-                config.advanced.cycles
-            )
+        # Cycles apply OLLVM passes multiple times on the IR for stronger obfuscation
+        effective_cycles = config.advanced.cycles if config.advanced.cycles > 0 else 1
 
-        intermediate_source = working_source  # Use symbol-obfuscated source if enabled
-        for cycle in range(1, effective_cycles + 1):
-            self.logger.info("Starting cycle %s/%s", cycle, effective_cycles)
-            intermediate_binary = output_binary if cycle == effective_cycles else output_directory / f"{output_binary.stem}_cycle{cycle}{output_binary.suffix}"
+        self.logger.info("Compiling with %d obfuscation cycle(s)", effective_cycles)
 
-            cycle_result = self._compile(
-                intermediate_source,
-                intermediate_binary,
-                config,
-                compiler_flags,
-                enabled_passes,
-            )
+        # Single compilation call - cycles are handled inside _compile
+        cycle_result = self._compile(
+            working_source,  # Use source with fake loops (if inserted)
+            output_binary,
+            config,
+            compiler_flags,
+            enabled_passes,
+            cycles=effective_cycles,  # Pass cycles to apply OLLVM passes multiple times
+        )
 
-            # Track what actually happened
-            if cycle_result:
-                actually_applied_passes = cycle_result.get("applied_passes", [])
-                # Always extend warnings list (even if empty, to maintain consistency)
-                warnings_log.extend(cycle_result.get("warnings", []))
-
-            intermediate_source = intermediate_binary
+        # Track what actually happened
+        if cycle_result:
+            actually_applied_passes = cycle_result.get("applied_passes", [])
+            # Always extend warnings list (even if empty, to maintain consistency)
+            warnings_log.extend(cycle_result.get("warnings", []))
 
         # UPX packing (if enabled) - applied as FINAL step after all obfuscation
         upx_result = None
@@ -609,22 +595,26 @@ class LLVMObfuscator:
         config: ObfuscationConfig,
         compiler_flags: List[str],
         enabled_passes: List[str],
+        cycles: int = 1,
     ) -> Dict:
         """
         Main compilation dispatcher - routes to appropriate frontend.
 
         DEFAULT (config.mlir_frontend == CLANG): Existing pipeline (SAFE)
         NEW (config.mlir_frontend == CLANGIR): ClangIR pipeline
+
+        Args:
+            cycles: Number of times to apply OLLVM passes (for stronger obfuscation)
         """
         from .config import MLIRFrontend
 
         # Route to appropriate pipeline based on frontend choice
         if config.mlir_frontend == MLIRFrontend.CLANGIR:
             # NEW: ClangIR pipeline
-            return self._compile_with_clangir(source, destination, config, compiler_flags, enabled_passes)
+            return self._compile_with_clangir(source, destination, config, compiler_flags, enabled_passes, cycles)
         else:
             # DEFAULT: Existing Clang → LLVM IR → MLIR pipeline (UNCHANGED)
-            return self._compile_with_clang_llvm(source, destination, config, compiler_flags, enabled_passes)
+            return self._compile_with_clang_llvm(source, destination, config, compiler_flags, enabled_passes, cycles)
 
     def _compile_with_clang_llvm(
         self,
@@ -633,12 +623,14 @@ class LLVMObfuscator:
         config: ObfuscationConfig,
         compiler_flags: List[str],
         enabled_passes: List[str],
+        cycles: int = 1,
     ) -> Dict:
         """
-        EXISTING PIPELINE (UNCHANGED) - Clang → LLVM IR → MLIR
+        EXISTING PIPELINE - Clang → LLVM IR → MLIR → OLLVM (with cycles support)
 
-        This is the original working implementation, extracted into its own method.
-        NO LOGIC CHANGES - just code moved for better organization.
+        Args:
+            cycles: Number of times to apply OLLVM passes for stronger obfuscation.
+                   Each cycle applies all enabled OLLVM passes to the IR.
         """
         # Use absolute paths to avoid path resolution issues
         source_abs = source.resolve()
@@ -884,11 +876,15 @@ class LLVMObfuscator:
         config: ObfuscationConfig,
         compiler_flags: List[str],
         enabled_passes: List[str],
+        cycles: int = 1,
     ) -> Dict:
         """
         NEW PIPELINE - ClangIR → High-level MLIR → Obfuscation Passes
 
         Pipeline: C/C++ → ClangIR → MLIR (CIR dialect) → Lower to LLVM → MLIR passes → Binary
+
+        Args:
+            cycles: Number of times to apply OLLVM passes (currently unused in ClangIR pipeline)
         """
         from .config import Platform
 

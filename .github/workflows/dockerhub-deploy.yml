@@ -38,46 +38,36 @@ jobs:
         echo "=========================================="
         echo "Downloading LLVM binaries from GCP Cloud Storage"
         echo "=========================================="
-        
-        # Use latest version by default, or specific version if tagged
-        VERSION="${GITHUB_REF#refs/tags/}"
-        if [ "$VERSION" = "$GITHUB_REF" ]; then
-          # Not a tag, use latest
-          echo "Not a tagged release, using latest binaries..."
-          ARCHIVE_NAME="llvm-binaries-linux-x86_64-latest.tar.gz"
-        else
-          # Use versioned binary
-          echo "Using tagged version: $VERSION"
-          ARCHIVE_NAME="llvm-binaries-linux-x86_64-${VERSION}.tar.gz"
-        fi
-        
-        echo "::set-output name=version::$VERSION"
-        
-        # Download the archive from GCP
-        echo "Downloading from gs://${GCP_BUCKET}/${ARCHIVE_NAME}..."
-        mkdir -p cmd/llvm-obfuscator/plugins/
-        
-        gsutil cp "gs://${GCP_BUCKET}/${ARCHIVE_NAME}" /tmp/llvm-binaries.tar.gz || {
+
+        # Create target directory
+        mkdir -p cmd/llvm-obfuscator/plugins/linux-x86_64
+
+        # Download all individual files from GCP bucket
+        echo "Downloading individual binaries from gs://${GCP_BUCKET}/linux-x86_64/..."
+
+        gsutil -m cp -r "gs://${GCP_BUCKET}/linux-x86_64/*" cmd/llvm-obfuscator/plugins/linux-x86_64/ || {
           echo "❌ ERROR: Failed to download binaries from GCP Cloud Storage"
           echo ""
-          echo "Archive: ${ARCHIVE_NAME}"
           echo "Bucket: ${GCP_BUCKET}"
+          echo "Path: linux-x86_64/"
           echo ""
           echo "To fix:"
-          echo "  1. Go to Actions → 'Store LLVM Binaries in GCP Cloud Storage'"
-          echo "  2. Run the workflow manually with a version (e.g., v1.0.0)"
-          echo "  3. This will upload binaries to GCP Cloud Storage"
+          echo "  1. Ensure individual binaries are uploaded to gs://${GCP_BUCKET}/linux-x86_64/"
+          echo "  2. Required files: clang, opt, LLVMObfuscationPlugin.so, libLLVM.so.22.0git, mlir-opt, mlir-translate, clangir, MLIRObfuscation.so"
+          echo "  3. Also ensure lib/clang/22/include/ directory is uploaded"
           echo ""
           exit 1
         }
-        
-        # Extract archive
-        cd cmd/llvm-obfuscator/plugins/
-        tar -xzf /tmp/llvm-binaries.tar.gz
-        rm /tmp/llvm-binaries.tar.gz
-        
-        echo "✅ Binaries extracted successfully"
-        ls -lh linux-x86_64/
+
+        # Make binaries executable
+        chmod +x cmd/llvm-obfuscator/plugins/linux-x86_64/clang || true
+        chmod +x cmd/llvm-obfuscator/plugins/linux-x86_64/opt || true
+        chmod +x cmd/llvm-obfuscator/plugins/linux-x86_64/mlir-opt || true
+        chmod +x cmd/llvm-obfuscator/plugins/linux-x86_64/mlir-translate || true
+        chmod +x cmd/llvm-obfuscator/plugins/linux-x86_64/clangir || true
+
+        echo "✅ Binaries downloaded successfully"
+        ls -lh cmd/llvm-obfuscator/plugins/linux-x86_64/
 
     - name: Verify binaries are present (REQUIRED)
       run: |

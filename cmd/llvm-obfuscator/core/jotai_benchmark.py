@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import shutil
 import subprocess
 import tempfile
 from pathlib import Path
@@ -16,7 +18,7 @@ from typing import Dict, List, Optional, Tuple, TYPE_CHECKING
 from dataclasses import dataclass, asdict
 from enum import Enum
 
-from .utils import create_logger, run_command, ensure_directory
+from .utils import create_logger, run_command, ensure_directory, tool_exists
 from .exceptions import ObfuscationError
 
 # Forward reference for type hints to avoid circular imports
@@ -85,6 +87,122 @@ class JotaiBenchmarkManager:
 
         if auto_download and not self.repo_dir.exists():
             self.download_benchmarks()
+    
+    def _find_clang_binary(self) -> Path:
+        """
+        Find the best clang binary to use.
+        
+        Priority:
+        1. Custom clang from plugins/linux-x86_64/ (LLVM 22) - relative to current working directory
+        2. Custom clang from plugins/linux-x86_64/ (LLVM 22) - relative to this file
+        3. Custom clang from /usr/local/llvm-obfuscator/bin/ (Docker)
+        4. System clang (fallback)
+        
+        Returns:
+            Path to clang binary
+        """
+        import os
+        
+        # Try plugins directory relative to current working directory (CI runs from cmd/llvm-obfuscator)
+        cwd_plugins = Path(os.getcwd()) / "plugins" / "linux-x86_64"
+        if (cwd_plugins / "clang").exists():
+            clang_path = cwd_plugins / "clang"
+            self.logger.debug(f"Using custom clang from plugins (cwd): {clang_path}")
+            return clang_path
+        
+        # Try plugins directory relative to this file
+        file_plugins_dir = Path(__file__).parent.parent.parent / "plugins" / "linux-x86_64"
+        if (file_plugins_dir / "clang").exists():
+            clang_path = file_plugins_dir / "clang"
+            self.logger.debug(f"Using custom clang from plugins (file-relative): {clang_path}")
+            return clang_path
+        
+        # Try Docker installation path
+        docker_clang = Path("/usr/local/llvm-obfuscator/bin/clang")
+        if docker_clang.exists():
+            self.logger.debug(f"Using custom clang from Docker: {docker_clang}")
+            return docker_clang
+        
+        # Fallback to system clang
+        system_clang = shutil.which("clang")
+        if system_clang:
+            self.logger.debug(f"Using system clang: {system_clang}")
+            return Path(system_clang)
+        
+        # Last resort - hardcoded common path
+        self.logger.warning("Could not find clang, using /usr/bin/clang as fallback")
+        return Path("/usr/bin/clang")
+    
+    def _find_clang_resource_dir(self, clang_binary: Path) -> Optional[str]:
+        """
+        Find the clang resource directory (for standard headers like stddef.h).
+        
+        Args:
+            clang_binary: Path to clang binary
+            
+        Returns:
+            Path to clang resource directory/include, or None if not found
+        """
+        # First, check if this is our bundled clang from plugins
+        clang_path_str = str(clang_binary)
+        if "plugins" in clang_path_str or "llvm-obfuscator" in clang_path_str:
+            # Look for bundled headers relative to clang binary
+            clang_dir = clang_binary.parent
+            # Try multiple possible locations
+            possible_header_paths = [
+                clang_dir / "lib" / "clang" / "22" / "include",  # Standard location
+                clang_dir.parent.parent / "plugins" / "linux-x86_64" / "lib" / "clang" / "22" / "include",  # From core/ directory
+            ]
+            for bundled_headers in possible_header_paths:
+                if bundled_headers.exists():
+                    self.logger.info(f"✓ Found bundled headers: {bundled_headers}")
+                    return str(bundled_headers)
+            
+            # Also check current working directory (CI runs from cmd/llvm-obfuscator)
+            import os
+            cwd_headers = Path(os.getcwd()) / "plugins" / "linux-x86_64" / "lib" / "clang" / "22" / "include"
+            if cwd_headers.exists():
+                self.logger.info(f"✓ Found bundled headers (cwd): {cwd_headers}")
+                return str(cwd_headers)
+        
+        # Try to get resource directory from clang itself
+        try:
+            result = subprocess.run(
+                [str(clang_binary), "-print-resource-dir"],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            if result.returncode == 0:
+                resource_dir = result.stdout.strip()
+                if resource_dir:
+                    # Resource dir is the parent, include is inside it
+                    include_dir = os.path.join(resource_dir, "include")
+                    if os.path.exists(include_dir):
+                        self.logger.debug(f"Using clang resource dir: {include_dir}")
+                        return include_dir
+                    # If include doesn't exist, try resource_dir itself
+                    if os.path.exists(resource_dir):
+                        return resource_dir
+        except Exception as e:
+            self.logger.debug(f"Could not get resource dir from clang: {e}")
+        
+        # Fallback: try common system locations
+        common_paths = [
+            "/usr/lib/llvm-22/lib/clang/22/include",
+            "/usr/lib/llvm-19/lib/clang/19/include",
+            "/usr/lib/llvm-18/lib/clang/18/include",
+            "/usr/lib/llvm-17/lib/clang/17/include",
+            "/usr/local/llvm-obfuscator/lib/clang/22/include",  # Docker installation
+        ]
+        
+        for path in common_paths:
+            if os.path.exists(path):
+                self.logger.debug(f"Using system headers: {path}")
+                return path
+        
+        self.logger.warning("Could not find clang resource directory - stddef.h may not be found")
+        return None
 
     def download_benchmarks(self, force: bool = False) -> bool:
         """
@@ -163,6 +281,98 @@ class JotaiBenchmarkManager:
 
         return sorted(benchmarks)
 
+    def test_benchmark_compiles(self, benchmark_path: Path) -> bool:
+        """
+        Quick test to see if a benchmark compiles.
+        
+        Args:
+            benchmark_path: Path to benchmark C file
+            
+        Returns:
+            True if benchmark compiles, False otherwise
+        """
+        import tempfile
+        
+        clang_binary = self._find_clang_binary()
+        
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmpdir_path = Path(tmpdir)
+            test_binary = tmpdir_path / "test_compile"
+            
+            # Use same compilation flags as baseline compilation
+            compile_flags = [
+                "-g", "-O1",
+                "-std=c11",
+                "-Wno-everything",
+                "-Wno-error",
+                "-fno-strict-aliasing",
+                "-fno-common",
+                "-Wno-typedef-redefinition",
+            ]
+            
+            # Add resource directory if available
+            clang_resource_dir = self._find_clang_resource_dir(clang_binary)
+            if clang_resource_dir:
+                compile_flags.append(f"-isystem{clang_resource_dir}")
+            
+            # Add system includes
+            for inc_path in ["/usr/include", "/usr/local/include"]:
+                if os.path.exists(inc_path):
+                    compile_flags.append(f"-isystem{inc_path}")
+            
+            compile_cmd = [
+                str(clang_binary)
+            ] + compile_flags + [
+                str(benchmark_path),
+                "-o", str(test_binary),
+                "-lm",
+            ]
+            
+            try:
+                returncode, stdout, stderr = run_command(compile_cmd)
+                return returncode == 0 and test_binary.exists()
+            except ObfuscationError:
+                return False
+    
+    def filter_compilable_benchmarks(
+        self,
+        benchmarks: List[Path],
+        max_to_test: int = 100,
+        min_compilable: int = 10
+    ) -> List[Path]:
+        """
+        Filter benchmarks to find ones that compile.
+        
+        Args:
+            benchmarks: List of benchmark paths to test
+            max_to_test: Maximum number of benchmarks to test for compilability
+            min_compilable: Minimum number of compilable benchmarks to find
+            
+        Returns:
+            List of compilable benchmark paths
+        """
+        compilable = []
+        tested = 0
+        
+        self.logger.info(f"Filtering benchmarks to find compilable ones (testing up to {max_to_test})...")
+        
+        for benchmark in benchmarks:
+            if tested >= max_to_test:
+                break
+            if len(compilable) >= min_compilable:
+                break
+                
+            tested += 1
+            if tested % 10 == 0:
+                self.logger.info(f"  Tested {tested}/{max_to_test}, found {len(compilable)} compilable...")
+            
+            if self.test_benchmark_compiles(benchmark):
+                compilable.append(benchmark)
+                self.logger.debug(f"  ✓ {benchmark.name} compiles")
+        
+        self.logger.info(f"Found {len(compilable)} compilable benchmarks out of {tested} tested")
+        return compilable
+
     def get_benchmark_info(self, benchmark_path: Path) -> Dict:
         """
         Extract information about a benchmark.
@@ -211,8 +421,32 @@ class JotaiBenchmarkManager:
             binary = tmpdir_path / "test_binary"
 
             # Try to compile
+            clang_binary = self._find_clang_binary()
+            
+            # Build compilation flags with standard includes - same as baseline
+            compile_flags = [
+                "-g", "-O1",
+                "-std=c11",
+                "-Wno-everything",
+                "-Wno-error",
+                "-fno-strict-aliasing",
+                "-fno-common",
+                "-Wno-typedef-redefinition",
+            ]
+            
+            # Add resource directory if available
+            clang_resource_dir = self._find_clang_resource_dir(clang_binary)
+            if clang_resource_dir:
+                compile_flags.append(f"-isystem{clang_resource_dir}")
+            
+            # Add system includes
+            for inc_path in ["/usr/include", "/usr/local/include"]:
+                if os.path.exists(inc_path):
+                    compile_flags.append(f"-isystem{inc_path}")
+            
             compile_cmd = [
-                "clang", "-g", "-O1",
+                str(clang_binary)
+            ] + compile_flags + [
                 "-fsanitize=address,undefined,signed-integer-overflow",
                 "-fno-sanitize-recover=all",
                 str(benchmark_path),
@@ -285,17 +519,121 @@ class JotaiBenchmarkManager:
         try:
             # 1. Compile baseline binary (normal compilation, no obfuscation)
             self.logger.info(f"Step 1: Compiling baseline binary for {benchmark_path.name}...")
+            
+            # Find the best clang to use - prefer custom LLVM 22 clang from plugins
+            clang_binary = self._find_clang_binary()
+            
+            # Build compilation flags - Jotai benchmarks are extracted functions
+            # Use very permissive flags to handle incomplete extracted code
+            compile_flags = [
+                "-g", "-O1",
+                "-std=c11",
+                "-Wno-everything",  # Ignore all warnings
+                "-Wno-error",  # Don't treat warnings as errors
+                "-fno-strict-aliasing",  # Allow type punning
+                "-fno-common",  # Better for extracted code
+                "-fno-builtin",  # Don't assume builtin functions
+                "-Wno-typedef-redefinition",  # Allow typedef redefinition (treat as warning)
+            ]
+            
+            # Add standard include paths if they exist - CRITICAL for stddef.h
+            clang_resource_dir = self._find_clang_resource_dir(clang_binary)
+            if clang_resource_dir:
+                compile_flags.append(f"-isystem{clang_resource_dir}")
+                self.logger.debug(f"Added clang resource dir to includes: {clang_resource_dir}")
+            else:
+                self.logger.warning(f"WARNING: Could not find clang resource directory for {clang_binary}")
+                # Try to find it relative to clang binary
+                clang_dir = clang_binary.parent
+                potential_headers = clang_dir / "lib" / "clang" / "22" / "include"
+                if potential_headers.exists():
+                    compile_flags.append(f"-isystem{potential_headers}")
+                    self.logger.info(f"Found headers relative to clang: {potential_headers}")
+            
+            # Add system include paths
+            system_includes = [
+                "/usr/include",
+                "/usr/local/include",
+                "/usr/include/x86_64-linux-gnu",  # Linux-specific
+            ]
+            for inc_path in system_includes:
+                if os.path.exists(inc_path):
+                    compile_flags.append(f"-isystem{inc_path}")
+            
+            # Handle typedef redefinition conflicts by undefining system types
+            problematic_types = ["ssize_t", "size_t", "off_t", "pid_t", "uid_t", "gid_t"]
+            for ptype in problematic_types:
+                compile_flags.append(f"-U{ptype}")
+            
             compile_cmd = [
-                "clang", "-g", "-O1",
+                str(clang_binary)
+            ] + compile_flags + [
                 str(benchmark_path),
-                "-o", str(baseline_binary)
+                "-o", str(baseline_binary),
+                "-lm",  # Link math library (some benchmarks use math functions)
             ]
 
-            try:
-                returncode, stdout, stderr = run_command(compile_cmd)
-            except ObfuscationError as e:
-                result.error_message = f"Baseline compilation failed: {e}"
-                return result
+            # Try compilation with multiple strategies if first attempt fails
+            compilation_strategies = [
+                ("standard", compile_flags),
+                ("no-system-includes", [f for f in compile_flags if not f.startswith("-isystem")]),
+                ("minimal", ["-g", "-O1", "-std=c11", "-Wno-everything", "-fno-builtin"]),
+            ]
+            
+            last_stderr = ""
+            for strategy_name, strategy_flags in compilation_strategies:
+                strategy_cmd = [str(clang_binary)] + strategy_flags + [
+                    str(benchmark_path),
+                    "-o", str(baseline_binary),
+                    "-lm",
+                ]
+                
+                try:
+                    process = subprocess.Popen(
+                        strategy_cmd,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        text=True,
+                    )
+                    stdout, stderr = process.communicate()
+                    returncode = process.returncode
+                    
+                    if returncode == 0:
+                        # Success!
+                        if strategy_name != "standard":
+                            self.logger.info(f"✓ Compiled with {strategy_name} strategy")
+                        break
+                    else:
+                        # Failed, try next strategy
+                        last_stderr = stderr
+                        if strategy_name == compilation_strategies[-1][0]:
+                            # Last strategy failed, log errors
+                            self.logger.info(f"❌ Compilation failed for {benchmark_path.name} (tried all strategies)")
+                            if stderr:
+                                error_lines = [line for line in stderr.split('\n') if 'error:' in line]
+                                if error_lines:
+                                    error_summary = '\n'.join(error_lines[:3])
+                                    self.logger.info(f"Final compilation errors:\n{error_summary}")
+                                    result.error_message = f"Baseline compilation failed: {error_lines[0].strip()[:250]}"
+                                else:
+                                    stderr_lines = [l for l in stderr.strip().split('\n') if l.strip()][:2]
+                                    if stderr_lines:
+                                        result.error_message = f"Baseline compilation failed: {stderr_lines[0].strip()[:250]}"
+                                        self.logger.info(f"Stderr: {stderr_lines[0][:200]}")
+                                    else:
+                                        result.error_message = f"Baseline compilation failed (exit {returncode})"
+                            else:
+                                result.error_message = f"Baseline compilation failed (exit {returncode}, no stderr)"
+                            return result
+                except Exception as e:
+                    last_stderr = str(e)
+                    if strategy_name == compilation_strategies[-1][0]:
+                        result.error_message = f"Baseline compilation failed: {str(e)}"
+                        self.logger.error(f"Compilation exception: {e}")
+                        return result
+                    continue
+            
+            # If we get here, compilation succeeded with one of the strategies
 
             result.baseline_binary = baseline_binary
             result.compilation_success = True

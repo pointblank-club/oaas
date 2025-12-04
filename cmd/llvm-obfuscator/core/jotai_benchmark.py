@@ -493,15 +493,16 @@ class JotaiBenchmarkManager:
             clang_binary = self._find_clang_binary()
             
             # Build compilation flags - Jotai benchmarks are extracted functions
-            # They may have typedef redefinitions, so we use permissive flags
+            # Use very permissive flags to handle incomplete extracted code
             compile_flags = [
                 "-g", "-O1",
                 "-std=c11",
                 "-Wno-everything",  # Ignore all warnings
-                "-Wno-error",  # Don't treat warnings as errors  
+                "-Wno-error",  # Don't treat warnings as errors
                 "-fno-strict-aliasing",  # Allow type punning
                 "-fno-common",  # Better for extracted code
                 "-fno-builtin",  # Don't assume builtin functions
+                "-Wno-typedef-redefinition",  # Allow typedef redefinition (treat as warning)
             ]
             
             # Add standard include paths if they exist
@@ -513,15 +514,14 @@ class JotaiBenchmarkManager:
             system_includes = [
                 "/usr/include",
                 "/usr/local/include",
+                "/usr/include/x86_64-linux-gnu",  # Linux-specific
             ]
             for inc_path in system_includes:
                 if os.path.exists(inc_path):
                     compile_flags.append(f"-isystem{inc_path}")
             
             # Handle typedef redefinition conflicts by undefining system types
-            # before benchmark code runs. Use -U to undefine problematic types.
-            # Common conflicts: ssize_t, size_t, etc.
-            problematic_types = ["ssize_t", "size_t", "off_t", "pid_t"]
+            problematic_types = ["ssize_t", "size_t", "off_t", "pid_t", "uid_t", "gid_t"]
             for ptype in problematic_types:
                 compile_flags.append(f"-U{ptype}")
             
@@ -533,23 +533,67 @@ class JotaiBenchmarkManager:
                 "-lm",  # Link math library (some benchmarks use math functions)
             ]
 
-            try:
-                returncode, stdout, stderr = run_command(compile_cmd)
-                if returncode != 0:
-                    # Log the actual error for debugging
-                    self.logger.debug(f"Compilation failed: {stderr}")
-                    result.error_message = f"Baseline compilation failed with exit code {returncode}"
-                    # Try to extract first error line for better error message
-                    if stderr:
-                        error_lines = stderr.split('\n')
-                        for line in error_lines:
-                            if 'error:' in line:
-                                result.error_message = f"Baseline compilation failed: {line.strip()[:200]}"
-                                break
-                    return result
-            except ObfuscationError as e:
-                result.error_message = f"Baseline compilation failed: {e}"
-                return result
+            # Try compilation with multiple strategies if first attempt fails
+            compilation_strategies = [
+                ("standard", compile_flags),
+                ("no-system-includes", [f for f in compile_flags if not f.startswith("-isystem")]),
+                ("minimal", ["-g", "-O1", "-std=c11", "-Wno-everything", "-fno-builtin"]),
+            ]
+            
+            last_stderr = ""
+            for strategy_name, strategy_flags in compilation_strategies:
+                strategy_cmd = [str(clang_binary)] + strategy_flags + [
+                    str(benchmark_path),
+                    "-o", str(baseline_binary),
+                    "-lm",
+                ]
+                
+                try:
+                    process = subprocess.Popen(
+                        strategy_cmd,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        text=True,
+                    )
+                    stdout, stderr = process.communicate()
+                    returncode = process.returncode
+                    
+                    if returncode == 0:
+                        # Success!
+                        if strategy_name != "standard":
+                            self.logger.info(f"✓ Compiled with {strategy_name} strategy")
+                        break
+                    else:
+                        # Failed, try next strategy
+                        last_stderr = stderr
+                        if strategy_name == compilation_strategies[-1][0]:
+                            # Last strategy failed, log errors
+                            self.logger.info(f"❌ Compilation failed for {benchmark_path.name} (tried all strategies)")
+                            if stderr:
+                                error_lines = [line for line in stderr.split('\n') if 'error:' in line]
+                                if error_lines:
+                                    error_summary = '\n'.join(error_lines[:3])
+                                    self.logger.info(f"Final compilation errors:\n{error_summary}")
+                                    result.error_message = f"Baseline compilation failed: {error_lines[0].strip()[:250]}"
+                                else:
+                                    stderr_lines = [l for l in stderr.strip().split('\n') if l.strip()][:2]
+                                    if stderr_lines:
+                                        result.error_message = f"Baseline compilation failed: {stderr_lines[0].strip()[:250]}"
+                                        self.logger.info(f"Stderr: {stderr_lines[0][:200]}")
+                                    else:
+                                        result.error_message = f"Baseline compilation failed (exit {returncode})"
+                            else:
+                                result.error_message = f"Baseline compilation failed (exit {returncode}, no stderr)"
+                            return result
+                except Exception as e:
+                    last_stderr = str(e)
+                    if strategy_name == compilation_strategies[-1][0]:
+                        result.error_message = f"Baseline compilation failed: {str(e)}"
+                        self.logger.error(f"Compilation exception: {e}")
+                        return result
+                    continue
+            
+            # If we get here, compilation succeeded with one of the strategies
 
             result.baseline_binary = baseline_binary
             result.compilation_success = True

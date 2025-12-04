@@ -682,32 +682,46 @@ class JotaiBenchmarkManager:
                 config.output.directory = obfuscated_dir
                 
                 # Run obfuscation on source file (produces obfuscated binary)
+                self.logger.info(f"Calling obfuscator.obfuscate() for {benchmark_path.name}...")
                 obf_result = obfuscator.obfuscate(
                     source_file=benchmark_path,
                     config=config
                 )
+                self.logger.info(f"Obfuscation call completed. Result keys: {list(obf_result.keys()) if isinstance(obf_result, dict) else 'not a dict'}")
 
                 # Find the obfuscated binary (obfuscator creates it with the source file name)
                 # The binary is typically named after the source file without extension
                 expected_binary = obfuscated_dir / benchmark_path.stem
+                self.logger.info(f"Looking for obfuscated binary at: {expected_binary}")
+                self.logger.info(f"Output directory contents: {list(obfuscated_dir.glob('*')) if obfuscated_dir.exists() else 'directory does not exist'}")
+                
                 if not expected_binary.exists():
                     # Try to find any binary file in the output directory
                     obfuscated_files = list(obfuscated_dir.glob(f"{benchmark_path.stem}*"))
                     # Filter for executable files
                     obfuscated_files = [f for f in obfuscated_files if f.is_file() and not f.suffix in ['.c', '.cpp', '.ll', '.json', '.md']]
+                    self.logger.info(f"Found {len(obfuscated_files)} potential obfuscated binaries: {[str(f) for f in obfuscated_files]}")
                     if obfuscated_files:
                         result.obfuscated_binary = obfuscated_files[0]
+                        self.logger.info(f"Using obfuscated binary: {result.obfuscated_binary}")
                     else:
-                        result.error_message = "Obfuscated binary not found"
+                        result.error_message = f"Obfuscated binary not found in {obfuscated_dir}. Expected: {expected_binary}"
+                        self.logger.error(result.error_message)
                         return result
                 else:
                     result.obfuscated_binary = expected_binary
+                    self.logger.info(f"Found obfuscated binary: {result.obfuscated_binary}")
                 
                 result.obfuscation_success = True
                 result.size_obfuscated = result.obfuscated_binary.stat().st_size
+                self.logger.info(f"✓ Obfuscation successful: {result.obfuscated_binary.name} ({result.size_obfuscated} bytes)")
 
             except Exception as e:
+                import traceback
+                error_details = traceback.format_exc()
                 result.error_message = f"Obfuscation failed: {str(e)}"
+                self.logger.error(f"❌ Obfuscation exception for {benchmark_path.name}:")
+                self.logger.error(error_details)
                 return result
 
             # 3. Functional testing

@@ -161,6 +161,7 @@ class PassesModel(BaseModel):
     substitution: bool = False
     bogus_control_flow: bool = False
     split: bool = False
+    linear_mba: bool = False
     # MLIR passes
     string_encrypt: bool = False
     symbol_obfuscate: bool = False
@@ -325,6 +326,7 @@ def _build_config_from_request(payload: ObfuscateRequest, destination_dir: Path,
         substitution=payload.config.passes.substitution or detected_passes.get("substitution", False),
         bogus_control_flow=payload.config.passes.bogus_control_flow or detected_passes.get("boguscf", False),
         split=payload.config.passes.split or detected_passes.get("split", False),
+        linear_mba=payload.config.passes.linear_mba or detected_passes.get("linear-mba", False),
         # MLIR passes (string_encryption in ConfigModel is legacy, also check passes.string_encrypt)
         string_encrypt=payload.config.passes.string_encrypt or payload.config.string_encryption or detected_passes.get("string-encrypt", False),
         symbol_obfuscate=payload.config.passes.symbol_obfuscate or detected_passes.get("symbol-obfuscate", False),
@@ -344,7 +346,7 @@ def _build_config_from_request(payload: ObfuscateRequest, destination_dir: Path,
     # Auto-load plugin if passes are requested and no explicit plugin provided
     any_pass_requested = (
         passes.flattening or passes.substitution or passes.bogus_control_flow or passes.split or
-        passes.string_encrypt or passes.symbol_obfuscate or passes.constant_obfuscate
+        passes.linear_mba or passes.string_encrypt or passes.symbol_obfuscate or passes.constant_obfuscate
     )
     chosen_plugin = payload.custom_pass_plugin
     if any_pass_requested and not chosen_plugin and DEFAULT_PASS_PLUGIN_EXISTS:
@@ -361,6 +363,7 @@ def _build_config_from_request(payload: ObfuscateRequest, destination_dir: Path,
                 "substitution": passes.substitution,
                 "bogus_control_flow": passes.bogus_control_flow,
                 "split": passes.split,
+                "linear_mba": passes.linear_mba,
                 # MLIR passes
                 "string_encrypt": passes.string_encrypt,
                 "symbol_obfuscate": passes.symbol_obfuscate,
@@ -424,6 +427,8 @@ def _setup_build_environment(config: ObfuscationConfig, plugin_path: Optional[st
             ollvm_passes.append("boguscf")
         if config.passes.split:
             ollvm_passes.append("split")
+        if config.passes.linear_mba:
+            ollvm_passes.append("linear-mba")
 
     # If OLLVM passes are enabled, use wrapper scripts
     if ollvm_passes and plugin_path:
@@ -863,6 +868,8 @@ async def api_obfuscate_sync(
                     enabled_passes.append("boguscf")
                 if config.passes.split:
                     enabled_passes.append("split")
+                if config.passes.linear_mba:
+                    enabled_passes.append("linear-mba")
 
                 # Find the main source file (the one with main function or first one)
                 main_source = None

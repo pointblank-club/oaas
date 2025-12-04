@@ -86,7 +86,7 @@ class JotaiCITester:
         
         print(f"✓ Found {len(all_benchmarks)} total benchmarks")
         
-        # Randomly select subset if needed
+        # Randomly select subset if needed - ALL benchmarks should be compilable
         if len(all_benchmarks) > self.max_benchmarks:
             if self.random_seed is not None:
                 random.seed(self.random_seed)

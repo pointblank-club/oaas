@@ -37,3 +37,5 @@ cmd/llvm-obfuscator/reports/
 cmd/jotai_results/
 
 cmd/llvm-obfuscator/plugins/
+
+cmd/llvm-obfuscator/plugins/linux-x86_64

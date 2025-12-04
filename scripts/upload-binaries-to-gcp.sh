@@ -1,13 +1,18 @@
 #!/bin/bash
-# Upload LLVM binaries directly to GCP Cloud Storage
-# This bypasses Git LFS quota limits by uploading from your local machine
+# Upload LLVM binaries to GCP Cloud Storage
+# This script uploads INDIVIDUAL binaries - only what you have locally gets uploaded
+# Other binaries in GCP remain untouched (no overwriting!)
+#
+# Usage: ./scripts/upload-binaries-to-gcp.sh [binary_name]
+#   - No args: uploads all binaries found locally
+#   - With arg: uploads only the specified binary (e.g., ./upload-binaries-to-gcp.sh LLVMObfuscationPlugin.so)
 
 set -e
 
 # Configuration
 GCP_BUCKET="llvmbins"
-VERSION="${1:-v1.0.0}"
 BINARIES_DIR="cmd/llvm-obfuscator/plugins/linux-x86_64"
+REMOTE_PATH="linux-x86_64"
 
 # Colors for output
 RED='\033[0;31m'
@@ -21,7 +26,6 @@ echo "=========================================="
 echo ""
 
 # Check if gcloud/gsutil is installed
-# Try to find gsutil in common locations
 GSUTIL=""
 if command -v gsutil &> /dev/null; then
     GSUTIL="gsutil"
@@ -31,7 +35,7 @@ elif [ -f "$HOME/google-cloud-sdk/bin/gsutil" ]; then
 elif [ -f "/usr/bin/gsutil" ]; then
     GSUTIL="/usr/bin/gsutil"
 else
-    echo -e "${RED}❌ ERROR: gsutil is not installed${NC}"
+    echo -e "${RED}ERROR: gsutil is not installed${NC}"
     echo "Install Google Cloud SDK: https://cloud.google.com/sdk/docs/install"
     echo ""
     echo "Or if already installed, add to PATH:"
@@ -44,8 +48,7 @@ if ! command -v gcloud &> /dev/null && [ -f "$HOME/google-cloud-sdk/bin/gcloud" 
     export PATH="$HOME/google-cloud-sdk/bin:$PATH"
 fi
 
-# Check if authenticated (either via service account or user account)
-# Use gcloud from PATH or full path
+# Check if authenticated
 GCLOUD="gcloud"
 if ! command -v gcloud &> /dev/null && [ -f "$HOME/google-cloud-sdk/bin/gcloud" ]; then
     GCLOUD="$HOME/google-cloud-sdk/bin/gcloud"
@@ -53,9 +56,9 @@ if ! command -v gcloud &> /dev/null && [ -f "$HOME/google-cloud-sdk/bin/gcloud" 
 fi
 
 if ! $GCLOUD auth list --filter=status:ACTIVE --format="value(account)" | grep -q .; then
-    echo -e "${YELLOW}⚠️  Not authenticated with GCP${NC}"
+    echo -e "${YELLOW}Not authenticated with GCP${NC}"
     echo ""
-    
+
     # Try common locations for service account key
     SERVICE_ACCOUNT_KEY=""
     if [ -n "$GOOGLE_APPLICATION_CREDENTIALS" ] && [ -f "$GOOGLE_APPLICATION_CREDENTIALS" ]; then
@@ -64,7 +67,7 @@ if ! $GCLOUD auth list --filter=status:ACTIVE --format="value(account)" | grep -
         SERVICE_ACCOUNT_KEY="$HOME/Downloads/unified-coyote-478817-r3-79066ecf407e.json"
         echo "Found service account key in Downloads folder"
     fi
-    
+
     if [ -n "$SERVICE_ACCOUNT_KEY" ]; then
         echo "Authenticating with service account: $SERVICE_ACCOUNT_KEY"
         $GCLOUD auth activate-service-account --key-file="$SERVICE_ACCOUNT_KEY"
@@ -77,112 +80,105 @@ if ! $GCLOUD auth list --filter=status:ACTIVE --format="value(account)" | grep -
     fi
 fi
 
+ACTIVE_ACCOUNT=$($GCLOUD auth list --filter=status:ACTIVE --format="value(account)")
+echo -e "${GREEN}Authenticated as: ${ACTIVE_ACCOUNT}${NC}"
+echo ""
+
 # Check if binaries directory exists
 if [ ! -d "$BINARIES_DIR" ]; then
-    echo -e "${RED}❌ ERROR: Binaries directory not found: $BINARIES_DIR${NC}"
+    echo -e "${RED}ERROR: Binaries directory not found: $BINARIES_DIR${NC}"
     echo "Please run this script from the repository root"
     exit 1
 fi
 
-# Verify required binaries exist
-echo "Checking for required binaries..."
-MISSING=0
+# List of known binaries
+BINARIES=(
+    "clang"
+    "opt"
+    "mlir-opt"
+    "mlir-translate"
+    "clangir"
+    "LLVMObfuscationPlugin.so"
+    "MLIRObfuscation.so"
+    "libLLVM.so.22.0git"
+)
 
-if [ ! -f "$BINARIES_DIR/clang" ]; then
-    echo -e "${RED}❌ clang binary not found${NC}"
-    MISSING=1
-elif ! file "$BINARIES_DIR/clang" | grep -q "ELF"; then
-    echo -e "${RED}❌ clang exists but is not a valid ELF binary${NC}"
-    MISSING=1
-else
-    echo -e "${GREEN}✅ clang binary found${NC}"
-fi
+# Function to upload a single binary
+upload_binary() {
+    local binary="$1"
+    local local_path="${BINARIES_DIR}/${binary}"
+    local remote_path="gs://${GCP_BUCKET}/${REMOTE_PATH}/${binary}"
 
-if [ ! -f "$BINARIES_DIR/opt" ]; then
-    echo -e "${RED}❌ opt binary not found${NC}"
-    MISSING=1
-elif ! file "$BINARIES_DIR/opt" | grep -q "ELF"; then
-    echo -e "${RED}❌ opt exists but is not a valid ELF binary${NC}"
-    MISSING=1
-else
-    echo -e "${GREEN}✅ opt binary found${NC}"
-fi
+    if [ -f "$local_path" ]; then
+        # Verify it's a valid binary
+        if file "$local_path" | grep -qE "ELF|shared object"; then
+            local size=$(ls -lh "$local_path" | awk '{print $5}')
+            echo -e "Uploading: ${GREEN}$binary${NC} ($size)"
+            $GSUTIL cp "$local_path" "$remote_path"
+            echo -e "  ${GREEN}-> $remote_path${NC}"
+            return 0
+        else
+            echo -e "${YELLOW}SKIP: $binary (not a valid ELF binary)${NC}"
+            return 1
+        fi
+    else
+        echo -e "${YELLOW}SKIP: $binary (not found locally)${NC}"
+        return 1
+    fi
+}
 
-if [ ! -f "$BINARIES_DIR/LLVMObfuscationPlugin.so" ]; then
-    echo -e "${RED}❌ LLVMObfuscationPlugin.so not found${NC}"
-    MISSING=1
-elif ! file "$BINARIES_DIR/LLVMObfuscationPlugin.so" | grep -q "shared object"; then
-    echo -e "${RED}❌ plugin exists but is not a valid shared object${NC}"
-    MISSING=1
-else
-    echo -e "${GREEN}✅ plugin binary found${NC}"
-fi
+# Upload lib/clang/22/include directory if it exists
+upload_clang_headers() {
+    local local_headers="${BINARIES_DIR}/lib/clang/22/include"
+    local remote_headers="gs://${GCP_BUCKET}/${REMOTE_PATH}/lib/clang/22/include/"
 
-if [ $MISSING -eq 1 ]; then
+    if [ -d "$local_headers" ]; then
+        echo ""
+        echo "Uploading clang headers..."
+        $GSUTIL -m cp -r "$local_headers/*" "$remote_headers"
+        echo -e "${GREEN}  -> $remote_headers${NC}"
+    fi
+}
+
+echo "Bucket: gs://${GCP_BUCKET}/${REMOTE_PATH}/"
+echo "Local:  ${BINARIES_DIR}/"
+echo ""
+echo -e "${YELLOW}NOTE: Only binaries that exist locally will be uploaded.${NC}"
+echo -e "${YELLOW}      Other binaries in GCP will NOT be overwritten.${NC}"
+echo ""
+
+UPLOADED=0
+
+# If specific binary specified, upload only that
+if [ -n "$1" ]; then
+    echo "Uploading specific binary: $1"
     echo ""
-    echo -e "${RED}❌ ERROR: Required binaries are missing!${NC}"
+    if upload_binary "$1"; then
+        UPLOADED=1
+    fi
+else
+    # Upload all binaries that exist locally
+    echo "Checking for binaries to upload..."
     echo ""
-    echo "Make sure you have the actual binary files (not LFS pointers) in:"
-    echo "  $BINARIES_DIR"
-    exit 1
+
+    for binary in "${BINARIES[@]}"; do
+        if upload_binary "$binary"; then
+            UPLOADED=$((UPLOADED + 1))
+        fi
+    done
+
+    # Also upload clang headers if they exist
+    upload_clang_headers
 fi
-
-# Create temporary directory for archive
-TEMP_DIR=$(mktemp -d)
-trap "rm -rf $TEMP_DIR" EXIT
-
-echo ""
-echo "Creating archive..."
-mkdir -p "$TEMP_DIR/linux-x86_64/lib"
-
-# Copy binaries
-cp "$BINARIES_DIR/clang" "$TEMP_DIR/linux-x86_64/"
-cp "$BINARIES_DIR/opt" "$TEMP_DIR/linux-x86_64/"
-cp "$BINARIES_DIR/LLVMObfuscationPlugin.so" "$TEMP_DIR/linux-x86_64/"
-
-# Copy library files if they exist
-if [ -d "$BINARIES_DIR/lib" ]; then
-    cp -r "$BINARIES_DIR/lib"/* "$TEMP_DIR/linux-x86_64/lib/" 2>/dev/null || true
-    echo "✅ Copied library files"
-fi
-
-# Create archive
-cd "$TEMP_DIR"
-ARCHIVE_NAME="llvm-binaries-linux-x86_64-${VERSION}.tar.gz"
-tar -czf "$ARCHIVE_NAME" linux-x86_64/
-ARCHIVE_SIZE=$(du -h "$ARCHIVE_NAME" | cut -f1)
-
-echo -e "${GREEN}✅ Archive created: ${ARCHIVE_NAME} (${ARCHIVE_SIZE})${NC}"
-echo ""
-
-# Upload to GCP
-echo "Uploading to GCP Cloud Storage..."
-echo "  Bucket: gs://${GCP_BUCKET}/"
-echo "  Version: ${VERSION}"
-echo ""
-
-# Upload versioned file
-$GSUTIL cp "$ARCHIVE_NAME" "gs://${GCP_BUCKET}/${ARCHIVE_NAME}"
-echo -e "${GREEN}✅ Uploaded: gs://${GCP_BUCKET}/${ARCHIVE_NAME}${NC}"
-
-# Upload as latest
-$GSUTIL cp "$ARCHIVE_NAME" "gs://${GCP_BUCKET}/llvm-binaries-linux-x86_64-latest.tar.gz"
-echo -e "${GREEN}✅ Uploaded: gs://${GCP_BUCKET}/llvm-binaries-linux-x86_64-latest.tar.gz${NC}"
-
-# Set metadata
-$GSUTIL -m setmeta -h "Content-Type:application/gzip" \
-  -h "Cache-Control:public, max-age=3600" \
-  "gs://${GCP_BUCKET}/${ARCHIVE_NAME}" \
-  "gs://${GCP_BUCKET}/llvm-binaries-linux-x86_64-latest.tar.gz"
 
 echo ""
 echo "=========================================="
-echo -e "${GREEN}✅ Upload completed successfully!${NC}"
+if [ $UPLOADED -gt 0 ]; then
+    echo -e "${GREEN}Upload completed! ($UPLOADED binaries uploaded)${NC}"
+else
+    echo -e "${YELLOW}No binaries were uploaded${NC}"
+fi
 echo "=========================================="
 echo ""
-echo "Binaries are now available at:"
-echo "  gs://${GCP_BUCKET}/${ARCHIVE_NAME}"
-echo "  gs://${GCP_BUCKET}/llvm-binaries-linux-x86_64-latest.tar.gz"
-echo ""
-echo "Your CI workflows can now download from GCP instead of Git LFS!"
-
+echo "Current contents of gs://${GCP_BUCKET}/${REMOTE_PATH}/:"
+$GSUTIL ls -lh "gs://${GCP_BUCKET}/${REMOTE_PATH}/" 2>/dev/null || echo "(unable to list)"

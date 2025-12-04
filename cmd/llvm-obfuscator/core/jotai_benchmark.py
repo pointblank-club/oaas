@@ -536,39 +536,77 @@ class JotaiBenchmarkManager:
                 "-Wno-typedef-redefinition",  # Allow typedef redefinition (treat as warning)
             ]
             
-            # KEY INSIGHT: Use custom clang binary (for obfuscation) but with SYSTEM headers
-            # The bundled headers are incomplete, so we need to use system headers
-            # Custom clang will still work for obfuscation even with system headers
+            # KEY INSIGHT: Use custom clang binary (for obfuscation) but with SYSTEM clang headers
+            # The bundled headers are incomplete, so we need system clang's resource dir (has stddef.h)
+            # Then add system includes. This matches clang-obfuscate script approach.
             
-            # Strategy 1: Use custom clang with system headers (let clang find system headers automatically)
-            # This works because clang will use its own resource dir discovery + system headers
+            # Find system clang's resource directory (where stddef.h lives)
+            # This is needed because custom clang's bundled headers are incomplete
+            system_clang_resource_dir = None
+            system_clang_paths = [
+                "/usr/lib/llvm-19/lib/clang/19/include",
+                "/usr/lib/llvm-18/lib/clang/18/include",
+                "/usr/lib/llvm-22/lib/clang/22/include",
+            ]
+            # Try to find any system clang headers using glob pattern
+            try:
+                llvm_base = Path("/usr/lib")
+                if llvm_base.exists():
+                    # Look for llvm-*/lib/clang/*/include directories
+                    for llvm_dir in llvm_base.glob("llvm-*"):
+                        clang_dir = llvm_dir / "lib" / "clang"
+                        if clang_dir.exists():
+                            for version_dir in clang_dir.glob("*"):
+                                include_dir = version_dir / "include"
+                                if include_dir.exists():
+                                    system_clang_resource_dir = str(include_dir)
+                                    break
+                            if system_clang_resource_dir:
+                                break
+            except Exception:
+                pass
+            
+            # Fallback to known paths
+            if not system_clang_resource_dir:
+                for path in system_clang_paths:
+                    if os.path.exists(path):
+                        system_clang_resource_dir = path
+                        break
+            
+            # Strategy 1: Use -nostdinc + system clang headers + system includes (like clang-obfuscate)
             strategy1_flags = base_flags.copy()
-            
-            # Strategy 2: Explicitly add system headers if clang doesn't find them automatically
-            strategy2_flags = base_flags.copy()
-            # Add system include paths (these have complete headers)
+            strategy1_flags.append("-nostdinc")
+            if system_clang_resource_dir:
+                strategy1_flags.append(f"-isystem{system_clang_resource_dir}")
+                self.logger.info(f"✓ Using system clang headers: {system_clang_resource_dir}")
+            # Add system includes AFTER clang headers
             system_includes = [
-                "/usr/include",
                 "/usr/local/include",
-                "/usr/include/x86_64-linux-gnu",  # Linux-specific
+                "/usr/include/x86_64-linux-gnu",
+                "/usr/include",
             ]
             for inc_path in system_includes:
                 if os.path.exists(inc_path):
-                    strategy2_flags.append(f"-isystem{inc_path}")
+                    strategy1_flags.append(f"-isystem{inc_path}")
+            
+            # Strategy 2: Try without -nostdinc (let clang auto-discover)
+            strategy2_flags = base_flags.copy()
+            if system_clang_resource_dir:
+                strategy2_flags.append(f"-isystem{system_clang_resource_dir}")
             
             # Strategy 3: Minimal flags (last resort)
             strategy3_flags = ["-g", "-O1", "-std=c11", "-Wno-everything", "-fno-builtin"]
             
-            # Handle typedef redefinition conflicts by undefining system types
+            # Handle typedef redefinition conflicts
             problematic_types = ["ssize_t", "size_t", "off_t", "pid_t", "uid_t", "gid_t"]
             for ptype in problematic_types:
                 strategy1_flags.append(f"-U{ptype}")
                 strategy2_flags.append(f"-U{ptype}")
             
-            # Try strategies: let clang auto-discover first, then explicit system headers, then minimal
+            # Try strategies: explicit includes first (most reliable), then auto, then minimal
             compilation_strategies = [
-                ("auto-includes", strategy1_flags),
-                ("system-includes", strategy2_flags),
+                ("explicit-includes", strategy1_flags),
+                ("auto-includes", strategy2_flags),
                 ("minimal", strategy3_flags),
             ]
             
@@ -592,7 +630,7 @@ class JotaiBenchmarkManager:
                     
                     if returncode == 0:
                         # Success!
-                        if strategy_name != "auto-includes":
+                        if strategy_name != "explicit-includes":
                             self.logger.info(f"✓ Compiled with {strategy_name} strategy")
                         result.baseline_binary = baseline_binary
                         result.compilation_success = True

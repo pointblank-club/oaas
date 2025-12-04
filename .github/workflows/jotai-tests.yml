@@ -83,10 +83,53 @@ jobs:
         echo "✅ Binaries extracted successfully"
         ls -lh linux-x86_64/
 
+    - name: Download MLIR binaries from GCP Cloud Storage
+      id: download-mlir
+      env:
+        GCP_BUCKET: llvmbins
+      run: |
+        echo "=========================================="
+        echo "Downloading MLIR binaries from GCP Cloud Storage"
+        echo "=========================================="
+        
+        mkdir -p /tmp/mlir-bin
+        
+        # Download MLIR binaries (mlir-opt, mlir-translate, etc.)
+        echo "Downloading MLIR tools from gs://${GCP_BUCKET}/..."
+        
+        # Download mlir-opt
+        gsutil cp "gs://${GCP_BUCKET}/mlir-opt" /tmp/mlir-bin/mlir-opt || {
+          echo "❌ ERROR: Failed to download mlir-opt from GCP"
+          exit 1
+        }
+        
+        # Download mlir-translate
+        gsutil cp "gs://${GCP_BUCKET}/mlir-translate" /tmp/mlir-bin/mlir-translate || {
+          echo "❌ ERROR: Failed to download mlir-translate from GCP"
+          exit 1
+        }
+        
+        # Make executable
+        chmod +x /tmp/mlir-bin/mlir-opt
+        chmod +x /tmp/mlir-bin/mlir-translate
+        
+        # Add to PATH
+        echo "/tmp/mlir-bin" >> $GITHUB_PATH
+        
+        # Also create symlinks in a standard location
+        sudo cp /tmp/mlir-bin/mlir-opt /usr/local/bin/mlir-opt
+        sudo cp /tmp/mlir-bin/mlir-translate /usr/local/bin/mlir-translate
+        
+        echo "✅ MLIR binaries downloaded and installed"
+        
+        # Verify
+        /tmp/mlir-bin/mlir-opt --version || echo "⚠️ mlir-opt version check failed"
+        /tmp/mlir-bin/mlir-translate --version || echo "⚠️ mlir-translate version check failed"
+
     - name: Verify binaries are present (REQUIRED)
       run: |
         echo "=========================================="
-        echo "Verifying custom LLVM binaries (REQUIRED)"
+        echo "Verifying custom LLVM and MLIR binaries (REQUIRED)"
         echo "=========================================="
         echo ""
         
@@ -111,9 +154,24 @@ jobs:
           echo "✅ Custom opt binary verified"
         fi
         
+        # Verify MLIR tools
+        if ! command -v mlir-opt &> /dev/null; then
+          echo "❌ ERROR: mlir-opt not found in PATH"
+          MISSING_BINARIES=1
+        else
+          echo "✅ mlir-opt verified: $(which mlir-opt)"
+        fi
+        
+        if ! command -v mlir-translate &> /dev/null; then
+          echo "❌ ERROR: mlir-translate not found in PATH"
+          MISSING_BINARIES=1
+        else
+          echo "✅ mlir-translate verified: $(which mlir-translate)"
+        fi
+        
         if [ $MISSING_BINARIES -eq 1 ]; then
           echo ""
-          echo "❌ ERROR: Required custom LLVM binaries are missing"
+          echo "❌ ERROR: Required custom LLVM/MLIR binaries are missing"
           echo ""
           echo "To fix:"
           echo "  1. Go to Actions → 'Store LLVM Binaries in GCP Cloud Storage'"

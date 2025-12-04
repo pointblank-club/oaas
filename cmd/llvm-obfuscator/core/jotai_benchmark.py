@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import shutil
 import subprocess
 import tempfile
 from pathlib import Path
@@ -16,7 +17,7 @@ from typing import Dict, List, Optional, Tuple, TYPE_CHECKING
 from dataclasses import dataclass, asdict
 from enum import Enum
 
-from .utils import create_logger, run_command, ensure_directory
+from .utils import create_logger, run_command, ensure_directory, tool_exists
 from .exceptions import ObfuscationError
 
 # Forward reference for type hints to avoid circular imports
@@ -85,6 +86,51 @@ class JotaiBenchmarkManager:
 
         if auto_download and not self.repo_dir.exists():
             self.download_benchmarks()
+    
+    def _find_clang_binary(self) -> Path:
+        """
+        Find the best clang binary to use.
+        
+        Priority:
+        1. Custom clang from plugins/linux-x86_64/ (LLVM 22) - relative to current working directory
+        2. Custom clang from plugins/linux-x86_64/ (LLVM 22) - relative to this file
+        3. Custom clang from /usr/local/llvm-obfuscator/bin/ (Docker)
+        4. System clang (fallback)
+        
+        Returns:
+            Path to clang binary
+        """
+        import os
+        
+        # Try plugins directory relative to current working directory (CI runs from cmd/llvm-obfuscator)
+        cwd_plugins = Path(os.getcwd()) / "plugins" / "linux-x86_64"
+        if (cwd_plugins / "clang").exists():
+            clang_path = cwd_plugins / "clang"
+            self.logger.debug(f"Using custom clang from plugins (cwd): {clang_path}")
+            return clang_path
+        
+        # Try plugins directory relative to this file
+        file_plugins_dir = Path(__file__).parent.parent.parent / "plugins" / "linux-x86_64"
+        if (file_plugins_dir / "clang").exists():
+            clang_path = file_plugins_dir / "clang"
+            self.logger.debug(f"Using custom clang from plugins (file-relative): {clang_path}")
+            return clang_path
+        
+        # Try Docker installation path
+        docker_clang = Path("/usr/local/llvm-obfuscator/bin/clang")
+        if docker_clang.exists():
+            self.logger.debug(f"Using custom clang from Docker: {docker_clang}")
+            return docker_clang
+        
+        # Fallback to system clang
+        system_clang = shutil.which("clang")
+        if system_clang:
+            self.logger.debug(f"Using system clang: {system_clang}")
+            return Path(system_clang)
+        
+        # Last resort - hardcoded common path
+        self.logger.warning("Could not find clang, using /usr/bin/clang as fallback")
+        return Path("/usr/bin/clang")
 
     def download_benchmarks(self, force: bool = False) -> bool:
         """
@@ -211,8 +257,9 @@ class JotaiBenchmarkManager:
             binary = tmpdir_path / "test_binary"
 
             # Try to compile
+            clang_binary = self._find_clang_binary()
             compile_cmd = [
-                "clang", "-g", "-O1",
+                str(clang_binary), "-g", "-O1",
                 "-fsanitize=address,undefined,signed-integer-overflow",
                 "-fno-sanitize-recover=all",
                 str(benchmark_path),
@@ -285,8 +332,12 @@ class JotaiBenchmarkManager:
         try:
             # 1. Compile baseline binary (normal compilation, no obfuscation)
             self.logger.info(f"Step 1: Compiling baseline binary for {benchmark_path.name}...")
+            
+            # Find the best clang to use - prefer custom LLVM 22 clang from plugins
+            clang_binary = self._find_clang_binary()
+            
             compile_cmd = [
-                "clang", "-g", "-O1",
+                str(clang_binary), "-g", "-O1",
                 str(benchmark_path),
                 "-o", str(baseline_binary)
             ]

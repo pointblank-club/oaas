@@ -34,21 +34,44 @@ void StringEncryptPass::runOnOperation() {
 
     for (auto &attr : op->getAttrs()) {
       StringRef attrName = attr.getName().getValue();
-      if (attrName == "sym_name" || 
+
+      // Skip all metadata/structural attributes - these should never be encrypted
+      // Only encrypt actual string data content (the "value" attr on global string constants)
+      if (attrName == "sym_name" ||
           attrName == "function_ref" ||
-          attrName == "callee") {
+          attrName == "callee" ||
+          attrName == "target_cpu" ||
+          attrName == "tune_cpu" ||
+          attrName == "llvm.target_triple" ||
+          attrName == "llvm.ident" ||
+          attrName == "target_features" ||
+          attrName == "frame_pointer" ||
+          attrName == "uwtable_kind" ||
+          attrName == "linkage" ||
+          attrName == "visibility" ||
+          attrName == "dso_local" ||
+          attrName == "alignment" ||
+          attrName == "addr_space" ||
+          attrName == "dlti.dl_spec" ||
+          attrName == "llvm.module_asm" ||
+          attrName.starts_with("passthrough") ||
+          attrName.starts_with("dlti.")) {
         newAttrs.push_back(attr);
-        continue;  // Skip to next attribute
+        continue;  // Skip to next attribute - don't encrypt metadata
       }
 
-      // Original encryption logic (unchanged)
-      if (auto strAttr = llvm::dyn_cast<StringAttr>(attr.getValue())) {
-        std::string original = strAttr.getValue().str();
-        std::string encrypted = xorEncrypt(original, key);
+      // Only encrypt string attributes named "value" on global ops (actual string data)
+      if (attrName == "value") {
+        if (auto strAttr = llvm::dyn_cast<StringAttr>(attr.getValue())) {
+          std::string original = strAttr.getValue().str();
+          std::string encrypted = xorEncrypt(original, key);
 
-        auto newValue = StringAttr::get(ctx, encrypted);
-        newAttrs.emplace_back(attr.getName(), newValue);
-        changed = true;
+          auto newValue = StringAttr::get(ctx, encrypted);
+          newAttrs.emplace_back(attr.getName(), newValue);
+          changed = true;
+        } else {
+          newAttrs.push_back(attr);
+        }
       } else {
         newAttrs.push_back(attr);
       }

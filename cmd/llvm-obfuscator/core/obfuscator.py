@@ -142,7 +142,11 @@ class LLVMObfuscator:
 
             # Search locations for MLIR plugin
             search_paths = [
-                # Relative to the obfuscator script
+                # Bundled plugin location (for each platform)
+                Path(__file__).parent.parent / "plugins" / "linux-x86_64" / f"MLIRObfuscation.{ext}",
+                Path(__file__).parent.parent / "plugins" / "darwin-arm64" / f"MLIRObfuscation.{ext}",
+                Path(__file__).parent.parent / "plugins" / "darwin-x86_64" / f"MLIRObfuscation.{ext}",
+                # Relative to the obfuscator script (build directory)
                 Path(__file__).parent.parent.parent.parent / "mlir-obs" / "build" / "lib" / f"MLIRObfuscation.{ext}",
                 Path(__file__).parent.parent.parent.parent / "mlir-obs" / "build" / "lib" / f"libMLIRObfuscation.{ext}",
                 # Absolute paths
@@ -434,8 +438,25 @@ class LLVMObfuscator:
         if not is_custom_clang:
             return []
 
-        # Try to find system clang's resource directory
-        # Priority: system clang-19 > clang-18 > clang
+        # Try to find resource directory
+        # Priority: bundled LLVM 22 > system clang
+        resource_dir_candidates = [
+            # Bundled LLVM 22 resource directory
+            Path(__file__).parent.parent / "plugins" / "linux-x86_64" / "lib" / "clang" / "22",
+            Path("/app/plugins/linux-x86_64/lib/clang/22"),  # Docker path
+            Path("/usr/local/llvm-obfuscator/lib/clang/22"),  # Docker installed path
+            # System clang fallbacks
+            Path("/usr/lib/llvm-19/lib/clang/19"),
+            Path("/usr/lib/llvm-18/lib/clang/18"),
+            Path("/usr/lib/llvm-17/lib/clang/17"),
+        ]
+
+        for resource_dir in resource_dir_candidates:
+            if resource_dir.exists():
+                self.logger.info(f"[RESOURCE-DIR-DEBUG] Using resource directory: {resource_dir}")
+                return ["-resource-dir", str(resource_dir)]
+
+        # Legacy: Try string paths for backwards compatibility
         system_clang_candidates = [
             "/usr/lib/llvm-19/lib/clang/19",
             "/usr/lib/llvm-18/lib/clang/18",
@@ -627,6 +648,10 @@ class LLVMObfuscator:
             # 1a: Compile source to LLVM IR
             llvm_ir_temp = destination_abs.parent / f"{destination_abs.stem}_temp.ll"
             ir_cmd = [compiler, str(current_input), "-S", "-emit-llvm", "-o", str(llvm_ir_temp)]
+            # Add resource-dir flag for bundled clang
+            resource_dir_flags = self._get_resource_dir_flag(compiler)
+            if resource_dir_flags:
+                ir_cmd.extend(resource_dir_flags)
             if config.platform == Platform.WINDOWS:
                 ir_cmd.extend(["--target=x86_64-w64-mingw32"])
             run_command(ir_cmd, cwd=source_abs.parent)
@@ -709,7 +734,17 @@ class LLVMObfuscator:
             # Find the OLLVM plugin
             plugin_path = config.custom_pass_plugin or self._get_bundled_plugin_path(config.platform)
             if not plugin_path or not plugin_path.exists():
-                raise ObfuscationError("OLLVM passes requested but no plugin found.")
+                warning_msg = (
+                    f"OLLVM passes requested ({', '.join(ollvm_passes)}) but LLVMObfuscationPlugin.so not found. "
+                    "These passes require a custom OLLVM build. Skipping OLLVM passes. "
+                    "MLIR passes (string-encrypt, symbol-obfuscate, crypto-hash, constant-obfuscate) are still available."
+                )
+                self.logger.warning(warning_msg)
+                warnings.append(warning_msg)
+                actually_applied_passes = [p for p in actually_applied_passes if p not in ollvm_passes]
+                ollvm_passes = []  # Skip OLLVM stage
+
+        if ollvm_passes:
 
             # If the input is still a source file, compile it to LLVM IR
             if current_input.suffix not in ['.ll', '.bc']:
@@ -921,15 +956,30 @@ class LLVMObfuscator:
 
             plugin_path = config.custom_pass_plugin or self._get_bundled_plugin_path(config.platform)
             if not plugin_path or not plugin_path.exists():
-                raise ObfuscationError("OLLVM passes requested but no plugin found.")
+                warning_msg = (
+                    f"OLLVM passes requested ({', '.join(ollvm_passes)}) but LLVMObfuscationPlugin.so not found. "
+                    "These passes require a custom OLLVM build. Skipping OLLVM passes. "
+                    "MLIR passes (string-encrypt, symbol-obfuscate, crypto-hash, constant-obfuscate) are still available."
+                )
+                self.logger.warning(warning_msg)
+                warnings.append(warning_msg)
+                actually_applied_passes = [p for p in actually_applied_passes if p not in ollvm_passes]
+                ollvm_passes = []  # Skip OLLVM stage
 
+        if ollvm_passes:
             if self._has_exception_handling(current_input):
                 warnings.append("C++ exception handling detected; some OLLVM passes may be unstable.")
 
             obfuscated_ir = destination_abs.parent / f"{destination_abs.stem}_obfuscated.bc"
             opt_binary = plugin_path.parent / "opt"
             if not opt_binary.exists():
-                raise ObfuscationError(f"OLLVM opt binary not found at {opt_binary}")
+                warning_msg = f"OLLVM opt binary not found at {opt_binary}. Skipping OLLVM passes."
+                self.logger.warning(warning_msg)
+                warnings.append(warning_msg)
+                actually_applied_passes = [p for p in actually_applied_passes if p not in ollvm_passes]
+                ollvm_passes = []  # Skip OLLVM stage
+
+        if ollvm_passes:
 
             passes_pipeline = ",".join(ollvm_passes)
             opt_cmd = [

@@ -41,6 +41,7 @@ def _build_config(
     enable_linear_mba: bool,
     cycles: int,
     string_encryption: bool,
+    symbol_obfuscation: bool,
     fake_loops: int,
     enable_indirect_calls: bool,
     indirect_stdlib: bool,
@@ -70,6 +71,8 @@ def _build_config(
         bogus_control_flow=enable_bogus_cf or detected_passes.get("boguscf", False),
         split=enable_split or detected_passes.get("split", False),
         linear_mba=enable_linear_mba or detected_passes.get("linear-mba", False),
+        string_encrypt=string_encryption,
+        symbol_obfuscate=symbol_obfuscation,
     )
     indirect_call_config = IndirectCallConfiguration(
         enabled=enable_indirect_calls,
@@ -141,6 +144,7 @@ def compile(
             enable_linear_mba=enable_linear_mba,
             cycles=cycles,
             string_encryption=enable_string_encrypt,
+            symbol_obfuscation=enable_symbol_obfuscate,
             fake_loops=fake_loops,
             enable_indirect_calls=enable_indirect_calls,
             indirect_stdlib=indirect_stdlib,

@@ -79,10 +79,43 @@ jobs:
         echo "✅ Binaries extracted successfully"
         ls -lh linux-x86_64/
 
+    - name: Download MLIR binaries from GCP Cloud Storage
+      id: download-mlir
+      env:
+        GCP_BUCKET: llvmbins
+      run: |
+        echo "=========================================="
+        echo "Downloading MLIR binaries from GCP Cloud Storage"
+        echo "=========================================="
+        
+        mkdir -p cmd/llvm-obfuscator/plugins/linux-x86_64/
+        
+        # Download MLIR binaries (mlir-opt, mlir-translate, etc.)
+        echo "Downloading MLIR tools from gs://${GCP_BUCKET}/..."
+        
+        # Download mlir-opt
+        gsutil cp "gs://${GCP_BUCKET}/mlir-opt" cmd/llvm-obfuscator/plugins/linux-x86_64/mlir-opt || {
+          echo "❌ ERROR: Failed to download mlir-opt from GCP"
+          exit 1
+        }
+        
+        # Download mlir-translate
+        gsutil cp "gs://${GCP_BUCKET}/mlir-translate" cmd/llvm-obfuscator/plugins/linux-x86_64/mlir-translate || {
+          echo "❌ ERROR: Failed to download mlir-translate from GCP"
+          exit 1
+        }
+        
+        # Make executable
+        chmod +x cmd/llvm-obfuscator/plugins/linux-x86_64/mlir-opt
+        chmod +x cmd/llvm-obfuscator/plugins/linux-x86_64/mlir-translate
+        
+        echo "✅ MLIR binaries downloaded"
+        ls -lh cmd/llvm-obfuscator/plugins/linux-x86_64/mlir-*
+
     - name: Verify binaries are present (REQUIRED)
       run: |
         echo "=========================================="
-        echo "Verifying custom LLVM binaries (REQUIRED)"
+        echo "Verifying custom LLVM and MLIR binaries (REQUIRED)"
         echo "=========================================="
         echo ""
         
@@ -124,6 +157,27 @@ jobs:
           echo "✅ Custom obfuscation plugin verified"
         fi
         
+        # Check MLIR tools
+        if [ ! -f "cmd/llvm-obfuscator/plugins/linux-x86_64/mlir-opt" ]; then
+          echo "❌ ERROR: mlir-opt binary not found"
+          MISSING_BINARIES=1
+        elif ! file cmd/llvm-obfuscator/plugins/linux-x86_64/mlir-opt | grep -q "ELF"; then
+          echo "❌ ERROR: mlir-opt file exists but is not a valid ELF binary"
+          MISSING_BINARIES=1
+        else
+          echo "✅ mlir-opt binary verified"
+        fi
+        
+        if [ ! -f "cmd/llvm-obfuscator/plugins/linux-x86_64/mlir-translate" ]; then
+          echo "❌ ERROR: mlir-translate binary not found"
+          MISSING_BINARIES=1
+        elif ! file cmd/llvm-obfuscator/plugins/linux-x86_64/mlir-translate | grep -q "ELF"; then
+          echo "❌ ERROR: mlir-translate file exists but is not a valid ELF binary"
+          MISSING_BINARIES=1
+        else
+          echo "✅ mlir-translate binary verified"
+        fi
+        
         echo ""
         if [ $MISSING_BINARIES -eq 1 ]; then
           echo "=========================================="
@@ -142,6 +196,8 @@ jobs:
           ls -lh cmd/llvm-obfuscator/plugins/linux-x86_64/clang
           ls -lh cmd/llvm-obfuscator/plugins/linux-x86_64/opt
           ls -lh cmd/llvm-obfuscator/plugins/linux-x86_64/LLVMObfuscationPlugin.so
+          ls -lh cmd/llvm-obfuscator/plugins/linux-x86_64/mlir-opt
+          ls -lh cmd/llvm-obfuscator/plugins/linux-x86_64/mlir-translate
         fi
 
     - name: Set up Docker Buildx

@@ -76,6 +76,16 @@ class ObfuscationReport:
                 "size_reduction": safe_float(job_data.get("size_reduction"), 0.0),
                 "entropy_increase": safe_float(job_data.get("entropy_increase"), 0.0),
                 "estimated_re_effort": job_data.get("estimated_re_effort", "4-6 weeks"),
+                # ✅ NEW: Test suite results (optional, if tests were run)
+                "metadata": job_data.get("metadata"),  # Optional test suite metadata
+                "test_results": job_data.get("test_results"),  # Optional test suite results
+                "test_metrics": job_data.get("test_metrics"),  # Optional test metrics
+                "metrics_reliability": job_data.get("metrics_reliability"),  # Optional reliability status
+                "functional_correctness_passed": job_data.get("functional_correctness_passed"),  # Optional functional test result
+                "reliability_status": {
+                    "level": job_data.get("metrics_reliability", "UNKNOWN"),
+                    "warning": job_data.get("reliability_warning", "")
+                } if job_data.get("test_results") else None,  # Only include if test results exist
             }
         except Exception as exc:  # pragma: no cover - defensive
             raise ReportGenerationError("Failed to assemble report") from exc

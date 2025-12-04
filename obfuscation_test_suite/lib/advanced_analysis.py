@@ -337,11 +337,18 @@ class StringObfuscationAnalyzer:
     """Advanced string obfuscation detection"""
 
     def analyze_string_patterns(self, baseline_path: str, obfuscated_path: str) -> Dict[str, Any]:
-        """Detect string obfuscation techniques"""
+        """✅ FIX #5: Improved string obfuscation detection
+
+        Now includes actual string removal verification and better confidence calculation
+        """
         from test_utils import extract_strings
 
-        baseline_strings = extract_strings(baseline_path)
-        obfuscated_strings = extract_strings(obfuscated_path)
+        baseline_strings = set(extract_strings(baseline_path))
+        obfuscated_strings = set(extract_strings(obfuscated_path))
+
+        # Calculate actual removal vs detection heuristics
+        removed_strings = baseline_strings - obfuscated_strings
+        reduction_percent = (1 - len(obfuscated_strings) / max(1, len(baseline_strings))) * 100
 
         techniques = {
             "complete_removal": len(baseline_strings) > 0 and len(obfuscated_strings) == 0,
@@ -351,12 +358,18 @@ class StringObfuscationAnalyzer:
             "stack_strings": self._detect_stack_strings(obfuscated_path)
         }
 
+        # ✅ FIX #5a: Better confidence calculation
+        # If strings were actually removed, confidence should be higher
+        confidence = self._calculate_confidence(techniques, reduction_percent, removed_strings)
+
         return {
             "obfuscation_techniques": techniques,
             "baseline_string_count": len(baseline_strings),
             "obfuscated_string_count": len(obfuscated_strings),
-            "reduction_percentage": (1 - len(obfuscated_strings) / max(1, len(baseline_strings))) * 100,
-            "detection_confidence": self._calculate_confidence(techniques)
+            "reduction_percentage": reduction_percent,
+            "strings_removed": len(removed_strings),  # ✅ NEW: Track actual removals
+            "detection_confidence": confidence,
+            "removed_strings_sample": list(removed_strings)[:10]  # ✅ NEW: Show samples
         }
 
     def _detect_encoding(self, strings: list) -> bool:
@@ -386,10 +399,28 @@ class StringObfuscationAnalyzer:
         except:
             return False
 
-    def _calculate_confidence(self, techniques: dict) -> float:
-        """Calculate overall confidence in obfuscation detection"""
+    def _calculate_confidence(self, techniques: dict, reduction_percent: float, removed_strings: set) -> float:
+        """✅ FIX #5b: Better confidence calculation
+
+        Uses both heuristic detection AND actual string removal metrics
+        """
+        # Technique-based confidence (old method, less reliable)
         detected = sum(1 for v in techniques.values() if v)
-        return min(100, (detected / len(techniques)) * 100)
+        heuristic_confidence = (detected / len(techniques)) * 100
+
+        # String removal confidence (more reliable)
+        # If strings were actually removed, increase confidence significantly
+        removal_confidence = 0.0
+        if len(removed_strings) > 0:
+            removal_confidence = min(100, reduction_percent * 1.5)  # Cap at 100%
+
+        # If we have actual removals, trust that more than heuristics
+        if removal_confidence > 0:
+            final_confidence = removal_confidence
+        else:
+            final_confidence = heuristic_confidence
+
+        return min(100, final_confidence)
 
 
 class DebuggabilityAnalyzer:
@@ -451,21 +482,26 @@ class DebuggabilityAnalyzer:
         return self._detect_anti_debug(binary_path)
 
     def _calculate_debuggability(self, results: dict) -> float:
-        """Calculate overall debuggability score (0=hardened, 100=easy)"""
-        score = 100.0
+        """✅ FIX #4: Calculate reverse engineering hardness (0=easy, 100=hardened)
 
-        if results['debug_symbols']:
-            score -= 20
-        if results['debug_info_sections']:
-            score -= 20
+        Higher score = Better obfuscation (harder to debug)
+        Lower score = Worse obfuscation (easier to debug)
+        """
+        score = 0.0
+
+        # Hardening features increase the score
+        if not results['debug_symbols']:
+            score += 20  # No debug symbols = harder to debug (GOOD)
+        if not results['debug_info_sections']:
+            score += 20  # No debug sections = harder to debug (GOOD)
         if results['anti_debug_patterns']:
-            score -= 30
+            score += 30  # Has anti-debug code = harder to debug (GOOD)
         if results['ptrace_resistance']:
-            score -= 15
+            score += 15  # Uses ptrace = harder to debug (GOOD)
         if results['debugger_detection']:
-            score -= 15
+            score += 15  # Has debugger detection = harder to debug (GOOD)
 
-        return max(0, score)
+        return min(100, score)  # Cap at 100
 
 
 class CodeCoverageAnalyzer:

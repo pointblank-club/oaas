@@ -1341,12 +1341,24 @@ async def api_obfuscate_sync(
 
             # Determine source stem from the binary name (more reliable method)
             if obfuscated_binary.name:
-                # Remove common suffixes to get original name
+                # Remove common prefixes and suffixes to get original name
                 stem = obfuscated_binary.stem
+                logger.info(f"Original binary stem: {stem}")
+
+                # Remove PREFIXES
+                for prefix in ['obfuscated_', 'obf_']:
+                    if stem.startswith(prefix):
+                        stem = stem[len(prefix):]
+                        logger.info(f"  Removed prefix, now: {stem}")
+                        break
+
+                # Remove SUFFIXES
                 for suffix in ['_obfuscated', '.obfuscated', '_obf']:
                     if stem.endswith(suffix):
                         stem = stem[:-len(suffix)]
+                        logger.info(f"  Removed suffix, now: {stem}")
                         break
+
                 source_stem = stem
                 logger.info(f"Source stem determined from binary: {source_stem}")
 
@@ -1359,14 +1371,23 @@ async def api_obfuscate_sync(
                     logger.info(f"  Found candidate: {candidate}")
                     baseline_candidates.append(candidate)
 
-                # Also try the expected name
-                expected_baseline = output_dir / f"{source_stem}_baseline"
-                logger.info(f"Expected baseline path: {expected_baseline}")
-                if expected_baseline.exists():
-                    logger.info(f"  ✓ Expected baseline exists!")
-                    baseline_candidates.insert(0, expected_baseline)
-                else:
-                    logger.info(f"  ✗ Expected baseline does not exist")
+                # Try multiple expected names
+                expected_names = [
+                    f"{source_stem}_baseline",  # tsvc_baseline
+                    f"obfuscated_{source_stem}_baseline",  # obfuscated_tsvc_baseline
+                    source_stem,  # If baseline wasn't suffixed
+                ]
+
+                for expected_name in expected_names:
+                    expected_baseline = output_dir / expected_name
+                    logger.info(f"Checking: {expected_baseline}")
+                    if expected_baseline.exists():
+                        logger.info(f"  ✓ Found: {expected_name}")
+                        if expected_baseline not in baseline_candidates:
+                            baseline_candidates.insert(0, expected_baseline)
+                        break
+                    else:
+                        logger.info(f"  ✗ Not found: {expected_name}")
 
             if not baseline_candidates:
                 logger.warning(f"No baseline binaries found in {output_dir}")

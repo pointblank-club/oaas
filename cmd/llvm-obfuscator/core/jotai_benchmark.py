@@ -659,6 +659,7 @@ class JotaiBenchmarkManager:
             ]
             
             last_stderr = ""
+            successful_flags = None  # Will store flags that worked for baseline compilation
             for strategy_name, strategy_flags in compilation_strategies:
                 strategy_cmd = [str(clang_binary)] + strategy_flags + [
                     str(benchmark_path),
@@ -677,14 +678,17 @@ class JotaiBenchmarkManager:
                     returncode = process.returncode
                     
                     if returncode == 0:
-                        # Success!
+                        # Success! Store the successful flags for obfuscation
                         if strategy_name != "explicit-includes":
                             self.logger.info(f"✓ Compiled with {strategy_name} strategy")
                         result.baseline_binary = baseline_binary
                         result.compilation_success = True
                         result.size_baseline = baseline_binary.stat().st_size if baseline_binary.exists() else 0
                         self.logger.info(f"✓ Baseline binary created: {baseline_binary.name} ({result.size_baseline} bytes)")
-                        return result  # Exit early on success
+                        
+                        # Store successful compilation flags to pass to obfuscator
+                        successful_flags = strategy_flags.copy()
+                        break  # Exit strategy loop, continue to obfuscation
                     else:
                         # Failed, try next strategy
                         last_stderr = stderr
@@ -715,19 +719,25 @@ class JotaiBenchmarkManager:
                         return result
                     continue
             
-            # If we get here, compilation succeeded with one of the strategies
-
-            result.baseline_binary = baseline_binary
-            result.compilation_success = True
-            result.size_baseline = baseline_binary.stat().st_size if baseline_binary.exists() else 0
-            self.logger.info(f"✓ Baseline binary created: {baseline_binary.name} ({result.size_baseline} bytes)")
+            # Check if compilation succeeded
+            if not result.compilation_success:
+                # All strategies failed
+                return result
 
             # 2. Obfuscate the binary using LLVM obfuscator
             # The obfuscator takes source and produces obfuscated binary
+            # IMPORTANT: Pass the successful compilation flags to the obfuscator
+            # so it can compile with the same include paths that worked for baseline
             self.logger.info(f"Step 2: Obfuscating binary using LLVM obfuscator...")
             try:
                 # Update config output directory
                 config.output.directory = obfuscated_dir
+                
+                # Pass successful compilation flags to obfuscator
+                # This ensures obfuscator uses the same include paths that worked for baseline
+                original_flags = config.compiler_flags.copy() if config.compiler_flags else []
+                config.compiler_flags = successful_flags.copy()
+                self.logger.info(f"Using compilation flags that worked for baseline: {len(successful_flags)} flags")
                 
                 # Run obfuscation on source file (produces obfuscated binary)
                 self.logger.info(f"Calling obfuscator.obfuscate() for {benchmark_path.name}...")
@@ -735,6 +745,9 @@ class JotaiBenchmarkManager:
                     source_file=benchmark_path,
                     config=config
                 )
+                
+                # Restore original flags
+                config.compiler_flags = original_flags
                 self.logger.info(f"Obfuscation call completed. Result keys: {list(obf_result.keys()) if isinstance(obf_result, dict) else 'not a dict'}")
 
                 # Find the obfuscated binary (obfuscator creates it with the source file name)

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import shutil
 import subprocess
 import tempfile
@@ -131,6 +132,46 @@ class JotaiBenchmarkManager:
         # Last resort - hardcoded common path
         self.logger.warning("Could not find clang, using /usr/bin/clang as fallback")
         return Path("/usr/bin/clang")
+    
+    def _find_clang_resource_dir(self, clang_binary: Path) -> Optional[str]:
+        """
+        Find the clang resource directory (for standard headers).
+        
+        Args:
+            clang_binary: Path to clang binary
+            
+        Returns:
+            Path to clang resource directory, or None if not found
+        """
+        try:
+            # Try to get resource directory from clang
+            result = subprocess.run(
+                [str(clang_binary), "-print-resource-dir"],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            if result.returncode == 0:
+                resource_dir = result.stdout.strip()
+                if resource_dir and os.path.exists(resource_dir):
+                    return resource_dir
+        except Exception:
+            pass
+        
+        # Fallback: try common locations
+        import os
+        common_paths = [
+            "/usr/lib/llvm-22/lib/clang/22/include",
+            "/usr/lib/llvm-19/lib/clang/19/include",
+            "/usr/lib/llvm-18/lib/clang/18/include",
+            "/usr/lib/llvm-17/lib/clang/17/include",
+        ]
+        
+        for path in common_paths:
+            if os.path.exists(path):
+                return os.path.dirname(path)  # Return parent (the clang version dir)
+        
+        return None
 
     def download_benchmarks(self, force: bool = False) -> bool:
         """
@@ -209,6 +250,98 @@ class JotaiBenchmarkManager:
 
         return sorted(benchmarks)
 
+    def test_benchmark_compiles(self, benchmark_path: Path) -> bool:
+        """
+        Quick test to see if a benchmark compiles.
+        
+        Args:
+            benchmark_path: Path to benchmark C file
+            
+        Returns:
+            True if benchmark compiles, False otherwise
+        """
+        import tempfile
+        
+        clang_binary = self._find_clang_binary()
+        
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmpdir_path = Path(tmpdir)
+            test_binary = tmpdir_path / "test_compile"
+            
+            # Use same compilation flags as baseline compilation
+            compile_flags = [
+                "-g", "-O1",
+                "-std=c11",
+                "-Wno-everything",
+                "-Wno-error",
+                "-fno-strict-aliasing",
+                "-fno-common",
+                "-Wno-typedef-redefinition",
+            ]
+            
+            # Add resource directory if available
+            clang_resource_dir = self._find_clang_resource_dir(clang_binary)
+            if clang_resource_dir:
+                compile_flags.append(f"-isystem{clang_resource_dir}")
+            
+            # Add system includes
+            for inc_path in ["/usr/include", "/usr/local/include"]:
+                if os.path.exists(inc_path):
+                    compile_flags.append(f"-isystem{inc_path}")
+            
+            compile_cmd = [
+                str(clang_binary)
+            ] + compile_flags + [
+                str(benchmark_path),
+                "-o", str(test_binary),
+                "-lm",
+            ]
+            
+            try:
+                returncode, stdout, stderr = run_command(compile_cmd)
+                return returncode == 0 and test_binary.exists()
+            except ObfuscationError:
+                return False
+    
+    def filter_compilable_benchmarks(
+        self,
+        benchmarks: List[Path],
+        max_to_test: int = 100,
+        min_compilable: int = 10
+    ) -> List[Path]:
+        """
+        Filter benchmarks to find ones that compile.
+        
+        Args:
+            benchmarks: List of benchmark paths to test
+            max_to_test: Maximum number of benchmarks to test for compilability
+            min_compilable: Minimum number of compilable benchmarks to find
+            
+        Returns:
+            List of compilable benchmark paths
+        """
+        compilable = []
+        tested = 0
+        
+        self.logger.info(f"Filtering benchmarks to find compilable ones (testing up to {max_to_test})...")
+        
+        for benchmark in benchmarks:
+            if tested >= max_to_test:
+                break
+            if len(compilable) >= min_compilable:
+                break
+                
+            tested += 1
+            if tested % 10 == 0:
+                self.logger.info(f"  Tested {tested}/{max_to_test}, found {len(compilable)} compilable...")
+            
+            if self.test_benchmark_compiles(benchmark):
+                compilable.append(benchmark)
+                self.logger.debug(f"  ✓ {benchmark.name} compiles")
+        
+        self.logger.info(f"Found {len(compilable)} compilable benchmarks out of {tested} tested")
+        return compilable
+
     def get_benchmark_info(self, benchmark_path: Path) -> Dict:
         """
         Extract information about a benchmark.
@@ -258,8 +391,31 @@ class JotaiBenchmarkManager:
 
             # Try to compile
             clang_binary = self._find_clang_binary()
+            
+            # Build compilation flags with standard includes - same as baseline
+            compile_flags = [
+                "-g", "-O1",
+                "-std=c11",
+                "-Wno-everything",
+                "-Wno-error",
+                "-fno-strict-aliasing",
+                "-fno-common",
+                "-Wno-typedef-redefinition",
+            ]
+            
+            # Add resource directory if available
+            clang_resource_dir = self._find_clang_resource_dir(clang_binary)
+            if clang_resource_dir:
+                compile_flags.append(f"-isystem{clang_resource_dir}")
+            
+            # Add system includes
+            for inc_path in ["/usr/include", "/usr/local/include"]:
+                if os.path.exists(inc_path):
+                    compile_flags.append(f"-isystem{inc_path}")
+            
             compile_cmd = [
-                str(clang_binary), "-g", "-O1",
+                str(clang_binary)
+            ] + compile_flags + [
                 "-fsanitize=address,undefined,signed-integer-overflow",
                 "-fno-sanitize-recover=all",
                 str(benchmark_path),
@@ -336,14 +492,61 @@ class JotaiBenchmarkManager:
             # Find the best clang to use - prefer custom LLVM 22 clang from plugins
             clang_binary = self._find_clang_binary()
             
+            # Build compilation flags - Jotai benchmarks are extracted functions
+            # They may have typedef redefinitions, so we use permissive flags
+            compile_flags = [
+                "-g", "-O1",
+                "-std=c11",
+                "-Wno-everything",  # Ignore all warnings
+                "-Wno-error",  # Don't treat warnings as errors  
+                "-fno-strict-aliasing",  # Allow type punning
+                "-fno-common",  # Better for extracted code
+                "-fno-builtin",  # Don't assume builtin functions
+            ]
+            
+            # Add standard include paths if they exist
+            clang_resource_dir = self._find_clang_resource_dir(clang_binary)
+            if clang_resource_dir:
+                compile_flags.append(f"-isystem{clang_resource_dir}")
+            
+            # Add system include paths
+            system_includes = [
+                "/usr/include",
+                "/usr/local/include",
+            ]
+            for inc_path in system_includes:
+                if os.path.exists(inc_path):
+                    compile_flags.append(f"-isystem{inc_path}")
+            
+            # Handle typedef redefinition conflicts by undefining system types
+            # before benchmark code runs. Use -U to undefine problematic types.
+            # Common conflicts: ssize_t, size_t, etc.
+            problematic_types = ["ssize_t", "size_t", "off_t", "pid_t"]
+            for ptype in problematic_types:
+                compile_flags.append(f"-U{ptype}")
+            
             compile_cmd = [
-                str(clang_binary), "-g", "-O1",
+                str(clang_binary)
+            ] + compile_flags + [
                 str(benchmark_path),
-                "-o", str(baseline_binary)
+                "-o", str(baseline_binary),
+                "-lm",  # Link math library (some benchmarks use math functions)
             ]
 
             try:
                 returncode, stdout, stderr = run_command(compile_cmd)
+                if returncode != 0:
+                    # Log the actual error for debugging
+                    self.logger.debug(f"Compilation failed: {stderr}")
+                    result.error_message = f"Baseline compilation failed with exit code {returncode}"
+                    # Try to extract first error line for better error message
+                    if stderr:
+                        error_lines = stderr.split('\n')
+                        for line in error_lines:
+                            if 'error:' in line:
+                                result.error_message = f"Baseline compilation failed: {line.strip()[:200]}"
+                                break
+                    return result
             except ObfuscationError as e:
                 result.error_message = f"Baseline compilation failed: {e}"
                 return result

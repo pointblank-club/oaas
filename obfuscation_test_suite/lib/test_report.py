@@ -67,6 +67,29 @@ class ReportGenerator:
         lines.append("=" * 70)
         lines.append("")
 
+        # ✅ FIX #5: Add metrics reliability warning at the top
+        reliability = results.get('reliability_status', {})
+        if reliability.get('level') == 'FAILED':
+            lines.append("⚠️  ⚠️  ⚠️  CRITICAL WARNING ⚠️  ⚠️  ⚠️")
+            lines.append("-" * 70)
+            lines.append(reliability.get('warning', 'Metrics reliability unknown'))
+            lines.append("This report should NOT be used for obfuscation comparison purposes.")
+            lines.append("-" * 70)
+            lines.append("")
+        elif reliability.get('level') == 'UNCERTAIN':
+            lines.append("⚠️  WARNING ⚠️")
+            lines.append("-" * 70)
+            lines.append(reliability.get('warning', 'Metrics reliability unknown'))
+            lines.append("Metrics should be treated with caution.")
+            lines.append("-" * 70)
+            lines.append("")
+        elif reliability.get('level') == 'RELIABLE':
+            lines.append("✅ METRICS RELIABILITY")
+            lines.append("-" * 70)
+            lines.append(reliability.get('warning', 'Metrics are reliable'))
+            lines.append("-" * 70)
+            lines.append("")
+
         # Metadata
         meta = results.get('metadata', {})
         lines.append("METADATA")
@@ -75,6 +98,8 @@ class ReportGenerator:
         lines.append(f"Program:       {meta.get('program', 'N/A')}")
         lines.append(f"Baseline:      {meta.get('baseline', 'N/A')}")
         lines.append(f"Obfuscated:    {meta.get('obfuscated', 'N/A')}")
+        lines.append(f"Metrics Reliability: {meta.get('metrics_reliability', 'UNKNOWN')}")
+        lines.append(f"Functional Test: {meta.get('functional_correctness_passed', 'UNKNOWN')}")
         lines.append("")
 
         # Test Results
@@ -124,10 +149,29 @@ class ReportGenerator:
             lines.append("PERFORMANCE ANALYSIS")
             lines.append("-" * 70)
             perf = results_data['performance']
-            lines.append(f"Baseline Time:       {perf.get('baseline_ms', 0):.2f} ms")
-            lines.append(f"Obfuscated Time:     {perf.get('obf_ms', 0):.2f} ms")
-            lines.append(f"Overhead:            {perf.get('overhead_percent', 0):+.1f}%")
-            lines.append(f"Acceptable:          {perf.get('acceptable', False)}")
+            # ✅ FIX #4: Handle SKIPPED and None values in performance
+            status = perf.get('status', 'UNKNOWN')
+            if status == 'SKIPPED':
+                lines.append(f"Status:              SKIPPED")
+                lines.append(f"Reason:              {perf.get('reason', 'N/A')}")
+            elif status in ['FAILED', 'TIMEOUT']:
+                lines.append(f"Status:              {status}")
+                lines.append(f"Reason:              {perf.get('reason', 'N/A')}")
+                baseline_ms = perf.get('baseline_ms')
+                obf_ms = perf.get('obf_ms')
+                if baseline_ms is not None:
+                    lines.append(f"Baseline Time:       {baseline_ms:.2f} ms ({status.lower()})")
+                if obf_ms is not None:
+                    lines.append(f"Obfuscated Time:     {obf_ms:.2f} ms ({status.lower()})")
+            else:
+                baseline_ms = perf.get('baseline_ms', 0)
+                obf_ms = perf.get('obf_ms', 0)
+                overhead = perf.get('overhead_percent', 0)
+                if baseline_ms is not None and obf_ms is not None:
+                    lines.append(f"Baseline Time:       {baseline_ms:.2f} ms")
+                    lines.append(f"Obfuscated Time:     {obf_ms:.2f} ms")
+                    lines.append(f"Overhead:            {overhead:+.1f}%")
+                    lines.append(f"Acceptable:          {perf.get('acceptable', False)}")
             lines.append("")
 
         if 'debuggability' in results_data:

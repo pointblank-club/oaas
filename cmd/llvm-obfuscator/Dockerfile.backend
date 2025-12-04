@@ -26,6 +26,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     cmake \
     ninja-build \
     pkg-config \
+    # Cross-compilation toolchains
+    mingw-w64 \
+    gcc-aarch64-linux-gnu \
+    g++-aarch64-linux-gnu \
+    libc6-dev-arm64-cross \
     # Common development libraries (for projects like curl, openssl, etc.)
     libssl-dev \
     zlib1g-dev \

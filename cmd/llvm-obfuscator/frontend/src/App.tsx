@@ -352,7 +352,7 @@ function App() {
   const [symbolSalt, setSymbolSalt] = useState('');
 
   // Layer 2: String Encryption sub-options
-  const [fakeLoops, setFakeLoops] = useState(0);
+  const [fakeLoops, setFakeLoops] = useState<number | string>(0);
 
   // Layer 2.5: Indirect Call Obfuscation sub-options
   const [indirectStdlib, setIndirectStdlib] = useState(true);
@@ -363,7 +363,7 @@ function App() {
   const [passSubstitution, setPassSubstitution] = useState(false);
   const [passBogusControlFlow, setPassBogusControlFlow] = useState(false);
   const [passSplitBasicBlocks, setPassSplitBasicBlocks] = useState(false);
-  const [cycles, setCycles] = useState(1);
+  const [cycles, setCycles] = useState<number | string>(1);
 
   // Layer 4: Compiler Flags sub-options
   const [flagLTO, setFlagLTO] = useState(false);
@@ -1128,9 +1128,9 @@ function App() {
             bogus_control_flow: layer3 && passBogusControlFlow,
             split: layer3 && passSplitBasicBlocks
           },
-          cycles: layer3 ? cycles : 1,
+          cycles: layer3 ? (typeof cycles === 'number' ? cycles : parseInt(String(cycles)) || 1) : 1,
           string_encryption: layer2,
-          fake_loops: layer2 ? fakeLoops : 0,
+          fake_loops: layer2 ? (typeof fakeLoops === 'number' ? fakeLoops : parseInt(String(fakeLoops)) || 0) : 0,
           symbol_obfuscation: {
             enabled: layer1,
             algorithm: layer1 ? symbolAlgorithm : 'sha256',
@@ -1744,7 +1744,11 @@ function App() {
                     min="0"
                     max="50"
                     value={fakeLoops}
-                    onChange={(e) => setFakeLoops(parseInt(e.target.value) || 0)}
+                    onChange={(e) => setFakeLoops(e.target.value === '' ? '' : parseInt(e.target.value) || 0)}
+                    onBlur={(e) => {
+                      const val = parseInt(e.target.value) || 0;
+                      setFakeLoops(Math.min(50, Math.max(0, val)));
+                    }}
                   />
                 </label>
               </div>
@@ -1854,8 +1858,16 @@ function App() {
                     min="1"
                     max="5"
                     value={cycles}
-                    onChange={(e) => setCycles(parseInt(e.target.value) || 1)}
+                    onChange={(e) => setCycles(e.target.value === '' ? '' : parseInt(e.target.value) || 1)}
+                    onBlur={(e) => {
+                      const val = parseInt(e.target.value) || 1;
+                      setCycles(Math.min(5, Math.max(1, val)));
+                    }}
+                    title="Number of times to apply OLLVM passes (higher = stronger obfuscation)"
                   />
+                  <small style={{ display: 'block', color: '#888', marginTop: '4px' }}>
+                    More cycles = stronger obfuscation but larger binary
+                  </small>
                 </label>
               </div>
             )}

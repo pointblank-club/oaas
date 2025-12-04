@@ -205,7 +205,11 @@ class LLVMObfuscator:
 
         # Compile baseline (unobfuscated) binary for comparison
         self.logger.info("Compiling baseline binary for comparison...")
-        baseline_binary = output_directory / f"{source_file.stem}_baseline"
+        # Use platform-specific extension for baseline (e.g., .exe for Windows)
+        baseline_name = f"{source_file.stem}_baseline"
+        if config.platform == Platform.WINDOWS:
+            baseline_name += ".exe"
+        baseline_binary = output_directory / baseline_name
         baseline_metrics = self._compile_and_analyze_baseline(source_file, baseline_binary, config)
 
         # Symbol and string obfuscation are now handled by MLIR passes.

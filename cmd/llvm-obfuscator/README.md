@@ -65,7 +65,16 @@ Applies 9 optimal compiler flags for obfuscation.
 
 **Result:** 82.5/100 obfuscation score
 
-### Layer 2: OLLVM Passes
+### Layer 2: String Encryption
+Encrypts all string literals at compile time with XOR encryption.
+
+**Options:**
+- `--string-encryption` - Enable string encryption
+- `--fake-loops <0-50>` - Insert fake dead-code loops for additional obfuscation
+
+**Result:** 100% string hiding (secrets not visible in `strings` output)
+
+### Layer 3: OLLVM Passes
 Four powerful control-flow obfuscation techniques.
 
 **Options:**
@@ -73,8 +82,9 @@ Four powerful control-flow obfuscation techniques.
 - `--enable-substitution` - Replace instructions with equivalent complex sequences
 - `--enable-bogus-cf` - Insert fake control flow
 - `--enable-split` - Split basic blocks
+- `--cycles <1-5>` - Apply OLLVM passes multiple times for stronger obfuscation
 
-**Result:** 20-30x harder to reverse engineer
+**Result:** 20-30x harder to reverse engineer (multiplied by cycles)
 
 **Note:** Plugins auto-detected for your platform (macOS, Linux, Windows)
 
@@ -129,13 +139,15 @@ Source.c
 - ✅ `split` - Split basic blocks (stable)
 - ⚠️ `flattening` - **AVOID** for complex projects (causes segfaults on code with complex switch statements)
 
-### Layer 3: String Encryption
-Encrypts all string literals at compile time.
+### Layer 4: Compiler Flags
+Applies optimal compiler flags for additional hardening.
 
-**Options:**
-- `--string-encryption`
+**Included flags:**
+- `-O3` optimization
+- `-fno-builtin` - Disable builtin optimizations
+- Symbol stripping and more
 
-**Result:** 100% string hiding (secrets not visible in `strings` output)
+**Result:** Additional 10-20% obfuscation improvement
 
 ## Testing with Jotai Benchmarks
 

@@ -31,6 +31,7 @@ from core import (
 from core.comparer import CompareConfig, compare_binaries
 from core.config import AdvancedConfiguration, PassConfiguration, UPXConfiguration, Architecture
 from core.exceptions import JobNotFoundError, ValidationError
+from core.test_suite_integration import run_obfuscation_tests, merge_test_results_into_report
 from core.job_manager import JobManager
 from core.progress import ProgressEvent, ProgressTracker
 from core.utils import (
@@ -1168,6 +1169,24 @@ async def api_obfuscate_sync(
                             "build_system": payload.build_system,
                             "source_obfuscation": obf_results,
                         }
+
+                        # ✅ NEW: Run test suite to verify obfuscation correctness
+                        try:
+                            logger.info("Running obfuscation test suite...")
+                            test_results = run_obfuscation_tests(
+                                baseline_binary=Path(baseline_for_metrics),
+                                obfuscated_binary=Path(final_binary),
+                                program_name=payload.name or "program",
+                                results_dir=Path(job.job_id)
+                            )
+                            if test_results:
+                                merge_test_results_into_report(job_data, test_results)
+                                logger.info("Test results merged into report")
+                            else:
+                                logger.info("Test suite not available or tests failed, continuing without test results")
+                        except Exception as e:
+                            logger.warning(f"Failed to run test suite: {e}")
+                            # Continue without test results rather than failing the job
 
                         # Generate and export reports
                         report = reporter.generate_report(job_data)

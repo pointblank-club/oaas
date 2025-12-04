@@ -16,6 +16,8 @@ Designed for CI/CD integration with proper exit codes and reporting.
 import sys
 import json
 import random
+import subprocess
+import os
 from pathlib import Path
 from typing import List, Dict, Optional
 from datetime import datetime

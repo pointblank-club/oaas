@@ -733,8 +733,9 @@ class LLVMObfuscator:
 
             import re
             # Fix target triple and datalayout
-            ir_content = re.sub(r'target triple = ".*"', f'target triple = "{target_triple}"', ir_content)
-            ir_content = re.sub(r'target datalayout = ".*"', f'target datalayout = "{data_layout}"', ir_content)
+            # Use re.DOTALL to handle multi-line target triple values (MLIR sometimes outputs newlines inside quotes)
+            ir_content = re.sub(r'target triple = "[^"]*"', f'target triple = "{target_triple}"', ir_content, flags=re.DOTALL)
+            ir_content = re.sub(r'target datalayout = "[^"]*"', f'target datalayout = "{data_layout}"', ir_content, flags=re.DOTALL)
 
             # Remove corrupted CPU attributes
             ir_content = re.sub(r'"target-cpu"="[^"]*"', '', ir_content)
@@ -979,8 +980,9 @@ class LLVMObfuscator:
         with open(str(llvm_ir_file), 'r') as f:
             ir_content = f.read()
 
-        ir_content = re.sub(r'target triple = ".*"', f'target triple = "{target_triple}"', ir_content)
-        ir_content = re.sub(r'target datalayout = ".*"', f'target datalayout = "{data_layout}"', ir_content)
+        # Use re.DOTALL to handle multi-line target triple values (MLIR sometimes outputs newlines inside quotes)
+        ir_content = re.sub(r'target triple = "[^"]*"', f'target triple = "{target_triple}"', ir_content, flags=re.DOTALL)
+        ir_content = re.sub(r'target datalayout = "[^"]*"', f'target datalayout = "{data_layout}"', ir_content, flags=re.DOTALL)
         ir_content = re.sub(r'"target-cpu"="[^"]*"', '', ir_content)
         ir_content = re.sub(r'"target-features"="[^"]*"', '', ir_content)
         ir_content = re.sub(r'"tune-cpu"="[^"]*"', '', ir_content)

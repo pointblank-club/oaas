@@ -135,16 +135,38 @@ class JotaiBenchmarkManager:
     
     def _find_clang_resource_dir(self, clang_binary: Path) -> Optional[str]:
         """
-        Find the clang resource directory (for standard headers).
+        Find the clang resource directory (for standard headers like stddef.h).
         
         Args:
             clang_binary: Path to clang binary
             
         Returns:
-            Path to clang resource directory, or None if not found
+            Path to clang resource directory/include, or None if not found
         """
+        # First, check if this is our bundled clang from plugins
+        clang_path_str = str(clang_binary)
+        if "plugins" in clang_path_str or "llvm-obfuscator" in clang_path_str:
+            # Look for bundled headers relative to clang binary
+            clang_dir = clang_binary.parent
+            # Try multiple possible locations
+            possible_header_paths = [
+                clang_dir / "lib" / "clang" / "22" / "include",  # Standard location
+                clang_dir.parent.parent / "plugins" / "linux-x86_64" / "lib" / "clang" / "22" / "include",  # From core/ directory
+            ]
+            for bundled_headers in possible_header_paths:
+                if bundled_headers.exists():
+                    self.logger.info(f"✓ Found bundled headers: {bundled_headers}")
+                    return str(bundled_headers)
+            
+            # Also check current working directory (CI runs from cmd/llvm-obfuscator)
+            import os
+            cwd_headers = Path(os.getcwd()) / "plugins" / "linux-x86_64" / "lib" / "clang" / "22" / "include"
+            if cwd_headers.exists():
+                self.logger.info(f"✓ Found bundled headers (cwd): {cwd_headers}")
+                return str(cwd_headers)
+        
+        # Try to get resource directory from clang itself
         try:
-            # Try to get resource directory from clang
             result = subprocess.run(
                 [str(clang_binary), "-print-resource-dir"],
                 capture_output=True,
@@ -153,24 +175,33 @@ class JotaiBenchmarkManager:
             )
             if result.returncode == 0:
                 resource_dir = result.stdout.strip()
-                if resource_dir and os.path.exists(resource_dir):
-                    return resource_dir
-        except Exception:
-            pass
+                if resource_dir:
+                    # Resource dir is the parent, include is inside it
+                    include_dir = os.path.join(resource_dir, "include")
+                    if os.path.exists(include_dir):
+                        self.logger.debug(f"Using clang resource dir: {include_dir}")
+                        return include_dir
+                    # If include doesn't exist, try resource_dir itself
+                    if os.path.exists(resource_dir):
+                        return resource_dir
+        except Exception as e:
+            self.logger.debug(f"Could not get resource dir from clang: {e}")
         
-        # Fallback: try common locations
-        import os
+        # Fallback: try common system locations
         common_paths = [
             "/usr/lib/llvm-22/lib/clang/22/include",
             "/usr/lib/llvm-19/lib/clang/19/include",
             "/usr/lib/llvm-18/lib/clang/18/include",
             "/usr/lib/llvm-17/lib/clang/17/include",
+            "/usr/local/llvm-obfuscator/lib/clang/22/include",  # Docker installation
         ]
         
         for path in common_paths:
             if os.path.exists(path):
-                return os.path.dirname(path)  # Return parent (the clang version dir)
+                self.logger.debug(f"Using system headers: {path}")
+                return path
         
+        self.logger.warning("Could not find clang resource directory - stddef.h may not be found")
         return None
 
     def download_benchmarks(self, force: bool = False) -> bool:
@@ -505,10 +536,19 @@ class JotaiBenchmarkManager:
                 "-Wno-typedef-redefinition",  # Allow typedef redefinition (treat as warning)
             ]
             
-            # Add standard include paths if they exist
+            # Add standard include paths if they exist - CRITICAL for stddef.h
             clang_resource_dir = self._find_clang_resource_dir(clang_binary)
             if clang_resource_dir:
                 compile_flags.append(f"-isystem{clang_resource_dir}")
+                self.logger.debug(f"Added clang resource dir to includes: {clang_resource_dir}")
+            else:
+                self.logger.warning(f"WARNING: Could not find clang resource directory for {clang_binary}")
+                # Try to find it relative to clang binary
+                clang_dir = clang_binary.parent
+                potential_headers = clang_dir / "lib" / "clang" / "22" / "include"
+                if potential_headers.exists():
+                    compile_flags.append(f"-isystem{potential_headers}")
+                    self.logger.info(f"Found headers relative to clang: {potential_headers}")
             
             # Add system include paths
             system_includes = [

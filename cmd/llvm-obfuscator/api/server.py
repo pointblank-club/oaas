@@ -1309,68 +1309,134 @@ async def api_obfuscate_sync(
         # ✅ NEW: Run tests for ALL build modes (multifile, simple, custom)
         # This runs AFTER obfuscation but BEFORE report attachment
         # The baseline binary is created during obfuscation in the output_directory
+        logger.info("=" * 80)
+        logger.info("ATTEMPTING TO RUN OBFUSCATION TESTS")
+        logger.info("=" * 80)
         try:
-            output_dir = Path(config.output.directory) if config and config.output else None
-            obfuscated_binary = Path(result.get("output_file", ""))
+            # Get output directory and obfuscated binary path
+            output_dir = None
+            source_stem = "program"
 
-            if output_dir and obfuscated_binary.exists():
-                # Baseline binary is created during obfuscation
-                source_stem = source_path.stem if 'source_path' in locals() else (
-                    main_file_path.stem if 'main_file_path' in locals() else "program"
-                )
-                baseline_binary = output_dir / f"{source_stem}_baseline"
+            # Determine output_dir and source_stem based on build mode
+            if 'config' in locals() and config and hasattr(config, 'output') and config.output:
+                output_dir = Path(config.output.directory)
+                logger.info(f"Output directory: {output_dir}")
+            else:
+                logger.warning("Could not determine output directory from config")
 
-                if baseline_binary.exists():
-                    logger.info(f"Running tests for obfuscation result...")
-                    logger.info(f"  Baseline: {baseline_binary}")
-                    logger.info(f"  Obfuscated: {obfuscated_binary}")
+            # Get the obfuscated binary path
+            obfuscated_binary_path = result.get("output_file", "")
+            logger.info(f"Obfuscated binary from result: {obfuscated_binary_path}")
 
-                    # Try full test suite first, then lightweight as fallback
-                    test_results = run_obfuscation_tests(
-                        baseline_binary=baseline_binary,
-                        obfuscated_binary=obfuscated_binary,
-                        program_name=payload.name or source_stem,
-                        results_dir=Path(job.job_id)
-                    )
+            if not obfuscated_binary_path:
+                logger.warning("No obfuscated binary found in result")
+                raise ValueError("output_file not in result")
 
-                    if not test_results:
-                        logger.info("Running lightweight tests as fallback...")
-                        test_results = run_lightweight_tests(
-                            baseline_binary=baseline_binary,
-                            obfuscated_binary=obfuscated_binary,
-                            program_name=payload.name or source_stem
-                        )
+            obfuscated_binary = Path(obfuscated_binary_path)
+            logger.info(f"Obfuscated binary exists: {obfuscated_binary.exists()}")
 
-                    if test_results:
-                        logger.info("✅ Test results obtained, updating report...")
-                        # Merge test results into the existing report JSON
-                        report_path = result.get("report_paths", {}).get("json")
-                        if report_path and Path(report_path).exists():
-                            try:
-                                with open(report_path, 'r') as f:
-                                    report_data = json.load(f)
+            if not obfuscated_binary.exists():
+                logger.warning(f"Obfuscated binary does not exist at: {obfuscated_binary}")
+                raise FileNotFoundError(f"Obfuscated binary not found: {obfuscated_binary}")
 
-                                # Add test results to report
-                                report_data["metadata"] = test_results.get("metadata")
-                                report_data["test_results"] = test_results.get("test_results")
-                                report_data["test_metrics"] = test_results.get("metrics", {})
-                                report_data["reliability_status"] = test_results.get("reliability_status")
+            # Determine source stem from the binary name (more reliable method)
+            if obfuscated_binary.name:
+                # Remove common suffixes to get original name
+                stem = obfuscated_binary.stem
+                for suffix in ['_obfuscated', '.obfuscated', '_obf']:
+                    if stem.endswith(suffix):
+                        stem = stem[:-len(suffix)]
+                        break
+                source_stem = stem
+                logger.info(f"Source stem determined from binary: {source_stem}")
 
-                                # Write updated report
-                                with open(report_path, 'w') as f:
-                                    json.dump(report_data, f, indent=2)
+            # Find baseline binary
+            baseline_candidates = []
+            if output_dir and output_dir.exists():
+                logger.info(f"Searching for baseline binary in: {output_dir}")
+                # Look for files with _baseline suffix
+                for candidate in output_dir.glob(f"*_baseline"):
+                    logger.info(f"  Found candidate: {candidate}")
+                    baseline_candidates.append(candidate)
 
-                                logger.info(f"✅ Report updated with test results at: {report_path}")
-                            except Exception as e:
-                                logger.warning(f"Could not update report with test results: {e}")
-                        else:
-                            logger.warning(f"Could not find JSON report to update: {report_path}")
-                    else:
-                        logger.warning("No test results available")
+                # Also try the expected name
+                expected_baseline = output_dir / f"{source_stem}_baseline"
+                logger.info(f"Expected baseline path: {expected_baseline}")
+                if expected_baseline.exists():
+                    logger.info(f"  ✓ Expected baseline exists!")
+                    baseline_candidates.insert(0, expected_baseline)
                 else:
-                    logger.debug(f"Baseline binary not found at: {baseline_binary}")
+                    logger.info(f"  ✗ Expected baseline does not exist")
+
+            if not baseline_candidates:
+                logger.warning(f"No baseline binaries found in {output_dir}")
+                logger.warning("Listing files in output directory:")
+                if output_dir and output_dir.exists():
+                    for item in output_dir.iterdir():
+                        logger.warning(f"  {item.name}")
+                raise FileNotFoundError(f"No baseline binary found for {source_stem}")
+
+            baseline_binary = baseline_candidates[0]
+            logger.info(f"Using baseline binary: {baseline_binary}")
+            logger.info(f"Baseline exists: {baseline_binary.exists()}")
+
+            if not baseline_binary.exists():
+                logger.error(f"Baseline binary path exists but file is not accessible: {baseline_binary}")
+                raise FileNotFoundError(f"Baseline binary not found: {baseline_binary}")
+
+            # Run tests
+            logger.info(f"Running tests comparing:")
+            logger.info(f"  Baseline: {baseline_binary}")
+            logger.info(f"  Obfuscated: {obfuscated_binary}")
+
+            # Try full test suite first, then lightweight as fallback
+            test_results = run_obfuscation_tests(
+                baseline_binary=baseline_binary,
+                obfuscated_binary=obfuscated_binary,
+                program_name=payload.name or source_stem,
+                results_dir=Path(job.job_id)
+            )
+
+            if not test_results:
+                logger.info("Full test suite not available, running lightweight tests...")
+                test_results = run_lightweight_tests(
+                    baseline_binary=baseline_binary,
+                    obfuscated_binary=obfuscated_binary,
+                    program_name=payload.name or source_stem
+                )
+
+            if test_results:
+                logger.info("✅ Test results obtained, updating report...")
+                # Merge test results into the existing report JSON
+                report_path = result.get("report_paths", {}).get("json")
+                logger.info(f"Looking for JSON report at: {report_path}")
+
+                if report_path and Path(report_path).exists():
+                    try:
+                        with open(report_path, 'r') as f:
+                            report_data = json.load(f)
+
+                        # Add test results to report
+                        report_data["metadata"] = test_results.get("metadata")
+                        report_data["test_results"] = test_results.get("test_results")
+                        report_data["test_metrics"] = test_results.get("metrics", {})
+                        report_data["reliability_status"] = test_results.get("reliability_status")
+
+                        # Write updated report
+                        with open(report_path, 'w') as f:
+                            json.dump(report_data, f, indent=2)
+
+                        logger.info(f"✅ Report successfully updated with test results at: {report_path}")
+                    except Exception as e:
+                        logger.error(f"Could not update report with test results: {e}", exc_info=True)
+                else:
+                    logger.warning(f"JSON report not found at: {report_path}")
+            else:
+                logger.warning("No test results available (both full and lightweight tests failed)")
+
         except Exception as e:
-            logger.warning(f"Failed to run tests for multifile/simple mode: {e}")
+            logger.error(f"Failed to run tests: {e}", exc_info=True)
+            logger.info("Continuing without test results (non-blocking failure)")
             # Continue without tests rather than blocking the job
 
         job_manager.update_job(job.job_id, status="completed", result=result)

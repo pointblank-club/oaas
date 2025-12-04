@@ -1,0 +1,11 @@
+#pragma once
+
+// Auto-generated configuration file
+// Defines feature flags for the MLIR Obfuscation toolkit
+
+// MLIR/LLVM version info
+#define MLIR_VERSION_STRING "@LLVM_VERSION_STRING@"
+
+// ClangIR frontend support (C/C++ -> high-level MLIR)
+// ClangIR is natively supported in LLVM 22.0.0
+// No additional configuration required - use `clangir` command or `clang -emit-cir`

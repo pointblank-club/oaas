@@ -86,7 +86,7 @@ RUN ln -sf /usr/local/llvm-obfuscator/bin/lld /usr/local/llvm-obfuscator/bin/ld.
 RUN ln -sf /usr/local/llvm-obfuscator/bin/lld /usr/local/llvm-obfuscator/bin/ld64.lld
 
 # Copy macOS SDK for cross-compilation (minimal: headers + libs only, ~130MB)
-COPY macos-sdk/MacOSX15.4.sdk /app/macos-sdk/MacOSX15.4.sdk
+COPY macos-sdk/MacOSX15.4.sdk/ /app/macos-sdk/MacOSX15.4.sdk/
 
 # Copy OLLVM wrapper scripts (these apply OLLVM passes via opt tool)
 COPY scripts/clang-obfuscate /usr/local/llvm-obfuscator/bin/clang-obfuscate

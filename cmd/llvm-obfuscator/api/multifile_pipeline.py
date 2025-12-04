@@ -367,6 +367,94 @@ def clone_repo_to_temp(repo_url: str, branch: str = "main", access_token: Option
         raise HTTPException(status_code=400, detail=f"Failed to clone repository: {str(e)}")
 
 
+def create_local_upload_session(files_data: List[Tuple[str, bytes]], project_name: str = "local_upload") -> Tuple[str, Path]:
+    """Create a session from locally uploaded files.
+
+    This function stores uploaded files in a temporary directory and creates a session,
+    similar to clone_repo_to_temp but for local file uploads.
+
+    Args:
+        files_data: List of tuples (relative_path, file_content_bytes)
+        project_name: Name to use for the project (default: "local_upload")
+
+    Returns:
+        Tuple of (session_id, repo_path)
+    """
+    temp_dir = None
+    try:
+        # Create temporary directory for the uploaded files
+        temp_dir = Path(tempfile.mkdtemp(prefix=f"oaas_local_{project_name}_"))
+        logger.info(f"Created temporary directory for local upload: {temp_dir}")
+
+        # Create project directory inside temp_dir
+        project_dir = temp_dir / project_name
+        project_dir.mkdir(parents=True, exist_ok=True)
+
+        # Write all files to the project directory
+        for relative_path, content in files_data:
+            # Normalize the path and ensure it's safe
+            safe_path = Path(relative_path)
+
+            # Security check: prevent path traversal
+            try:
+                # Remove any leading slashes or parent directory references
+                parts = [p for p in safe_path.parts if p and p != '..' and not p.startswith('/')]
+                if not parts:
+                    logger.warning(f"Skipping invalid path: {relative_path}")
+                    continue
+                safe_path = Path(*parts)
+            except Exception as e:
+                logger.warning(f"Skipping file with invalid path {relative_path}: {e}")
+                continue
+
+            file_path = project_dir / safe_path
+
+            # Additional security check
+            try:
+                file_path.resolve().relative_to(project_dir.resolve())
+            except ValueError:
+                logger.warning(f"Skipping file outside project directory: {relative_path}")
+                continue
+
+            # Create parent directories if needed
+            file_path.parent.mkdir(parents=True, exist_ok=True)
+
+            # Write file content
+            try:
+                file_path.write_bytes(content)
+                logger.debug(f"Written file: {file_path}")
+            except Exception as e:
+                logger.warning(f"Failed to write file {relative_path}: {e}")
+                continue
+
+        # Generate session ID
+        session_id = secrets.token_urlsafe(32)
+
+        # Store session (using same format as GitHub clone)
+        repo_sessions[session_id] = {
+            "repo_path": project_dir,
+            "timestamp": time.time(),
+            "repo_name": project_name,
+            "branch": "local",  # Mark as local upload
+        }
+
+        logger.info(f"Local upload session created: {project_name}")
+        logger.info(f"Session ID: {session_id}, Files stored in: {project_dir}")
+
+        return session_id, project_dir
+
+    except Exception as e:
+        # Clean up temp directory if created
+        if temp_dir and temp_dir.exists():
+            try:
+                shutil.rmtree(temp_dir)
+            except Exception as cleanup_error:
+                logger.warning(f"Failed to cleanup temp directory: {cleanup_error}")
+
+        logger.error(f"Failed to create local upload session: {e}")
+        raise HTTPException(status_code=400, detail=f"Failed to upload files: {str(e)}")
+
+
 def get_repo_session(session_id: str) -> Optional[Dict]:
     """Get repository session by ID."""
     return repo_sessions.get(session_id)

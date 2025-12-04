@@ -13,12 +13,10 @@ from .config import (
     PassConfiguration,
     Platform,
     RemarksConfiguration,
-    SymbolObfuscationConfiguration,
     UPXConfiguration,
 )
 from .obfuscator import LLVMObfuscator
 from .reporter import ObfuscationReport
-from .symbol_obfuscator import SymbolObfuscator
 from .upx_packer import UPXPacker
 from .jotai_benchmark import JotaiBenchmarkManager, BenchmarkCategory, BenchmarkResult
 
@@ -33,9 +31,7 @@ __all__ = [
     "AnalyzeConfig",
     "CompareConfig",
     "ObfuscationReport",
-    "SymbolObfuscator",
     "RemarksConfiguration",
-    "SymbolObfuscationConfiguration",
     "UPXConfiguration",
     "UPXPacker",
     "JotaiBenchmarkManager",

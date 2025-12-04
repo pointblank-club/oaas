@@ -20,8 +20,7 @@ from core import (
     compare_binaries,
 )
 from core.batch import load_batch_config
-from core.config import AdvancedConfiguration, IndirectCallConfiguration, OutputConfiguration, SymbolObfuscationConfiguration
-from core.config import AdvancedConfiguration, OutputConfiguration, SymbolObfuscationConfiguration, UPXConfiguration
+from core.config import AdvancedConfiguration, IndirectCallConfiguration, OutputConfiguration, UPXConfiguration
 from core.exceptions import ObfuscationError
 from core.jotai_benchmark import JotaiBenchmarkManager, BenchmarkCategory
 from core.utils import create_logger, load_yaml, normalize_flags_and_passes
@@ -42,12 +41,8 @@ def _build_config(
     enable_linear_mba: bool,
     cycles: int,
     string_encryption: bool,
+    symbol_obfuscation: bool,
     fake_loops: int,
-    enable_symbol_obfuscation: bool,
-    symbol_algorithm: str,
-    symbol_hash_length: int,
-    symbol_prefix: str,
-    symbol_salt: Optional[str],
     enable_indirect_calls: bool,
     indirect_stdlib: bool,
     indirect_custom: bool,
@@ -76,13 +71,8 @@ def _build_config(
         bogus_control_flow=enable_bogus_cf or detected_passes.get("boguscf", False),
         split=enable_split or detected_passes.get("split", False),
         linear_mba=enable_linear_mba or detected_passes.get("linear-mba", False),
-    )
-    symbol_obf_config = SymbolObfuscationConfiguration(
-        enabled=enable_symbol_obfuscation,
-        algorithm=symbol_algorithm,
-        hash_length=symbol_hash_length,
-        prefix_style=symbol_prefix,
-        salt=symbol_salt,
+        string_encrypt=string_encryption,
+        symbol_obfuscate=symbol_obfuscation,
     )
     indirect_call_config = IndirectCallConfiguration(
         enabled=enable_indirect_calls,
@@ -97,9 +87,7 @@ def _build_config(
     )
     advanced = AdvancedConfiguration(
         cycles=cycles,
-        string_encryption=string_encryption,
         fake_loops=fake_loops,
-        symbol_obfuscation=symbol_obf_config,
         indirect_calls=indirect_call_config,
         upx_packing=upx_config,
     )
@@ -126,14 +114,10 @@ def compile(
     enable_bogus_cf: bool = typer.Option(False, "--enable-bogus-cf", help="Enable bogus control flow"),
     enable_split: bool = typer.Option(False, "--enable-split", help="Enable basic block splitting"),
     enable_linear_mba: bool = typer.Option(False, "--enable-linear-mba", help="Enable Linear MBA bitwise obfuscation"),
+    enable_string_encrypt: bool = typer.Option(False, "--enable-string-encrypt", help="Enable string encryption"),
+    enable_symbol_obfuscate: bool = typer.Option(False, "--enable-symbol-obfuscate", help="Enable symbol obfuscation (MLIR pass)"),
     cycles: int = typer.Option(1, help="Number of obfuscation cycles"),
-    string_encryption: bool = typer.Option(False, "--string-encryption", help="Enable string encryption"),
     fake_loops: int = typer.Option(0, "--fake-loops", help="Number of fake loops to insert"),
-    enable_symbol_obfuscation: bool = typer.Option(False, "--enable-symbol-obfuscation", help="Enable cryptographic symbol renaming"),
-    symbol_algorithm: str = typer.Option("sha256", help="Symbol hash algorithm (sha256, blake2b, siphash)"),
-    symbol_hash_length: int = typer.Option(12, help="Symbol hash length"),
-    symbol_prefix: str = typer.Option("typed", help="Symbol prefix style (none, typed, underscore)"),
-    symbol_salt: Optional[str] = typer.Option(None, help="Custom salt for symbol hashing"),
     enable_indirect_calls: bool = typer.Option(False, "--enable-indirect-calls", help="Enable indirect call obfuscation"),
     indirect_stdlib: bool = typer.Option(True, "--indirect-stdlib/--no-indirect-stdlib", help="Obfuscate stdlib function calls"),
     indirect_custom: bool = typer.Option(True, "--indirect-custom/--no-indirect-custom", help="Obfuscate custom function calls"),
@@ -159,13 +143,9 @@ def compile(
             enable_split=enable_split,
             enable_linear_mba=enable_linear_mba,
             cycles=cycles,
-            string_encryption=string_encryption,
+            string_encryption=enable_string_encrypt,
+            symbol_obfuscation=enable_symbol_obfuscate,
             fake_loops=fake_loops,
-            enable_symbol_obfuscation=enable_symbol_obfuscation,
-            symbol_algorithm=symbol_algorithm,
-            symbol_hash_length=symbol_hash_length,
-            symbol_prefix=symbol_prefix,
-            symbol_salt=symbol_salt,
             enable_indirect_calls=enable_indirect_calls,
             indirect_stdlib=indirect_stdlib,
             indirect_custom=indirect_custom,
@@ -241,8 +221,7 @@ def jotai(
     enable_substitution: bool = typer.Option(False, "--enable-substitution", help="Enable instruction substitution"),
     enable_bogus_cf: bool = typer.Option(False, "--enable-bogus-cf", help="Enable bogus control flow"),
     enable_split: bool = typer.Option(False, "--enable-split", help="Enable basic block splitting"),
-    string_encryption: bool = typer.Option(False, "--string-encryption", help="Enable string encryption"),
-    enable_symbol_obfuscation: bool = typer.Option(False, "--enable-symbol-obfuscation", help="Enable cryptographic symbol renaming"),
+    string_encryption: bool = typer.Option(False, "--string-encryption", help="Enable string encryption (MLIR pass)"),
     custom_flags: Optional[str] = typer.Option(None, help="Additional compiler flags"),
     custom_pass_plugin: Optional[Path] = typer.Option(None, help="Path to custom LLVM pass plugin"),
     max_failures: int = typer.Option(5, help="Stop after this many consecutive failures"),
@@ -281,11 +260,6 @@ def jotai(
             cycles=1,
             string_encryption=string_encryption,
             fake_loops=0,
-            enable_symbol_obfuscation=enable_symbol_obfuscation,
-            symbol_algorithm="sha256",
-            symbol_hash_length=12,
-            symbol_prefix="typed",
-            symbol_salt=None,
             enable_indirect_calls=False,
             indirect_stdlib=True,
             indirect_custom=True,

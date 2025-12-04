@@ -1,0 +1,234 @@
+#include "Obfuscator/Passes.h"
+
+#include "mlir/IR/Attributes.h"
+#include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/BuiltinTypes.h"
+#include "mlir/IR/Operation.h"
+#include "mlir/Pass/Pass.h"
+#include "mlir/IR/MLIRContext.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/LLVMIR/LLVMDialect.h"
+#include "mlir/IR/Builders.h"
+
+#include <string>
+#include <cstring>
+#include <random>
+
+using namespace mlir;
+using namespace mlir::obs;
+
+namespace {
+
+/// XOR encrypt for strings
+static std::string xorEncrypt(const std::string &input, const std::string &key) {
+  std::string out = input;
+  for (size_t i = 0; i < input.size(); i++) {
+    out[i] = input[i] ^ key[i % key.size()];
+  }
+  return out;
+}
+
+/// Obfuscate integer constant using XOR and arithmetic transformations
+static int64_t obfuscateInteger(int64_t value, const std::string &key) {
+  // Use key to generate obfuscation parameters
+  std::seed_seq seq(key.begin(), key.end());
+  std::mt19937 rng(seq);
+
+  int64_t xor_mask = rng();
+  int64_t add_offset = rng() % 1000;
+
+  // Transform: value = ((original ^ xor_mask) + add_offset)
+  // To recover: original = (value - add_offset) ^ xor_mask
+  return (value ^ xor_mask) + add_offset;
+}
+
+/// Obfuscate float constant using bit manipulation
+static double obfuscateFloat(double value, const std::string &key) {
+  // Use key to generate obfuscation XOR mask
+  std::seed_seq seq(key.begin(), key.end());
+  std::mt19937_64 rng(seq);
+
+  uint64_t xor_mask = rng();
+
+  // Bit-level XOR on the float representation
+  uint64_t bits;
+  std::memcpy(&bits, &value, sizeof(double));
+  bits ^= xor_mask;
+
+  double obfuscated;
+  std::memcpy(&obfuscated, &bits, sizeof(double));
+
+  return obfuscated;
+}
+
+} // namespace
+
+void ConstantObfuscationPass::runOnOperation() {
+  ModuleOp module = getOperation();
+  MLIRContext *ctx = module.getContext();
+  OpBuilder builder(ctx);
+
+  // ============================================================================
+  // STEP 1: Obfuscate String Literals in LLVM GlobalOp (actual data)
+  // ============================================================================
+  module.walk([&](LLVM::GlobalOp globalOp) {
+    // Check if this is a string constant
+    if (auto strAttr = globalOp.getValueAttr()) {
+      if (auto stringAttr = llvm::dyn_cast<StringAttr>(strAttr)) {
+        std::string original = stringAttr.getValue().str();
+        std::string encrypted = xorEncrypt(original, key);
+
+        // Replace the global's initializer with encrypted string
+        globalOp.setValueAttr(StringAttr::get(ctx, encrypted));
+      }
+    }
+  });
+
+  // ============================================================================
+  // STEP 2: Obfuscate Integer and Float Constants in Func Dialect Operations
+  // ============================================================================
+  module.walk([&](Operation *op) {
+    // Skip operations not inside a function (support both Func and LLVM dialects)
+    Operation *parentOp = op->getParentOp();
+    if (!parentOp)
+      return;
+    
+    // Allow operations inside func::FuncOp, LLVM::LLVMFuncOp, or ModuleOp
+    bool inValidScope = llvm::isa<func::FuncOp>(parentOp) ||
+                        llvm::isa<LLVM::LLVMFuncOp>(parentOp) ||
+                        llvm::isa<ModuleOp>(parentOp);
+    if (!inValidScope) {
+      return;
+    }
+
+    bool changed = false;
+    SmallVector<NamedAttribute> newAttrs;
+
+    for (auto &attr : op->getAttrs()) {
+      StringRef attrName = attr.getName().getValue();
+
+      // Skip symbol names, function references, and callee (preserve semantics)
+      if (attrName == "sym_name" ||
+          attrName == "function_ref" ||
+          attrName == "callee" ||
+          attrName == "sym_visibility") {
+        newAttrs.push_back(attr);
+        continue;
+      }
+
+      // ========================================================================
+      // Obfuscate String Attributes (metadata, not global data)
+      // ========================================================================
+      if (auto strAttr = llvm::dyn_cast<StringAttr>(attr.getValue())) {
+        std::string original = strAttr.getValue().str();
+        std::string encrypted = xorEncrypt(original, key);
+
+        auto newValue = StringAttr::get(ctx, encrypted);
+        newAttrs.emplace_back(attr.getName(), newValue);
+        changed = true;
+        continue;
+      }
+
+      // ========================================================================
+      // Obfuscate Integer Attributes
+      // ========================================================================
+      if (auto intAttr = llvm::dyn_cast<IntegerAttr>(attr.getValue())) {
+        int64_t original = intAttr.getInt();
+        int64_t obfuscated = obfuscateInteger(original, key);
+
+        auto newValue = IntegerAttr::get(intAttr.getType(), obfuscated);
+        newAttrs.emplace_back(attr.getName(), newValue);
+        changed = true;
+        continue;
+      }
+
+      // ========================================================================
+      // Obfuscate Float Attributes
+      // ========================================================================
+      if (auto floatAttr = llvm::dyn_cast<FloatAttr>(attr.getValue())) {
+        double original = floatAttr.getValueAsDouble();
+        double obfuscated = obfuscateFloat(original, key);
+
+        auto newValue = FloatAttr::get(floatAttr.getType(), obfuscated);
+        newAttrs.emplace_back(attr.getName(), newValue);
+        changed = true;
+        continue;
+      }
+
+      // ========================================================================
+      // Obfuscate Dense Element Attributes (arrays of constants)
+      // ========================================================================
+      if (auto denseAttr = llvm::dyn_cast<DenseElementsAttr>(attr.getValue())) {
+        // Check if it's an integer array
+        if (denseAttr.getElementType().isInteger()) {
+          SmallVector<int64_t> obfuscatedValues;
+          for (auto val : denseAttr.getValues<APInt>()) {
+            int64_t original = val.getSExtValue();
+            int64_t obfuscated = obfuscateInteger(original, key);
+            obfuscatedValues.push_back(obfuscated);
+          }
+
+          auto newValue = DenseElementsAttr::get(
+              llvm::cast<ShapedType>(denseAttr.getType()),
+              ArrayRef<int64_t>(obfuscatedValues)
+          );
+          newAttrs.emplace_back(attr.getName(), newValue);
+          changed = true;
+          continue;
+        }
+
+        // Check if it's a float array
+        if (llvm::isa<FloatType>(denseAttr.getElementType())) {
+          SmallVector<double> obfuscatedValues;
+          for (auto val : denseAttr.getValues<APFloat>()) {
+            double original = val.convertToDouble();
+            double obfuscated = obfuscateFloat(original, key);
+            obfuscatedValues.push_back(obfuscated);
+          }
+
+          auto newValue = DenseElementsAttr::get(
+              llvm::cast<ShapedType>(denseAttr.getType()),
+              ArrayRef<double>(obfuscatedValues)
+          );
+          newAttrs.emplace_back(attr.getName(), newValue);
+          changed = true;
+          continue;
+        }
+      }
+
+      // No change -> keep original
+      newAttrs.push_back(attr);
+    }
+
+    if (changed) {
+      op->setAttrs(DictionaryAttr::get(ctx, newAttrs));
+    }
+  });
+
+  // ============================================================================
+  // STEP 3: Obfuscate Constants in LLVM Dialect Operations (Func compatible)
+  // ============================================================================
+  module.walk([&](LLVM::ConstantOp constOp) {
+    // Obfuscate integer constants
+    if (auto intAttr = llvm::dyn_cast<IntegerAttr>(constOp.getValue())) {
+      int64_t original = intAttr.getInt();
+      int64_t obfuscated = obfuscateInteger(original, key);
+
+      auto newValue = IntegerAttr::get(intAttr.getType(), obfuscated);
+      constOp.setValueAttr(newValue);
+    }
+
+    // Obfuscate float constants
+    if (auto floatAttr = llvm::dyn_cast<FloatAttr>(constOp.getValue())) {
+      double original = floatAttr.getValueAsDouble();
+      double obfuscated = obfuscateFloat(original, key);
+
+      auto newValue = FloatAttr::get(floatAttr.getType(), obfuscated);
+      constOp.setValueAttr(newValue);
+    }
+  });
+}
+
+std::unique_ptr<Pass> mlir::obs::createConstantObfuscationPass(llvm::StringRef key) {
+  return std::make_unique<ConstantObfuscationPass>(key.str());
+}

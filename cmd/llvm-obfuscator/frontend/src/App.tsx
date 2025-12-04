@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect } from 'react';
 import './App.css';
-import { GitHubIntegration, FileTree } from './components';
+import { GitHubIntegration, FileTree, TestResults } from './components';
 
 type Platform = 'linux' | 'windows';  // macOS disabled - requires Apple SDK
 type Architecture = 'x86_64' | 'arm64' | 'i686';
@@ -2497,6 +2497,19 @@ function App() {
               </div>
             </div>
           </section>
+        )}
+
+        {/* ✅ NEW: Test Suite Results Section */}
+        {jobId && report && (
+          <TestResults
+            jobId={jobId}
+            onError={(error) => {
+              // Optionally show error for missing test results
+              if (error.includes('not available') || error.includes('not in report')) {
+                // Silently handle - test results may not be available for older jobs
+              }
+            }}
+          />
         )}
       </main>
 

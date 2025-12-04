@@ -2,7 +2,8 @@ import { useState, useCallback, useEffect } from 'react';
 import './App.css';
 import { GitHubIntegration, FileTree } from './components';
 
-type Platform = 'linux' | 'windows' | 'macos';
+type Platform = 'linux' | 'windows';  // macOS disabled - requires Apple SDK
+type Architecture = 'x86_64' | 'arm64' | 'i686';
 
 // Demo Programs
 const DEMO_PROGRAMS = {
@@ -327,7 +328,6 @@ function App() {
   const [downloadUrls, setDownloadUrls] = useState<Record<Platform, string | null>>({
     linux: null,
     windows: null,
-    macos: null
   });
   const [binaryName, setBinaryName] = useState<string | null>(null);
   const [report, setReport] = useState<ReportData | null>(null);
@@ -382,6 +382,7 @@ function App() {
   // Configuration states
   const [obfuscationLevel, setObfuscationLevel] = useState(5);
   const [targetPlatform, setTargetPlatform] = useState<Platform>('linux');
+  const [targetArchitecture, setTargetArchitecture] = useState<Architecture>('x86_64');
   const [entrypointCommand, setEntrypointCommand] = useState<string>('./a.out');
 
   // Build system configuration (for complex projects like CURL)
@@ -1052,7 +1053,7 @@ function App() {
 
     setLoading(true);
     setReport(null);
-    setDownloadUrls({ linux: null, windows: null, macos: null });
+    setDownloadUrls({ linux: null, windows: null });
     setBinaryName(null);
     setProgress({ message: 'Initializing...', percent: 0 });
 
@@ -1108,6 +1109,7 @@ function App() {
         source_code: source_b64,
         filename: filename,
         platform: targetPlatform,
+        architecture: targetArchitecture,
         entrypoint_command: buildSystem === 'simple' ? (entrypointCommand.trim() || './a.out') : undefined,
         // Fast clone: use repo_session_id to keep all files on backend (including build system files)
         // Legacy: use source_files (filtered C/C++ only - missing CMakeLists.txt, configure, etc.)
@@ -1173,15 +1175,18 @@ function App() {
 
       setJobId(data.job_id);
 
-      // Handle response - always single platform (Linux)
+      // Handle response - multi-platform builds
       const downloadUrlsMap: Record<Platform, string | null> = {
         linux: null,
         windows: null,
-        macos: null
       };
 
-      if (data.download_url) {
-        // Single platform build (always Linux)
+      if (data.download_urls) {
+        // Multi-platform build - use platform-specific URLs
+        downloadUrlsMap.linux = data.download_urls.linux || null;
+        downloadUrlsMap.windows = data.download_urls.windows || null;
+      } else if (data.download_url) {
+        // Legacy single platform build
         downloadUrlsMap.linux = data.download_url;
       }
 
@@ -1256,7 +1261,7 @@ function App() {
       setProgress(null);
     }
   }, [
-    file, inputMode, pastedSource, obfuscationLevel, cycles, targetPlatform, entrypointCommand,
+    file, inputMode, pastedSource, obfuscationLevel, cycles, targetPlatform, targetArchitecture, entrypointCommand,
     layer1, layer2, layer3, layer4, layer2_5, layer5,
     symbolAlgorithm, symbolHashLength, symbolPrefix, symbolSalt,
     fakeLoops, indirectStdlib, indirectCustom,
@@ -2041,7 +2046,18 @@ function App() {
               >
                 <option value="linux">Linux</option>
                 <option value="windows">Windows</option>
-                <option value="macos">macOS</option>
+              </select>
+            </label>
+
+            <label>
+              Target Architecture:
+              <select
+                value={targetArchitecture}
+                onChange={(e) => setTargetArchitecture(e.target.value as Architecture)}
+              >
+                <option value="x86_64">x86_64 (64-bit Intel/AMD)</option>
+                <option value="arm64">ARM64 (Apple M1/M2, ARM servers)</option>
+                <option value="i686">i686 (32-bit x86)</option>
               </select>
             </label>
 
@@ -2155,7 +2171,7 @@ function App() {
             </div>
           )}
 
-          {(downloadUrls.linux || downloadUrls.windows || downloadUrls.macos) && (
+          {(downloadUrls.linux || downloadUrls.windows) && (
             <div className="download-section">
               <h3>Download Obfuscated Binary:</h3>
               <div className="download-buttons">

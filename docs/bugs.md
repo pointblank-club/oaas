@@ -275,6 +275,52 @@ if config.platform in [Platform.MACOS, Platform.DARWIN]:
 
 ---
 
+## Evidence of Fixes (2025-12-05 12:25 UTC)
+
+### Bug #1 Evidence - COMDAT Error Fixed
+
+**Test Case**: C code + macOS + MLIR layers (Layer 1+2)
+
+**Server Log (Before Fix)**:
+```
+fatal error: error in backend: MachO doesn't support COMDATs, '__llvm_retpoline_r11' cannot be lowered.
+```
+
+**Server Log (After Fix)**:
+```
+2025-12-05 12:24:40,458 - core.obfuscator - INFO - Removed -mspeculative-load-hardening for macOS (incompatible with Mach-O)
+```
+
+**Result**: ✅ Obfuscation Complete - Binary ready for download
+
+---
+
+### Bug #2 Evidence - Version Mismatch Fixed
+
+**Test Case**: C++ code + macOS + MLIR layers (Layer 1+2)
+
+**Server Log (Before Fix)**:
+```
+error: expected ')' at end of argument list
+declare void @llvm.memcpy.p0.p0.i64(ptr noalias writeonly captures(none), ...)
+```
+(System clang++ LLVM 19 couldn't parse LLVM 22 IR with `captures(none)` attribute)
+
+**Server Log (After Fix)**:
+```
+2025-12-05 12:25:28,243 - core.obfuscator - INFO - Using bundled clang (LLVM 22) with -x c++ for C++: /usr/local/llvm-obfuscator/bin/clang
+2025-12-05 12:24:41,005 - core.obfuscator - INFO - [RESOURCE-DIR-DEBUG] Using bundled llvm-obfuscator clang, no resource-dir override needed
+```
+
+**Result**: Version mismatch resolved. Now blocked by Bug #3 (section specifier corruption):
+```
+fatal error: error in backend: Global variable '__cxx_global_var_init' has an invalid section specifier ';:2$-8X
+```
+
+This proves Bug #2 is fixed - the `captures(none)` syntax error no longer occurs because we're using LLVM 22 clang.
+
+---
+
 ## Appendix: Container Versions
 
 ```

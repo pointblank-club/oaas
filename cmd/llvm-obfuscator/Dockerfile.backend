@@ -111,7 +111,7 @@ RUN cp /usr/lib/llvm-*/lib/clang/*/include/__stddef_header_macro.h \
 
 # Add custom LLVM toolchain to PATH
 ENV PATH="/usr/local/llvm-obfuscator/bin:${PATH}"
-ENV LD_LIBRARY_PATH="/usr/local/llvm-obfuscator/lib:${LD_LIBRARY_PATH}"
+ENV LD_LIBRARY_PATH="/usr/local/llvm-obfuscator/lib"
 
 # Verify custom LLVM 22 toolchain installation
 RUN /usr/local/llvm-obfuscator/bin/clang --version || echo "Custom clang installed"

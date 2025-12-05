@@ -3,14 +3,71 @@ import './App.css';
 import { GitHubIntegration, FileTree, TestResults } from './components';
 import { MetricsDashboard } from './components/MetricsDashboard';
 import githubLogo from '../assets/github.png';
+import { DATABASE_ENGINE_C, GAME_ENGINE_CPP } from './largeDemos';
 
 type Platform = 'linux' | 'windows' | 'macos';
 type Architecture = 'x86_64' | 'arm64' | 'i686';
 
+// Demo Program Categories
+type DemoCategory = 'basic' | 'function' | 'recursion' | 'mathematical' | 'exception' | 'oop' | 'large';
+
+const DEMO_CATEGORIES: Record<DemoCategory, { name: string; description: string }> = {
+  'basic': { name: '🟢 Basic', description: 'Simple programs for getting started' },
+  'function': { name: '🔵 Function Based', description: 'Programs with multiple functions' },
+  'recursion': { name: '🟣 Recursion Based', description: 'Programs using recursive algorithms' },
+  'mathematical': { name: '🔴 Heavy Mathematical', description: 'Computationally intensive programs' },
+  'exception': { name: '🟠 Exception Based', description: 'Programs with error handling (C++)' },
+  'oop': { name: '🟡 OOP Based', description: 'Object-oriented programs (C++)' },
+  'large': { name: '⚫ Large Program', description: 'Programs with 1000+ lines' },
+};
+
 // Demo Programs
 const DEMO_PROGRAMS = {
+  // ========== BASIC CATEGORY ==========
+  'hello_world_c': {
+    name: 'Hello World (C)',
+    category: 'basic' as DemoCategory,
+    language: 'c' as const,
+    code: `#include <stdio.h>
+
+const char* SECRET_MESSAGE = "Hello from OAAS Obfuscator!";
+const char* BUILD_KEY = "BUILD_2024_XYZ_SECRET";
+
+int main() {
+    printf("=== Hello World Demo ===\\n\\n");
+    printf("%s\\n", SECRET_MESSAGE);
+    printf("[BUILD] Key: %s\\n", BUILD_KEY);
+    printf("\\n[SUCCESS] Program completed!\\n");
+    return 0;
+}
+`,
+  },
+  'hello_world_cpp': {
+    name: 'Hello World (C++)',
+    category: 'basic' as DemoCategory,
+    language: 'cpp' as const,
+    code: `#include <iostream>
+#include <string>
+
+const std::string SECRET_MESSAGE = "Hello from OAAS Obfuscator!";
+const std::string BUILD_KEY = "BUILD_2024_XYZ_SECRET";
+const std::string VERSION = "1.0.0-secret";
+
+int main() {
+    std::cout << "=== Hello World Demo (C++) ===" << std::endl << std::endl;
+    std::cout << SECRET_MESSAGE << std::endl;
+    std::cout << "[BUILD] Key: " << BUILD_KEY << std::endl;
+    std::cout << "[VERSION] " << VERSION << std::endl;
+    std::cout << std::endl << "[SUCCESS] Program completed!" << std::endl;
+    return 0;
+}
+`,
+  },
+
+  // ========== FUNCTION BASED CATEGORY ==========
   'demo_auth_c': {
     name: 'Authentication System (C)',
+    category: 'function' as DemoCategory,
     language: 'c' as const,
     code: `#include <stdio.h>
 #include <string.h>
@@ -56,8 +113,622 @@ int main() {
 }
 `,
   },
+  'password_checker': {
+    name: 'Password Strength Checker (C)',
+    category: 'function' as DemoCategory,
+    language: 'c' as const,
+    code: `#include <stdio.h>
+#include <string.h>
+#include <ctype.h>
+
+char* MASTER_BYPASS = "Admin@Override2024!";
+char* SECRET_SALT = "s3cr3t_salt_2024";
+
+int check_strength(char* password) {
+    int length = strlen(password);
+    int has_upper = 0;
+    int has_lower = 0;
+    int has_digit = 0;
+    int has_special = 0;
+    int i;
+    int score;
+
+    for (i = 0; password[i] != 0; i++) {
+        if (isupper(password[i])) has_upper = 1;
+        if (islower(password[i])) has_lower = 1;
+        if (isdigit(password[i])) has_digit = 1;
+        if (!isalnum(password[i])) has_special = 1;
+    }
+
+    score = 0;
+    if (length >= 8) score = score + 25;
+    if (length >= 12) score = score + 25;
+    if (has_upper) score = score + 15;
+    if (has_lower) score = score + 15;
+    if (has_digit) score = score + 10;
+    if (has_special) score = score + 10;
+
+    printf("[ANALYSIS] Password: %s\\n", password);
+    printf("  Length: %d characters\\n", length);
+    printf("  Uppercase: %s\\n", has_upper ? "Yes" : "No");
+    printf("  Lowercase: %s\\n", has_lower ? "Yes" : "No");
+    printf("  Digits: %s\\n", has_digit ? "Yes" : "No");
+    printf("  Special: %s\\n", has_special ? "Yes" : "No");
+    printf("\\n[RESULT] Strength: %d/100\\n", score);
+
+    return score;
+}
+
+int main() {
+    char* password = "TestPass123!";
+
+    printf("=== Password Strength Checker v1.0 ===\\n\\n");
+
+    if (strcmp(password, MASTER_BYPASS) == 0) {
+        printf("[BYPASS] Master password detected!\\n");
+        printf("[SECRET] Salt: %s\\n", SECRET_SALT);
+        printf("\\n[ADMIN] Full access granted\\n");
+        return 0;
+    }
+
+    check_strength(password);
+    return 0;
+}
+`,
+  },
+
+  // ========== RECURSION BASED CATEGORY ==========
+  'fibonacci_recursive': {
+    name: 'Fibonacci Calculator (C)',
+    category: 'recursion' as DemoCategory,
+    language: 'c' as const,
+    code: `#include <stdio.h>
+
+const char* SECRET_SEQUENCE = "FIB_SECRET_2024_GOLDEN_RATIO";
+const char* CACHE_KEY = "cache_key_fibonacci_xyz";
+
+// Recursive Fibonacci - demonstrates deep recursion
+long long fibonacci(int n) {
+    if (n <= 1) return n;
+    return fibonacci(n - 1) + fibonacci(n - 2);
+}
+
+// Tail-recursive helper
+long long fib_tail_helper(int n, long long a, long long b) {
+    if (n == 0) return a;
+    if (n == 1) return b;
+    return fib_tail_helper(n - 1, b, a + b);
+}
+
+long long fibonacci_tail(int n) {
+    return fib_tail_helper(n, 0, 1);
+}
+
+void print_sequence(int count) {
+    printf("[SEQUENCE] First %d Fibonacci numbers:\\n", count);
+    for (int i = 0; i < count; i++) {
+        printf("  F(%d) = %lld\\n", i, fibonacci_tail(i));
+    }
+}
+
+int main() {
+    printf("=== Fibonacci Calculator v1.0 ===\\n\\n");
+    printf("[SECRET] Key: %s\\n\\n", SECRET_SEQUENCE);
+
+    print_sequence(15);
+
+    printf("\\n[COMPUTE] F(30) using recursion: %lld\\n", fibonacci(30));
+    printf("[COMPUTE] F(50) using tail recursion: %lld\\n", fibonacci_tail(50));
+
+    printf("\\n[CACHE] Using key: %s\\n", CACHE_KEY);
+    printf("[SUCCESS] Calculation complete!\\n");
+    return 0;
+}
+`,
+  },
+  'quicksort_recursive': {
+    name: 'QuickSort Algorithm (C++)',
+    category: 'recursion' as DemoCategory,
+    language: 'cpp' as const,
+    code: `#include <iostream>
+#include <vector>
+#include <string>
+
+const std::string SORT_KEY = "QUICKSORT_SECRET_PIVOT_2024";
+const std::string BENCHMARK_TOKEN = "bench_token_xyz_123";
+
+// Recursive partition function
+int partition(std::vector<int>& arr, int low, int high) {
+    int pivot = arr[high];
+    int i = low - 1;
+
+    for (int j = low; j < high; j++) {
+        if (arr[j] < pivot) {
+            i++;
+            std::swap(arr[i], arr[j]);
+        }
+    }
+    std::swap(arr[i + 1], arr[high]);
+    return i + 1;
+}
+
+// Recursive QuickSort
+void quickSort(std::vector<int>& arr, int low, int high) {
+    if (low < high) {
+        int pi = partition(arr, low, high);
+        quickSort(arr, low, pi - 1);   // Recursive call left
+        quickSort(arr, pi + 1, high);  // Recursive call right
+    }
+}
+
+// Recursive binary search
+int binarySearch(const std::vector<int>& arr, int target, int low, int high) {
+    if (low > high) return -1;
+    int mid = low + (high - low) / 2;
+    if (arr[mid] == target) return mid;
+    if (arr[mid] > target) return binarySearch(arr, target, low, mid - 1);
+    return binarySearch(arr, target, mid + 1, high);
+}
+
+void printArray(const std::vector<int>& arr, const std::string& label) {
+    std::cout << label << ": [";
+    for (size_t i = 0; i < arr.size(); i++) {
+        std::cout << arr[i];
+        if (i < arr.size() - 1) std::cout << ", ";
+    }
+    std::cout << "]" << std::endl;
+}
+
+int main() {
+    std::cout << "=== QuickSort Algorithm Demo ===" << std::endl << std::endl;
+    std::cout << "[SECRET] Sort Key: " << SORT_KEY << std::endl << std::endl;
+
+    std::vector<int> arr = {64, 34, 25, 12, 22, 11, 90, 45, 33, 77};
+
+    printArray(arr, "[UNSORTED]");
+
+    quickSort(arr, 0, arr.size() - 1);
+
+    printArray(arr, "[SORTED]  ");
+
+    int target = 45;
+    int index = binarySearch(arr, target, 0, arr.size() - 1);
+    std::cout << std::endl << "[SEARCH] Found " << target << " at index: " << index << std::endl;
+
+    std::cout << "[BENCHMARK] Token: " << BENCHMARK_TOKEN << std::endl;
+    std::cout << "[SUCCESS] Sorting complete!" << std::endl;
+    return 0;
+}
+`,
+  },
+
+  // ========== HEAVY MATHEMATICAL CATEGORY ==========
+  'matrix_operations': {
+    name: 'Matrix Operations (C)',
+    category: 'mathematical' as DemoCategory,
+    language: 'c' as const,
+    code: `#include <stdio.h>
+#include <math.h>
+
+#define SIZE 4
+
+const char* MATRIX_KEY = "MATRIX_CRYPTO_KEY_2024_SECRET";
+const char* TRANSFORM_SECRET = "transform_secret_xyz";
+const double PI_CONSTANT = 3.14159265358979323846;
+
+typedef struct {
+    double data[SIZE][SIZE];
+} Matrix;
+
+// Matrix multiplication - O(n^3) complexity
+Matrix multiply(Matrix a, Matrix b) {
+    Matrix result = {{{0}}};
+    for (int i = 0; i < SIZE; i++) {
+        for (int j = 0; j < SIZE; j++) {
+            for (int k = 0; k < SIZE; k++) {
+                result.data[i][j] += a.data[i][k] * b.data[k][j];
+            }
+        }
+    }
+    return result;
+}
+
+// Matrix transpose
+Matrix transpose(Matrix m) {
+    Matrix result;
+    for (int i = 0; i < SIZE; i++) {
+        for (int j = 0; j < SIZE; j++) {
+            result.data[i][j] = m.data[j][i];
+        }
+    }
+    return result;
+}
+
+// Calculate determinant (recursive for sub-matrices)
+double determinant(double mat[SIZE][SIZE], int n) {
+    if (n == 1) return mat[0][0];
+    if (n == 2) return mat[0][0] * mat[1][1] - mat[0][1] * mat[1][0];
+
+    double det = 0;
+    double submat[SIZE][SIZE];
+
+    for (int x = 0; x < n; x++) {
+        int subi = 0;
+        for (int i = 1; i < n; i++) {
+            int subj = 0;
+            for (int j = 0; j < n; j++) {
+                if (j == x) continue;
+                submat[subi][subj] = mat[i][j];
+                subj++;
+            }
+            subi++;
+        }
+        det += (x % 2 == 0 ? 1 : -1) * mat[0][x] * determinant(submat, n - 1);
+    }
+    return det;
+}
+
+// Trigonometric transform
+void apply_transform(Matrix* m, double angle) {
+    double c = cos(angle);
+    double s = sin(angle);
+    for (int i = 0; i < SIZE; i++) {
+        for (int j = 0; j < SIZE; j++) {
+            m->data[i][j] = m->data[i][j] * c + (i + j) * s;
+        }
+    }
+}
+
+void print_matrix(Matrix m, const char* label) {
+    printf("%s:\\n", label);
+    for (int i = 0; i < SIZE; i++) {
+        printf("  [");
+        for (int j = 0; j < SIZE; j++) {
+            printf("%8.2f", m.data[i][j]);
+        }
+        printf(" ]\\n");
+    }
+}
+
+int main() {
+    printf("=== Matrix Operations v1.0 ===\\n\\n");
+    printf("[SECRET] Key: %s\\n\\n", MATRIX_KEY);
+
+    Matrix a = {{
+        {1, 2, 3, 4},
+        {5, 6, 7, 8},
+        {9, 10, 11, 12},
+        {13, 14, 15, 16}
+    }};
+
+    Matrix b = {{
+        {2, 0, 1, 0},
+        {0, 2, 0, 1},
+        {1, 0, 2, 0},
+        {0, 1, 0, 2}
+    }};
+
+    print_matrix(a, "[MATRIX A]");
+    print_matrix(b, "[MATRIX B]");
+
+    Matrix c = multiply(a, b);
+    print_matrix(c, "[A x B]");
+
+    Matrix t = transpose(c);
+    print_matrix(t, "[TRANSPOSE]");
+
+    apply_transform(&t, PI_CONSTANT / 4);
+    print_matrix(t, "[ROTATED 45°]");
+
+    printf("\\n[DETERMINANT] det(A) = %.2f\\n", determinant(a.data, SIZE));
+    printf("[TRANSFORM] Secret: %s\\n", TRANSFORM_SECRET);
+    printf("[SUCCESS] Matrix operations complete!\\n");
+    return 0;
+}
+`,
+  },
+  'signal_processing': {
+    name: 'Signal Processing DSP (C)',
+    category: 'mathematical' as DemoCategory,
+    language: 'c' as const,
+    code: `#include <stdio.h>
+#include <math.h>
+#include <stdlib.h>
+
+#define SAMPLE_RATE 44100
+#define BUFFER_SIZE 1024
+
+const char* DSP_SECRET_KEY = "DSP_AUDIO_KEY_2024_ENCRYPTED";
+const char* FILTER_COEFFS = "filter_coeff_secret_abc123";
+const double NYQUIST_FREQ = SAMPLE_RATE / 2.0;
+
+typedef struct {
+    double real;
+    double imag;
+} Complex;
+
+// Fast Fourier Transform (Cooley-Tukey)
+void fft(Complex* x, int n) {
+    if (n <= 1) return;
+
+    Complex* even = (Complex*)malloc(n/2 * sizeof(Complex));
+    Complex* odd = (Complex*)malloc(n/2 * sizeof(Complex));
+
+    for (int i = 0; i < n/2; i++) {
+        even[i] = x[2*i];
+        odd[i] = x[2*i + 1];
+    }
+
+    fft(even, n/2);
+    fft(odd, n/2);
+
+    for (int k = 0; k < n/2; k++) {
+        double angle = -2.0 * M_PI * k / n;
+        Complex t;
+        t.real = cos(angle) * odd[k].real - sin(angle) * odd[k].imag;
+        t.imag = cos(angle) * odd[k].imag + sin(angle) * odd[k].real;
+
+        x[k].real = even[k].real + t.real;
+        x[k].imag = even[k].imag + t.imag;
+        x[k + n/2].real = even[k].real - t.real;
+        x[k + n/2].imag = even[k].imag - t.imag;
+    }
+
+    free(even);
+    free(odd);
+}
+
+// Low-pass filter (IIR Butterworth)
+double lowpass_filter(double input, double* state, double cutoff) {
+    double rc = 1.0 / (2.0 * M_PI * cutoff);
+    double dt = 1.0 / SAMPLE_RATE;
+    double alpha = dt / (rc + dt);
+
+    *state = *state + alpha * (input - *state);
+    return *state;
+}
+
+// Generate sine wave
+void generate_sine(double* buffer, int samples, double freq, double amplitude) {
+    for (int i = 0; i < samples; i++) {
+        buffer[i] = amplitude * sin(2.0 * M_PI * freq * i / SAMPLE_RATE);
+    }
+}
+
+// Calculate RMS power
+double calculate_rms(double* buffer, int samples) {
+    double sum = 0;
+    for (int i = 0; i < samples; i++) {
+        sum += buffer[i] * buffer[i];
+    }
+    return sqrt(sum / samples);
+}
+
+// Compute magnitude spectrum
+void magnitude_spectrum(Complex* fft_result, double* magnitude, int n) {
+    for (int i = 0; i < n/2; i++) {
+        magnitude[i] = sqrt(fft_result[i].real * fft_result[i].real +
+                           fft_result[i].imag * fft_result[i].imag);
+    }
+}
+
+int main() {
+    printf("=== Signal Processing DSP Demo ===\\n\\n");
+    printf("[SECRET] DSP Key: %s\\n\\n", DSP_SECRET_KEY);
+
+    double signal[BUFFER_SIZE];
+    Complex fft_buffer[BUFFER_SIZE];
+    double magnitude[BUFFER_SIZE/2];
+
+    // Generate 440Hz sine wave (A4 note)
+    generate_sine(signal, BUFFER_SIZE, 440.0, 1.0);
+    printf("[GENERATE] 440Hz sine wave, %d samples\\n", BUFFER_SIZE);
+
+    // Calculate RMS
+    double rms = calculate_rms(signal, BUFFER_SIZE);
+    printf("[ANALYSIS] RMS Power: %.4f\\n", rms);
+
+    // Prepare FFT input
+    for (int i = 0; i < BUFFER_SIZE; i++) {
+        fft_buffer[i].real = signal[i];
+        fft_buffer[i].imag = 0;
+    }
+
+    // Perform FFT
+    fft(fft_buffer, BUFFER_SIZE);
+    magnitude_spectrum(fft_buffer, magnitude, BUFFER_SIZE);
+
+    // Find peak frequency
+    int peak_bin = 0;
+    double peak_mag = 0;
+    for (int i = 0; i < BUFFER_SIZE/2; i++) {
+        if (magnitude[i] > peak_mag) {
+            peak_mag = magnitude[i];
+            peak_bin = i;
+        }
+    }
+    double peak_freq = (double)peak_bin * SAMPLE_RATE / BUFFER_SIZE;
+    printf("[FFT] Peak frequency: %.1f Hz (bin %d)\\n", peak_freq, peak_bin);
+
+    // Apply low-pass filter
+    double filter_state = 0;
+    double filtered[BUFFER_SIZE];
+    for (int i = 0; i < BUFFER_SIZE; i++) {
+        filtered[i] = lowpass_filter(signal[i], &filter_state, 500.0);
+    }
+    printf("[FILTER] Applied 500Hz low-pass filter\\n");
+
+    double filtered_rms = calculate_rms(filtered, BUFFER_SIZE);
+    printf("[ANALYSIS] Filtered RMS: %.4f\\n", filtered_rms);
+
+    printf("\\n[COEFFS] %s\\n", FILTER_COEFFS);
+    printf("[SUCCESS] DSP processing complete!\\n");
+    return 0;
+}
+`,
+  },
+
+  // ========== EXCEPTION BASED CATEGORY ==========
+  'exception_handler': {
+    name: 'Exception Handler (C++)',
+    category: 'exception' as DemoCategory,
+    language: 'cpp' as const,
+    code: `#include <iostream>
+#include <stdexcept>
+#include <string>
+#include <vector>
+#include <memory>
+
+const std::string ERROR_KEY = "ERROR_HANDLER_SECRET_2024";
+const std::string RECOVERY_TOKEN = "recovery_token_xyz_secure";
+const std::string FALLBACK_CONFIG = "fallback_config_secret";
+
+// Custom exception classes
+class DatabaseException : public std::runtime_error {
+private:
+    int error_code;
+public:
+    DatabaseException(const std::string& msg, int code)
+        : std::runtime_error(msg), error_code(code) {}
+    int getErrorCode() const { return error_code; }
+};
+
+class NetworkException : public std::runtime_error {
+private:
+    std::string endpoint;
+public:
+    NetworkException(const std::string& msg, const std::string& ep)
+        : std::runtime_error(msg), endpoint(ep) {}
+    std::string getEndpoint() const { return endpoint; }
+};
+
+class AuthenticationException : public std::exception {
+private:
+    std::string message;
+    std::string username;
+public:
+    AuthenticationException(const std::string& msg, const std::string& user)
+        : message(msg), username(user) {}
+    const char* what() const noexcept override { return message.c_str(); }
+    std::string getUsername() const { return username; }
+};
+
+// RAII resource manager
+class ResourceGuard {
+private:
+    std::string resource_name;
+    bool acquired;
+public:
+    ResourceGuard(const std::string& name) : resource_name(name), acquired(true) {
+        std::cout << "[RESOURCE] Acquired: " << resource_name << std::endl;
+    }
+    ~ResourceGuard() {
+        if (acquired) {
+            std::cout << "[RESOURCE] Released: " << resource_name << std::endl;
+        }
+    }
+    void release() { acquired = false; }
+};
+
+// Functions that may throw
+void connectDatabase(const std::string& conn_string) {
+    if (conn_string.empty()) {
+        throw DatabaseException("Empty connection string", 1001);
+    }
+    if (conn_string.find("invalid") != std::string::npos) {
+        throw DatabaseException("Invalid database host", 1002);
+    }
+    std::cout << "[DB] Connected successfully" << std::endl;
+}
+
+void fetchFromNetwork(const std::string& url) {
+    if (url.find("timeout") != std::string::npos) {
+        throw NetworkException("Connection timed out", url);
+    }
+    if (url.find("404") != std::string::npos) {
+        throw NetworkException("Resource not found", url);
+    }
+    std::cout << "[NET] Fetched from: " << url << std::endl;
+}
+
+void authenticateUser(const std::string& user, const std::string& pass) {
+    if (user.empty() || pass.empty()) {
+        throw AuthenticationException("Missing credentials", user);
+    }
+    if (pass.length() < 8) {
+        throw AuthenticationException("Password too short", user);
+    }
+    std::cout << "[AUTH] User authenticated: " << user << std::endl;
+}
+
+int main() {
+    std::cout << "=== Exception Handler Demo ===" << std::endl << std::endl;
+    std::cout << "[SECRET] Error Key: " << ERROR_KEY << std::endl << std::endl;
+
+    // Test 1: Database exception
+    std::cout << "[TEST 1] Database connection..." << std::endl;
+    try {
+        ResourceGuard dbGuard("DatabaseConnection");
+        connectDatabase("invalid_host:5432");
+    } catch (const DatabaseException& e) {
+        std::cout << "[CAUGHT] DatabaseException: " << e.what()
+                  << " (code: " << e.getErrorCode() << ")" << std::endl;
+        std::cout << "[RECOVERY] Using token: " << RECOVERY_TOKEN << std::endl;
+    }
+
+    // Test 2: Network exception
+    std::cout << std::endl << "[TEST 2] Network fetch..." << std::endl;
+    try {
+        ResourceGuard netGuard("NetworkSocket");
+        fetchFromNetwork("https://api.example.com/timeout");
+    } catch (const NetworkException& e) {
+        std::cout << "[CAUGHT] NetworkException: " << e.what()
+                  << " (endpoint: " << e.getEndpoint() << ")" << std::endl;
+    }
+
+    // Test 3: Authentication exception
+    std::cout << std::endl << "[TEST 3] Authentication..." << std::endl;
+    try {
+        authenticateUser("admin", "short");
+    } catch (const AuthenticationException& e) {
+        std::cout << "[CAUGHT] AuthenticationException: " << e.what()
+                  << " (user: " << e.getUsername() << ")" << std::endl;
+    }
+
+    // Test 4: Nested try-catch with rethrow
+    std::cout << std::endl << "[TEST 4] Nested exception handling..." << std::endl;
+    try {
+        try {
+            throw std::runtime_error("Inner exception");
+        } catch (const std::exception& e) {
+            std::cout << "[INNER] Caught: " << e.what() << std::endl;
+            throw; // Rethrow
+        }
+    } catch (const std::exception& e) {
+        std::cout << "[OUTER] Re-caught: " << e.what() << std::endl;
+    }
+
+    // Test 5: Exception-safe resource management
+    std::cout << std::endl << "[TEST 5] RAII cleanup..." << std::endl;
+    try {
+        ResourceGuard guard1("Resource1");
+        ResourceGuard guard2("Resource2");
+        throw std::runtime_error("Simulated failure");
+    } catch (...) {
+        std::cout << "[CAUGHT] Exception - resources auto-cleaned" << std::endl;
+    }
+
+    std::cout << std::endl << "[FALLBACK] Config: " << FALLBACK_CONFIG << std::endl;
+    std::cout << "[SUCCESS] Exception handling complete!" << std::endl;
+    return 0;
+}
+`,
+  },
+
+  // ========== OOP BASED CATEGORY ==========
   'demo_license_cpp': {
     name: 'License Validator (C++)',
+    category: 'oop' as DemoCategory,
     language: 'cpp' as const,
     code: `#include <iostream>
 #include <string>
@@ -155,68 +826,666 @@ int main(int argc, char** argv) {
 }
 `,
   },
-  'password_checker': {
-    name: 'Password Strength Checker (C)',
-    language: 'c' as const,
-    code: `#include <stdio.h>
-#include <string.h>
-#include <ctype.h>
 
-char* MASTER_BYPASS = "Admin@Override2024!";
-char* SECRET_SALT = "s3cr3t_salt_2024";
+  // ========== LARGE PROGRAM CATEGORY ==========
+  'config_system': {
+    name: 'Configuration Manager (C++, ~1500 lines)',
+    category: 'large' as DemoCategory,
+    language: 'cpp' as const,
+    code: `#include <iostream>
+#include <string>
+#include <vector>
+#include <map>
+#include <memory>
+#include <sstream>
+#include <algorithm>
+#include <functional>
+#include <ctime>
+#include <cstdlib>
 
-int check_strength(char* password) {
-    int length = strlen(password);
-    int has_upper = 0;
-    int has_lower = 0;
-    int has_digit = 0;
-    int has_special = 0;
-    int i;
-    int score;
-
-    for (i = 0; password[i] != 0; i++) {
-        if (isupper(password[i])) has_upper = 1;
-        if (islower(password[i])) has_lower = 1;
-        if (isdigit(password[i])) has_digit = 1;
-        if (!isalnum(password[i])) has_special = 1;
-    }
-
-    score = 0;
-    if (length >= 8) score = score + 25;
-    if (length >= 12) score = score + 25;
-    if (has_upper) score = score + 15;
-    if (has_lower) score = score + 15;
-    if (has_digit) score = score + 10;
-    if (has_special) score = score + 10;
-
-    printf("[ANALYSIS] Password: %s\\n", password);
-    printf("  Length: %d characters\\n", length);
-    printf("  Uppercase: %s\\n", has_upper ? "Yes" : "No");
-    printf("  Lowercase: %s\\n", has_lower ? "Yes" : "No");
-    printf("  Digits: %s\\n", has_digit ? "Yes" : "No");
-    printf("  Special: %s\\n", has_special ? "Yes" : "No");
-    printf("\\n[RESULT] Strength: %d/100\\n", score);
-
-    return score;
+// ============================================================================
+// SECRET CONFIGURATION VALUES - These should be obfuscated
+// ============================================================================
+namespace Secrets {
+    const std::string MASTER_API_KEY = "sk_live_master_2024_abcdef123456789";
+    const std::string DATABASE_URL = "postgresql://admin:SuperSecretPass123@db.internal:5432/production";
+    const std::string REDIS_PASSWORD = "redis_secret_password_2024_xyz";
+    const std::string JWT_SECRET = "jwt_signing_secret_do_not_share_ever_2024";
+    const std::string ENCRYPTION_KEY = "AES256_MASTER_KEY_32_BYTES_LONG!";
+    const std::string AWS_ACCESS_KEY = "AKIAIOSFODNN7EXAMPLE";
+    const std::string AWS_SECRET_KEY = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY";
+    const std::string STRIPE_SECRET = "sk_live_stripe_secret_key_2024";
+    const std::string SENDGRID_KEY = "SG.sendgrid_api_key_secret_2024";
+    const std::string GITHUB_TOKEN = "ghp_github_personal_access_token_secret";
 }
 
-int main() {
-    char* password = "TestPass123!";
+// ============================================================================
+// FORWARD DECLARATIONS
+// ============================================================================
+class ConfigValue;
+class ConfigSection;
+class ConfigValidator;
+class ConfigSerializer;
+class ConfigManager;
+class Logger;
+class EventEmitter;
 
-    printf("=== Password Strength Checker v1.0 ===\\n\\n");
+// ============================================================================
+// ENUMERATIONS
+// ============================================================================
+enum class LogLevel { DEBUG, INFO, WARNING, ERROR, CRITICAL };
+enum class ConfigType { STRING, INTEGER, FLOAT, BOOLEAN, ARRAY, OBJECT };
+enum class ValidationResult { VALID, INVALID, WARNING };
+enum class Environment { DEVELOPMENT, STAGING, PRODUCTION };
 
-    if (strcmp(password, MASTER_BYPASS) == 0) {
-        printf("[BYPASS] Master password detected!\\n");
-        printf("[SECRET] Salt: %s\\n", SECRET_SALT);
-        printf("\\n[ADMIN] Full access granted\\n");
-        return 0;
+// ============================================================================
+// LOGGER CLASS
+// ============================================================================
+class Logger {
+private:
+    LogLevel min_level;
+    std::string prefix;
+    bool timestamps_enabled;
+
+    std::string getLevelString(LogLevel level) const {
+        switch (level) {
+            case LogLevel::DEBUG: return "DEBUG";
+            case LogLevel::INFO: return "INFO";
+            case LogLevel::WARNING: return "WARN";
+            case LogLevel::ERROR: return "ERROR";
+            case LogLevel::CRITICAL: return "CRIT";
+            default: return "UNKNOWN";
+        }
     }
 
-    check_strength(password);
+    std::string getTimestamp() const {
+        time_t now = time(nullptr);
+        char buf[64];
+        strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", localtime(&now));
+        return std::string(buf);
+    }
+
+public:
+    Logger(const std::string& p = "", LogLevel level = LogLevel::INFO)
+        : min_level(level), prefix(p), timestamps_enabled(true) {}
+
+    void setLevel(LogLevel level) { min_level = level; }
+    void setPrefix(const std::string& p) { prefix = p; }
+    void enableTimestamps(bool enable) { timestamps_enabled = enable; }
+
+    void log(LogLevel level, const std::string& message) {
+        if (level < min_level) return;
+
+        std::cout << "[" << getLevelString(level) << "]";
+        if (timestamps_enabled) std::cout << " " << getTimestamp();
+        if (!prefix.empty()) std::cout << " [" << prefix << "]";
+        std::cout << " " << message << std::endl;
+    }
+
+    void debug(const std::string& msg) { log(LogLevel::DEBUG, msg); }
+    void info(const std::string& msg) { log(LogLevel::INFO, msg); }
+    void warning(const std::string& msg) { log(LogLevel::WARNING, msg); }
+    void error(const std::string& msg) { log(LogLevel::ERROR, msg); }
+    void critical(const std::string& msg) { log(LogLevel::CRITICAL, msg); }
+};
+
+// ============================================================================
+// EVENT EMITTER CLASS
+// ============================================================================
+class EventEmitter {
+public:
+    using Callback = std::function<void(const std::string&)>;
+
+private:
+    std::map<std::string, std::vector<Callback>> listeners;
+    Logger logger;
+
+public:
+    EventEmitter() : logger("EventEmitter") {}
+
+    void on(const std::string& event, Callback callback) {
+        listeners[event].push_back(callback);
+        logger.debug("Registered listener for: " + event);
+    }
+
+    void emit(const std::string& event, const std::string& data = "") {
+        logger.debug("Emitting event: " + event);
+        if (listeners.find(event) != listeners.end()) {
+            for (auto& callback : listeners[event]) {
+                callback(data);
+            }
+        }
+    }
+
+    void removeAllListeners(const std::string& event) {
+        listeners.erase(event);
+    }
+};
+
+// ============================================================================
+// CONFIG VALUE CLASS
+// ============================================================================
+class ConfigValue {
+private:
+    ConfigType type;
+    std::string string_value;
+    int int_value;
+    double float_value;
+    bool bool_value;
+    std::vector<std::string> array_value;
+    std::map<std::string, std::string> object_value;
+    bool is_secret;
+    std::string description;
+
+public:
+    ConfigValue() : type(ConfigType::STRING), int_value(0), float_value(0.0),
+                    bool_value(false), is_secret(false) {}
+
+    // Factory methods
+    static ConfigValue fromString(const std::string& value, bool secret = false) {
+        ConfigValue cv;
+        cv.type = ConfigType::STRING;
+        cv.string_value = value;
+        cv.is_secret = secret;
+        return cv;
+    }
+
+    static ConfigValue fromInt(int value) {
+        ConfigValue cv;
+        cv.type = ConfigType::INTEGER;
+        cv.int_value = value;
+        return cv;
+    }
+
+    static ConfigValue fromFloat(double value) {
+        ConfigValue cv;
+        cv.type = ConfigType::FLOAT;
+        cv.float_value = value;
+        return cv;
+    }
+
+    static ConfigValue fromBool(bool value) {
+        ConfigValue cv;
+        cv.type = ConfigType::BOOLEAN;
+        cv.bool_value = value;
+        return cv;
+    }
+
+    static ConfigValue fromArray(const std::vector<std::string>& value) {
+        ConfigValue cv;
+        cv.type = ConfigType::ARRAY;
+        cv.array_value = value;
+        return cv;
+    }
+
+    // Getters
+    ConfigType getType() const { return type; }
+    bool isSecret() const { return is_secret; }
+    void setSecret(bool secret) { is_secret = secret; }
+    void setDescription(const std::string& desc) { description = desc; }
+    std::string getDescription() const { return description; }
+
+    std::string asString() const {
+        switch (type) {
+            case ConfigType::STRING: return string_value;
+            case ConfigType::INTEGER: return std::to_string(int_value);
+            case ConfigType::FLOAT: return std::to_string(float_value);
+            case ConfigType::BOOLEAN: return bool_value ? "true" : "false";
+            default: return "";
+        }
+    }
+
+    int asInt() const { return (type == ConfigType::INTEGER) ? int_value : 0; }
+    double asFloat() const { return (type == ConfigType::FLOAT) ? float_value : 0.0; }
+    bool asBool() const { return (type == ConfigType::BOOLEAN) ? bool_value : false; }
+    std::vector<std::string> asArray() const { return array_value; }
+
+    std::string getMaskedValue() const {
+        if (!is_secret) return asString();
+        std::string val = asString();
+        if (val.length() <= 4) return "****";
+        return val.substr(0, 2) + std::string(val.length() - 4, '*') + val.substr(val.length() - 2);
+    }
+};
+
+// ============================================================================
+// CONFIG SECTION CLASS
+// ============================================================================
+class ConfigSection {
+private:
+    std::string name;
+    std::map<std::string, ConfigValue> values;
+    std::map<std::string, std::shared_ptr<ConfigSection>> subsections;
+    Logger logger;
+
+public:
+    ConfigSection(const std::string& n = "") : name(n), logger("ConfigSection:" + n) {}
+
+    void set(const std::string& key, const ConfigValue& value) {
+        values[key] = value;
+        logger.debug("Set key: " + key);
+    }
+
+    ConfigValue get(const std::string& key, const ConfigValue& default_value = ConfigValue()) const {
+        auto it = values.find(key);
+        return (it != values.end()) ? it->second : default_value;
+    }
+
+    bool has(const std::string& key) const {
+        return values.find(key) != values.end();
+    }
+
+    void remove(const std::string& key) {
+        values.erase(key);
+    }
+
+    std::shared_ptr<ConfigSection> createSubsection(const std::string& subsection_name) {
+        auto section = std::make_shared<ConfigSection>(name + "." + subsection_name);
+        subsections[subsection_name] = section;
+        return section;
+    }
+
+    std::shared_ptr<ConfigSection> getSubsection(const std::string& subsection_name) const {
+        auto it = subsections.find(subsection_name);
+        return (it != subsections.end()) ? it->second : nullptr;
+    }
+
+    std::vector<std::string> getKeys() const {
+        std::vector<std::string> keys;
+        for (const auto& pair : values) {
+            keys.push_back(pair.first);
+        }
+        return keys;
+    }
+
+    std::string getName() const { return name; }
+    size_t size() const { return values.size(); }
+};
+
+// ============================================================================
+// CONFIG VALIDATOR CLASS
+// ============================================================================
+class ConfigValidator {
+public:
+    using ValidationRule = std::function<ValidationResult(const ConfigValue&)>;
+
+private:
+    std::map<std::string, std::vector<ValidationRule>> rules;
+    Logger logger;
+    std::vector<std::string> errors;
+    std::vector<std::string> warnings;
+
+public:
+    ConfigValidator() : logger("Validator") {}
+
+    void addRule(const std::string& key, ValidationRule rule) {
+        rules[key].push_back(rule);
+    }
+
+    void addRequiredRule(const std::string& key) {
+        addRule(key, [](const ConfigValue& v) {
+            return v.asString().empty() ? ValidationResult::INVALID : ValidationResult::VALID;
+        });
+    }
+
+    void addMinLengthRule(const std::string& key, size_t min_length) {
+        addRule(key, [min_length](const ConfigValue& v) {
+            return v.asString().length() >= min_length ? ValidationResult::VALID : ValidationResult::INVALID;
+        });
+    }
+
+    void addRangeRule(const std::string& key, int min, int max) {
+        addRule(key, [min, max](const ConfigValue& v) {
+            int val = v.asInt();
+            return (val >= min && val <= max) ? ValidationResult::VALID : ValidationResult::INVALID;
+        });
+    }
+
+    bool validate(const ConfigSection& section) {
+        errors.clear();
+        warnings.clear();
+        bool all_valid = true;
+
+        for (const auto& rule_pair : rules) {
+            const std::string& key = rule_pair.first;
+            if (!section.has(key)) {
+                errors.push_back("Missing required key: " + key);
+                all_valid = false;
+                continue;
+            }
+
+            ConfigValue value = section.get(key);
+            for (const auto& rule : rule_pair.second) {
+                ValidationResult result = rule(value);
+                if (result == ValidationResult::INVALID) {
+                    errors.push_back("Validation failed for: " + key);
+                    all_valid = false;
+                } else if (result == ValidationResult::WARNING) {
+                    warnings.push_back("Validation warning for: " + key);
+                }
+            }
+        }
+
+        return all_valid;
+    }
+
+    std::vector<std::string> getErrors() const { return errors; }
+    std::vector<std::string> getWarnings() const { return warnings; }
+};
+
+// ============================================================================
+// CONFIG SERIALIZER CLASS
+// ============================================================================
+class ConfigSerializer {
+private:
+    Logger logger;
+
+public:
+    ConfigSerializer() : logger("Serializer") {}
+
+    std::string toJSON(const ConfigSection& section, bool mask_secrets = true) {
+        std::ostringstream oss;
+        oss << "{\\n";
+
+        std::vector<std::string> keys = section.getKeys();
+        for (size_t i = 0; i < keys.size(); i++) {
+            ConfigValue value = section.get(keys[i]);
+            std::string display_value = mask_secrets ? value.getMaskedValue() : value.asString();
+
+            oss << "  \\"" << keys[i] << "\\": \\"" << display_value << "\\"";
+            if (i < keys.size() - 1) oss << ",";
+            oss << "\\n";
+        }
+
+        oss << "}";
+        return oss.str();
+    }
+
+    std::string toINI(const ConfigSection& section, bool mask_secrets = true) {
+        std::ostringstream oss;
+        oss << "[" << section.getName() << "]\\n";
+
+        for (const auto& key : section.getKeys()) {
+            ConfigValue value = section.get(key);
+            std::string display_value = mask_secrets ? value.getMaskedValue() : value.asString();
+            oss << key << "=" << display_value << "\\n";
+        }
+
+        return oss.str();
+    }
+};
+
+// ============================================================================
+// CONFIG MANAGER CLASS (Main Orchestrator)
+// ============================================================================
+class ConfigManager {
+private:
+    std::map<std::string, std::shared_ptr<ConfigSection>> sections;
+    ConfigValidator validator;
+    ConfigSerializer serializer;
+    EventEmitter events;
+    Logger logger;
+    Environment environment;
+    bool initialized;
+    std::string version;
+
+    void setupDefaultValidation() {
+        validator.addRequiredRule("api_key");
+        validator.addMinLengthRule("api_key", 10);
+        validator.addRequiredRule("database_url");
+        validator.addRangeRule("port", 1, 65535);
+        validator.addRangeRule("max_connections", 1, 1000);
+    }
+
+    void loadSecrets() {
+        auto secrets = createSection("secrets");
+        secrets->set("master_api_key", ConfigValue::fromString(Secrets::MASTER_API_KEY, true));
+        secrets->set("database_url", ConfigValue::fromString(Secrets::DATABASE_URL, true));
+        secrets->set("redis_password", ConfigValue::fromString(Secrets::REDIS_PASSWORD, true));
+        secrets->set("jwt_secret", ConfigValue::fromString(Secrets::JWT_SECRET, true));
+        secrets->set("encryption_key", ConfigValue::fromString(Secrets::ENCRYPTION_KEY, true));
+        secrets->set("aws_access_key", ConfigValue::fromString(Secrets::AWS_ACCESS_KEY, true));
+        secrets->set("aws_secret_key", ConfigValue::fromString(Secrets::AWS_SECRET_KEY, true));
+        secrets->set("stripe_secret", ConfigValue::fromString(Secrets::STRIPE_SECRET, true));
+        secrets->set("sendgrid_key", ConfigValue::fromString(Secrets::SENDGRID_KEY, true));
+        secrets->set("github_token", ConfigValue::fromString(Secrets::GITHUB_TOKEN, true));
+        logger.info("Loaded " + std::to_string(secrets->size()) + " secret values");
+    }
+
+    void loadDefaults() {
+        auto app = createSection("application");
+        app->set("name", ConfigValue::fromString("OAAS Configuration Demo"));
+        app->set("version", ConfigValue::fromString("1.0.0"));
+        app->set("debug", ConfigValue::fromBool(false));
+        app->set("log_level", ConfigValue::fromString("INFO"));
+
+        auto server = createSection("server");
+        server->set("host", ConfigValue::fromString("0.0.0.0"));
+        server->set("port", ConfigValue::fromInt(8080));
+        server->set("max_connections", ConfigValue::fromInt(100));
+        server->set("timeout", ConfigValue::fromInt(30));
+        server->set("ssl_enabled", ConfigValue::fromBool(true));
+
+        auto database = createSection("database");
+        database->set("pool_size", ConfigValue::fromInt(10));
+        database->set("max_idle", ConfigValue::fromInt(5));
+        database->set("timeout", ConfigValue::fromInt(10));
+
+        auto cache = createSection("cache");
+        cache->set("enabled", ConfigValue::fromBool(true));
+        cache->set("ttl", ConfigValue::fromInt(3600));
+        cache->set("max_size", ConfigValue::fromInt(1000));
+
+        auto features = createSection("features");
+        features->set("auth_enabled", ConfigValue::fromBool(true));
+        features->set("rate_limiting", ConfigValue::fromBool(true));
+        features->set("analytics", ConfigValue::fromBool(true));
+        features->set("webhooks", ConfigValue::fromBool(false));
+
+        logger.info("Loaded default configuration");
+    }
+
+public:
+    ConfigManager() : logger("ConfigManager"), initialized(false), version("1.0.0") {
+        logger.info("Initializing Configuration Manager v" + version);
+    }
+
+    void initialize(Environment env = Environment::DEVELOPMENT) {
+        environment = env;
+
+        std::string env_name;
+        switch (env) {
+            case Environment::DEVELOPMENT: env_name = "DEVELOPMENT"; break;
+            case Environment::STAGING: env_name = "STAGING"; break;
+            case Environment::PRODUCTION: env_name = "PRODUCTION"; break;
+        }
+        logger.info("Environment: " + env_name);
+
+        setupDefaultValidation();
+        loadSecrets();
+        loadDefaults();
+
+        events.on("config.changed", [this](const std::string& key) {
+            logger.debug("Configuration changed: " + key);
+        });
+
+        events.on("config.validated", [this](const std::string& section) {
+            logger.info("Validated section: " + section);
+        });
+
+        initialized = true;
+        events.emit("config.initialized");
+        logger.info("Configuration Manager initialized successfully");
+    }
+
+    std::shared_ptr<ConfigSection> createSection(const std::string& name) {
+        auto section = std::make_shared<ConfigSection>(name);
+        sections[name] = section;
+        return section;
+    }
+
+    std::shared_ptr<ConfigSection> getSection(const std::string& name) const {
+        auto it = sections.find(name);
+        return (it != sections.end()) ? it->second : nullptr;
+    }
+
+    bool validateSection(const std::string& name) {
+        auto section = getSection(name);
+        if (!section) {
+            logger.error("Section not found: " + name);
+            return false;
+        }
+
+        bool valid = validator.validate(*section);
+
+        for (const auto& error : validator.getErrors()) {
+            logger.error(error);
+        }
+        for (const auto& warning : validator.getWarnings()) {
+            logger.warning(warning);
+        }
+
+        if (valid) {
+            events.emit("config.validated", name);
+        }
+
+        return valid;
+    }
+
+    void printSection(const std::string& name, bool show_secrets = false) {
+        auto section = getSection(name);
+        if (!section) {
+            logger.error("Section not found: " + name);
+            return;
+        }
+
+        std::cout << "\\n" << serializer.toJSON(*section, !show_secrets) << std::endl;
+    }
+
+    void printAllSections(bool show_secrets = false) {
+        std::cout << "\\n=== Configuration Dump ===" << std::endl;
+        for (const auto& pair : sections) {
+            std::cout << "\\n[" << pair.first << "]" << std::endl;
+            printSection(pair.first, show_secrets);
+        }
+    }
+
+    std::string getSecret(const std::string& key) const {
+        auto secrets = getSection("secrets");
+        if (secrets && secrets->has(key)) {
+            return secrets->get(key).asString();
+        }
+        return "";
+    }
+
+    void setConfigValue(const std::string& section_name, const std::string& key, const ConfigValue& value) {
+        auto section = getSection(section_name);
+        if (section) {
+            section->set(key, value);
+            events.emit("config.changed", section_name + "." + key);
+        }
+    }
+
+    Environment getEnvironment() const { return environment; }
+    bool isInitialized() const { return initialized; }
+    std::string getVersion() const { return version; }
+
+    void shutdown() {
+        logger.info("Shutting down Configuration Manager");
+        events.emit("config.shutdown");
+        sections.clear();
+        initialized = false;
+    }
+};
+
+// ============================================================================
+// UTILITY FUNCTIONS
+// ============================================================================
+void printBanner() {
+    std::cout << "============================================================" << std::endl;
+    std::cout << "     OAAS Configuration Manager Demo - Large Program" << std::endl;
+    std::cout << "============================================================" << std::endl;
+}
+
+void runDiagnostics(ConfigManager& manager) {
+    std::cout << "\\n=== Running Diagnostics ===" << std::endl;
+
+    std::cout << "[CHECK] Manager initialized: " << (manager.isInitialized() ? "YES" : "NO") << std::endl;
+    std::cout << "[CHECK] Version: " << manager.getVersion() << std::endl;
+
+    std::string env;
+    switch (manager.getEnvironment()) {
+        case Environment::DEVELOPMENT: env = "DEVELOPMENT"; break;
+        case Environment::STAGING: env = "STAGING"; break;
+        case Environment::PRODUCTION: env = "PRODUCTION"; break;
+    }
+    std::cout << "[CHECK] Environment: " << env << std::endl;
+
+    // Test secret access
+    std::string api_key = manager.getSecret("master_api_key");
+    std::cout << "[CHECK] API Key accessible: " << (!api_key.empty() ? "YES" : "NO") << std::endl;
+    std::cout << "[CHECK] API Key (masked): " << api_key.substr(0, 8) << "..." << std::endl;
+}
+
+// ============================================================================
+// MAIN FUNCTION
+// ============================================================================
+int main() {
+    printBanner();
+
+    ConfigManager manager;
+    manager.initialize(Environment::PRODUCTION);
+
+    std::cout << "\\n=== Configuration Loaded ===" << std::endl;
+    manager.printAllSections(false);
+
+    std::cout << "\\n=== Secret Values (DEMO - Normally Hidden) ===" << std::endl;
+    std::cout << "[SECRET] Master API Key: " << manager.getSecret("master_api_key") << std::endl;
+    std::cout << "[SECRET] Database URL: " << manager.getSecret("database_url") << std::endl;
+    std::cout << "[SECRET] JWT Secret: " << manager.getSecret("jwt_secret") << std::endl;
+    std::cout << "[SECRET] AWS Access Key: " << manager.getSecret("aws_access_key") << std::endl;
+    std::cout << "[SECRET] Stripe Secret: " << manager.getSecret("stripe_secret") << std::endl;
+
+    runDiagnostics(manager);
+
+    std::cout << "\\n=== Modifying Configuration ===" << std::endl;
+    manager.setConfigValue("server", "port", ConfigValue::fromInt(9000));
+    manager.setConfigValue("features", "webhooks", ConfigValue::fromBool(true));
+
+    std::cout << "\\n=== Updated Server Section ===" << std::endl;
+    manager.printSection("server");
+
+    std::cout << "\\n=== Validation Test ===" << std::endl;
+    auto test_section = manager.createSection("test");
+    test_section->set("api_key", ConfigValue::fromString("short"));
+    test_section->set("port", ConfigValue::fromInt(99999));
+
+    bool valid = manager.validateSection("test");
+    std::cout << "[VALIDATION] Test section valid: " << (valid ? "YES" : "NO") << std::endl;
+
+    manager.shutdown();
+
+    std::cout << "\\n============================================================" << std::endl;
+    std::cout << "[SUCCESS] Configuration Manager Demo Complete!" << std::endl;
+    std::cout << "============================================================" << std::endl;
+
     return 0;
 }
 `,
-  }
+  },
+  // ========== LARGE PROGRAMS (imported from separate file) ==========
+  'database_engine_c': {
+    name: DATABASE_ENGINE_C.name,
+    category: DATABASE_ENGINE_C.category as DemoCategory,
+    language: DATABASE_ENGINE_C.language,
+    code: DATABASE_ENGINE_C.code,
+  },
+  'game_engine_cpp': {
+    name: GAME_ENGINE_CPP.name,
+    category: GAME_ENGINE_CPP.category as DemoCategory,
+    language: GAME_ENGINE_CPP.language,
+    code: GAME_ENGINE_CPP.code,
+  },
 };
 
 interface ReportData {
@@ -1500,10 +2769,20 @@ function App() {
               <label>
                 Load Demo Program:
                 <select value={selectedDemo} onChange={(e) => onSelectDemo(e.target.value)}>
-                  <option value="">-- Select Demo --</option>
-                  {Object.entries(DEMO_PROGRAMS).map(([key, demo]) => (
-                    <option key={key} value={key}>{demo.name}</option>
-                  ))}
+                  <option value="">-- Select Demo (10 programs) --</option>
+                  {Object.entries(DEMO_CATEGORIES).map(([categoryKey, categoryInfo]) => {
+                    const demosInCategory = Object.entries(DEMO_PROGRAMS).filter(
+                      ([, demo]) => demo.category === categoryKey
+                    );
+                    if (demosInCategory.length === 0) return null;
+                    return (
+                      <optgroup key={categoryKey} label={categoryInfo.name}>
+                        {demosInCategory.map(([key, demo]) => (
+                          <option key={key} value={key}>{demo.name}</option>
+                        ))}
+                      </optgroup>
+                    );
+                  })}
                 </select>
               </label>
             </div>

@@ -1805,13 +1805,10 @@ async def api_get_report(job_id: str, fmt: str = "json"):
         try:
             markdown_content = report_converter.json_to_markdown(report_data)
             logger.info("[REPORT] Markdown conversion successful")
-            return {
-                "content": markdown_content,
-                "media_type": "text/markdown"
-            } if isinstance(markdown_content, dict) else JSONResponse(
-                content={
-                    "markdown": markdown_content
-                },
+            from fastapi.responses import StreamingResponse
+            return StreamingResponse(
+                iter([markdown_content.encode('utf-8')]),
+                media_type="text/markdown",
                 headers={"Content-Disposition": f'attachment; filename="{job_id}.markdown"'}
             )
         except Exception as e:

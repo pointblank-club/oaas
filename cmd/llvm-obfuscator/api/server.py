@@ -1457,12 +1457,25 @@ async def api_obfuscate_sync(
 
             # Find baseline binary
             baseline_candidates = []
+
+            # Search in both output_dir and working_dir (for multifile projects)
+            search_dirs = []
             if output_dir and output_dir.exists():
-                logger.info(f"Searching for baseline binary in: {output_dir}")
+                search_dirs.append(output_dir)
+
+            # For multifile projects, also search in working_dir
+            working_dir = Path(os.environ.get("REPORT_BASE", "/app/reports")) / job.job_id
+            if working_dir.exists():
+                search_dirs.append(working_dir)
+                logger.info(f"Also searching in working directory: {working_dir}")
+
+            for search_dir in search_dirs:
+                logger.info(f"Searching for baseline binary in: {search_dir}")
                 # Look for files with _baseline suffix
-                for candidate in output_dir.glob(f"*_baseline"):
+                for candidate in search_dir.glob(f"*_baseline"):
                     logger.info(f"  Found candidate: {candidate}")
-                    baseline_candidates.append(candidate)
+                    if candidate not in baseline_candidates:
+                        baseline_candidates.append(candidate)
 
                 # Try multiple expected names
                 expected_names = [
@@ -1472,7 +1485,7 @@ async def api_obfuscate_sync(
                 ]
 
                 for expected_name in expected_names:
-                    expected_baseline = output_dir / expected_name
+                    expected_baseline = search_dir / expected_name
                     logger.info(f"Checking: {expected_baseline}")
                     if expected_baseline.exists():
                         logger.info(f"  ✓ Found: {expected_name}")
@@ -1483,10 +1496,14 @@ async def api_obfuscate_sync(
                         logger.info(f"  ✗ Not found: {expected_name}")
 
             if not baseline_candidates:
-                logger.warning(f"No baseline binaries found in {output_dir}")
+                logger.warning(f"No baseline binaries found in any search directory")
                 logger.warning("Listing files in output directory:")
                 if output_dir and output_dir.exists():
                     for item in output_dir.iterdir():
+                        logger.warning(f"  {item.name}")
+                logger.warning("Listing files in working directory:")
+                if working_dir.exists():
+                    for item in working_dir.iterdir():
                         logger.warning(f"  {item.name}")
                 raise FileNotFoundError(f"No baseline binary found for {source_stem}")
 

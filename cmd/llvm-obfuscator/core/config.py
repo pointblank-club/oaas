@@ -157,7 +157,7 @@ class AdvancedConfiguration:
 @dataclass
 class OutputConfiguration:
     directory: Path
-    report_formats: List[str] = field(default_factory=lambda: ["json"])  # json, html, pdf
+    report_formats: List[str] = field(default_factory=lambda: ["json", "markdown", "pdf"])  # json, markdown, pdf
 
 @dataclass
 class ObfuscationConfig:

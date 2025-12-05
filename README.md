@@ -1133,7 +1133,7 @@ MIT License - See `LICENSE` file for details.
 ## Acknowledgments
 
 - **OLLVM Project** - Control flow obfuscation passes
-- **LLVM Community** - Compiler infrastructure
+- **LLVM Community** - Compiler infrastructuree
 - **Research Contributors** - Comprehensive testing and validation
 
 ---

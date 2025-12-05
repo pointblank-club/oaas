@@ -28,6 +28,7 @@ from core import (
     ObfuscationReport,
     Platform,
     analyze_binary,
+    report_converter,
 )
 from core.comparer import CompareConfig, compare_binaries
 from core.config import AdvancedConfiguration, PassConfiguration, UPXConfiguration, Architecture
@@ -1763,35 +1764,78 @@ async def api_list_jobs():
 
 @app.get("/api/report/{job_id}")
 async def api_get_report(job_id: str, fmt: str = "json"):
-    logger.info("[PDF DEBUG] Requesting report - job_id: %s, format: %s", job_id, fmt)
+    logger.info("[REPORT] Requesting report - job_id: %s, format: %s", job_id, fmt)
     try:
         job = job_manager.get_job(job_id)
-        logger.info("[PDF DEBUG] Job found: %s", job.job_id)
+        logger.info("[REPORT] Job found: %s", job.job_id)
     except JobNotFoundError:
-        logger.error("[PDF DEBUG] Job not found: %s", job_id)
+        logger.error("[REPORT] Job not found: %s", job_id)
         raise HTTPException(status_code=404, detail="Job not found")
 
-    logger.info("[PDF DEBUG] job.report_paths dict: %s", job.report_paths)
-    logger.info("[PDF DEBUG] Available formats in report_paths: %s", list(job.report_paths.keys()))
+    fmt_lower = fmt.lower()
+    logger.info("[REPORT] Format requested (lowercased): %s", fmt_lower)
 
-    report_path = job.report_paths.get(fmt)
-    logger.info("[PDF DEBUG] Looking for format '%s', got path: %s", fmt, report_path)
+    # Always require JSON as base (we convert from JSON to other formats)
+    json_report_path = job.report_paths.get("json")
+    if not json_report_path:
+        logger.error("[REPORT] No JSON report available")
+        raise HTTPException(status_code=404, detail="JSON report not found")
 
-    if not report_path:
-        logger.error("[PDF DEBUG] Report not available for format: %s", fmt)
-        logger.error("[PDF DEBUG] Available formats: %s", list(job.report_paths.keys()))
-        raise HTTPException(status_code=404, detail="Report not available")
-
-    path = Path(report_path)
-    logger.info("[PDF DEBUG] Report path exists: %s", path.exists())
-    logger.info("[PDF DEBUG] Full path: %s", path)
-
-    if not path.exists():
-        logger.error("[PDF DEBUG] Report file missing at: %s", path)
+    json_path = Path(json_report_path)
+    if not json_path.exists():
+        logger.error("[REPORT] JSON report file missing at: %s", json_path)
         raise HTTPException(status_code=404, detail="Report file missing")
 
-    logger.info("[PDF DEBUG] Returning file: %s", path)
-    return FileResponse(path)
+    # Load JSON report
+    try:
+        with open(json_path, 'r') as f:
+            report_data = json.load(f)
+        logger.info("[REPORT] JSON report loaded successfully")
+    except Exception as e:
+        logger.error("[REPORT] Failed to load JSON report: %s", e)
+        raise HTTPException(status_code=500, detail="Failed to load report")
+
+    # Return format based on request
+    if fmt_lower == "json":
+        logger.info("[REPORT] Returning JSON report")
+        return FileResponse(json_path, media_type="application/json", filename=f"{job_id}.json")
+
+    elif fmt_lower == "markdown":
+        logger.info("[REPORT] Converting to Markdown")
+        try:
+            markdown_content = report_converter.json_to_markdown(report_data)
+            logger.info("[REPORT] Markdown conversion successful")
+            return {
+                "content": markdown_content,
+                "media_type": "text/markdown"
+            } if isinstance(markdown_content, dict) else JSONResponse(
+                content={
+                    "markdown": markdown_content
+                },
+                headers={"Content-Disposition": f'attachment; filename="{job_id}.markdown"'}
+            )
+        except Exception as e:
+            logger.error("[REPORT] Markdown conversion failed: %s", e, exc_info=True)
+            raise HTTPException(status_code=500, detail="Failed to generate markdown report")
+
+    elif fmt_lower == "pdf":
+        logger.info("[REPORT] Converting to PDF")
+        try:
+            pdf_content = report_converter.json_to_pdf(report_data)
+            logger.info("[REPORT] PDF conversion successful, size: %d bytes", len(pdf_content))
+            from fastapi.responses import StreamingResponse
+            return StreamingResponse(
+                iter([pdf_content]),
+                media_type="application/pdf",
+                headers={"Content-Disposition": f'attachment; filename="{job_id}.pdf"'}
+            )
+        except Exception as e:
+            logger.error("[REPORT] PDF conversion failed: %s", e, exc_info=True)
+            raise HTTPException(status_code=500, detail="Failed to generate PDF report")
+
+    else:
+        logger.warning("[REPORT] Unknown format requested: %s", fmt_lower)
+        raise HTTPException(status_code=400, detail=f"Unsupported format: {fmt}")
 
 
 @app.websocket("/ws/jobs/{job_id}")

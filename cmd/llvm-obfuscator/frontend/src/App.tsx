@@ -899,10 +899,7 @@ function App() {
     if (layer === 2) setLayer2(value);
     if (layer === 3) {
       setLayer3(value);
-      // Disable LTO when Layer 3 is enabled (LLVM version incompatibility)
-      if (value && flagLTO) {
-        setFlagLTO(false);
-      }
+      // LTO now works with Layer 3 (OLLVM) thanks to -fuse-ld=lld fix
     }
     if (layer === 4) setLayer4(value);
     if (layer === 5) setLayer5(value);
@@ -1664,12 +1661,11 @@ function App() {
             <button
               className="select-all-btn"
               onClick={() => {
-                // LTO is incompatible with Layer 3, so exclude it from "all selected" check
-                // since Select All always enables Layer 3
+                // LTO now works with Layer 3 (OLLVM) thanks to -fuse-ld=lld fix
                 const allSelected = layer1 && layer2 && layer2_5 && layer3 && layer4 && layer5 &&
                   passFlattening && passSubstitution && passBogusControlFlow && passSplitBasicBlocks && passLinearMBA &&
                   flagSymbolHiding && flagOmitFramePointer && flagSpeculativeLoadHardening &&
-                  flagO3 && flagStripSymbols && flagNoBuiltin;
+                  flagO3 && flagStripSymbols && flagNoBuiltin && flagLTO;
 
                 const newValue = !allSelected;
                 setLayer1(newValue);
@@ -1683,11 +1679,7 @@ function App() {
                 setPassBogusControlFlow(newValue);
                 setPassSplitBasicBlocks(newValue);
                 setPassLinearMBA(newValue);
-                // Never enable LTO via global Select All since Layer 3 will be enabled
-                // Only allow deselecting LTO
-                if (!newValue) {
-                  setFlagLTO(false);
-                }
+                setFlagLTO(newValue);
                 setFlagSymbolHiding(newValue);
                 setFlagOmitFramePointer(newValue);
                 setFlagSpeculativeLoadHardening(newValue);
@@ -1699,7 +1691,7 @@ function App() {
               {layer1 && layer2 && layer2_5 && layer3 && layer4 && layer5 &&
                 passFlattening && passSubstitution && passBogusControlFlow && passSplitBasicBlocks && passLinearMBA &&
                 flagSymbolHiding && flagOmitFramePointer && flagSpeculativeLoadHardening &&
-                flagO3 && flagStripSymbols && flagNoBuiltin
+                flagO3 && flagStripSymbols && flagNoBuiltin && flagLTO
                 ? 'Deselect All' : 'Select All'}
             </button>
           </div>
@@ -1929,26 +1921,22 @@ function App() {
                   className="select-all-btn"
                   style={{ marginBottom: '10px', fontSize: '0.9em' }}
                   onClick={() => {
-                    // When Layer 3 is enabled, LTO is incompatible, so exclude it from Select All logic
-                    const allCompatibleFlagsSelected = flagSymbolHiding &&
+                    // LTO now works with Layer 3 (OLLVM) thanks to -fuse-ld=lld fix
+                    const allFlagsSelected = flagSymbolHiding &&
                       flagOmitFramePointer && flagSpeculativeLoadHardening &&
-                      flagO3 && flagStripSymbols && flagNoBuiltin &&
-                      (layer3 ? true : flagLTO); // Ignore LTO when Layer 3 is active
-                    const newValue = !allCompatibleFlagsSelected;
+                      flagO3 && flagStripSymbols && flagNoBuiltin && flagLTO;
+                    const newValue = !allFlagsSelected;
                     setFlagSymbolHiding(newValue);
                     setFlagOmitFramePointer(newValue);
                     setFlagSpeculativeLoadHardening(newValue);
                     setFlagO3(newValue);
                     setFlagStripSymbols(newValue);
                     setFlagNoBuiltin(newValue);
-                    // Only toggle LTO if Layer 3 is not enabled (LTO is incompatible with OLLVM)
-                    if (!layer3) {
-                      setFlagLTO(newValue);
-                    }
+                    setFlagLTO(newValue);
                   }}
                 >
                   {flagSymbolHiding && flagOmitFramePointer && flagSpeculativeLoadHardening &&
-                    flagO3 && flagStripSymbols && flagNoBuiltin && (layer3 ? true : flagLTO)
+                    flagO3 && flagStripSymbols && flagNoBuiltin && flagLTO
                     ? 'Deselect All' : 'Select All'}
                 </button>
                 <label className="sub-option">
@@ -1999,27 +1987,13 @@ function App() {
                   />
                   Disable Built-in Functions (-fno-builtin)
                 </label>
-                <label
-                  className="sub-option"
-                  title={layer3 ? "LTO is incompatible with OLLVM passes (LLVM version mismatch: bundled v22 vs system v19)" : ""}
-                  style={{
-                    opacity: layer3 ? 0.5 : 1,
-                    cursor: layer3 ? 'not-allowed' : 'pointer',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: '4px'
-                  }}
-                >
-                  <div style={{ display: 'flex', alignItems: 'center' }}>
-                    <input
-                      type="checkbox"
-                      checked={flagLTO}
-                      onChange={(e) => setFlagLTO(e.target.checked)}
-                      disabled={layer3}
-                    />
-                    Link-Time Optimization (-flto)
-                  </div>
-                  {layer3 && <span style={{ color: '#ff6b6b', fontSize: '0.8em', marginLeft: '20px' }}>⚠ Incompatible with Layer 3</span>}
+                <label className="sub-option">
+                  <input
+                    type="checkbox"
+                    checked={flagLTO}
+                    onChange={(e) => setFlagLTO(e.target.checked)}
+                  />
+                  Link-Time Optimization (-flto)
                 </label>
               </div>
             )}

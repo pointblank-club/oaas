@@ -202,6 +202,7 @@ class ConfigModel(BaseModel):
 class ObfuscateRequest(BaseModel):
     source_code: str  # For backward compatibility - single file content
     filename: str
+    name: Optional[str] = None  # Program name for test/reporting (fallback to filename stem if not provided)
     platform: Platform = Platform.LINUX
     architecture: Architecture = Architecture.X86_64
     entrypoint_command: Optional[str] = Field(default="./a.out")
@@ -898,8 +899,8 @@ async def api_obfuscate_sync(
                 logger.info(f"[OLLVM] Using main source: {main_source.name}")
 
                 # Use plugins binaries only (LLVM 22 compatible)
-                clang_path = "/usr/local/llvm-obfuscator/bin/clang"
-                opt_path = "/usr/local/llvm-obfuscator/bin/opt"
+                clang_path = "/usr/local/llvm-obfuscator/bin/clang.real"
+                opt_path = "/usr/local/llvm-obfuscator/lib/opt"
                 plugin_path = DEFAULT_PASS_PLUGIN_PATH if DEFAULT_PASS_PLUGIN_EXISTS else None
 
                 logger.info(f"[OLLVM] Using clang: {clang_path}")
@@ -907,7 +908,7 @@ async def api_obfuscate_sync(
                 logger.info(f"[OLLVM] Plugin: {plugin_path}")
 
                 # Initialize IR analyzer for advanced metrics
-                opt_path = "/usr/local/llvm-obfuscator/bin/opt"
+                opt_path = "/usr/local/llvm-obfuscator/lib/opt"
                 llvm_dis_path = "/usr/local/llvm-obfuscator/bin/llvm-dis"
                 ir_analyzer = IRAnalyzer(Path(opt_path), Path(llvm_dis_path))
                 baseline_ir_metrics = {}
@@ -1318,6 +1319,9 @@ async def api_obfuscate_sync(
                     "report_paths": report_paths_dict,
                 }
 
+                # Store main_source for use in multi-platform compilation
+                source_path = main_source
+
             else:
                 # SIMPLE BUILD MODE: Direct clang compilation (original behavior)
                 # Find main file (file containing main() function)
@@ -1346,6 +1350,9 @@ async def api_obfuscate_sync(
 
                 # Run obfuscation
                 result = obfuscator.obfuscate(main_file_path, config, job_id=job.job_id)
+
+                # Store for use in multi-platform compilation
+                source_path = main_file_path
 
             # Clean up repository session after successful obfuscation
             # This cleans up the repo_path directory (e.g., /tmp/oaas_repo_xxx/owner-repo-sha/)
@@ -1393,6 +1400,9 @@ async def api_obfuscate_sync(
             # For multi-file projects, we compile all files together
             # The main file is passed to the obfuscator, and additional sources are in compiler flags
             result = obfuscator.obfuscate(main_file_path, config, job_id=job.job_id)
+
+            # Store for use in multi-platform compilation
+            source_path = main_file_path
 
         else:
             # Single file mode (original behavior)
@@ -1583,86 +1593,81 @@ async def api_obfuscate_sync(
         if not binary_path.exists():
             raise HTTPException(status_code=500, detail="Binary generation failed")
 
-        # Build for additional platforms only in single-file mode
+        # Build for additional platforms for both single-file and multi-file modes
+        # For multi-platform support, we compile the same source for each target
+        platform_binaries = {"linux": None, "windows": None}
+
+        # First result is for the primary platform
+        primary_platform = payload.platform.value
+        platform_binaries[primary_platform] = str(binary_path)
+
+        # Compile for other platforms
+        # Get the obfuscated source (after source-level transforms) for single-file
         if not is_multi_file:
-            # For multi-platform support, we compile the same source for each target
-            platform_binaries = {"linux": None, "windows": None}
-
-            # First result is for the primary platform
-            primary_platform = payload.platform.value
-            platform_binaries[primary_platform] = str(binary_path)
-
-            # Compile for other platforms
-            # Get the obfuscated source (after source-level transforms)
             obfuscated_source = result.get("obfuscated_source_path")
             if obfuscated_source and Path(obfuscated_source).exists():
                 compile_source = Path(obfuscated_source)
             else:
                 compile_source = source_path
-
-            for target_platform, target_arch in target_platforms:
-                if target_platform.value == primary_platform:
-                    continue  # Already compiled for primary platform
-
-                try:
-                    # Create platform-specific output directory
-                    platform_dir = working_dir / target_platform.value
-                    platform_dir.mkdir(exist_ok=True)
-
-                    # Build config for this platform
-                    platform_payload = payload.model_copy()
-                    platform_payload.platform = target_platform
-                    platform_payload.architecture = target_arch
-                    platform_config = _build_config_from_request(platform_payload, platform_dir)
-
-                    # Compile for this platform
-                    platform_result = obfuscator.obfuscate(
-                        compile_source,
-                        platform_config,
-                        job_id=f"{job.job_id}_{target_platform.value}"
-                    )
-
-                    platform_binary = Path(platform_result.get("output_file", ""))
-                    if platform_binary.exists():
-                        platform_binaries[target_platform.value] = str(platform_binary)
-                        logger.info(f"Built binary for {target_platform.value}: {platform_binary}")
-                    else:
-                        logger.warning(f"Binary generation failed for {target_platform.value}")
-                except Exception as e:
-                    logger.warning(f"Failed to build for {target_platform.value}: {e}")
-                    # Continue with other platforms even if one fails
-
-            # Store platform binaries in job result
-            result["platform_binaries"] = platform_binaries
-            job_manager.update_job(job.job_id, result=result)
-
-            logger.info("[PLATFORM DEBUG] platform_binaries dict: %s", platform_binaries)
-            logger.info("[PLATFORM DEBUG] platform_binaries.get('linux'): %s", platform_binaries.get("linux"))
-            logger.info("[PLATFORM DEBUG] platform_binaries.get('windows'): %s", platform_binaries.get("windows"))
-            logger.info("[PLATFORM DEBUG] platform_binaries.get('macos'): %s", platform_binaries.get("macos"))
-
-            download_urls_response = {
-                "linux": f"/api/download/{job.job_id}/linux" if platform_binaries.get("linux") else None,
-                "windows": f"/api/download/{job.job_id}/windows" if platform_binaries.get("windows") else None,
-                "macos": f"/api/download/{job.job_id}/macos" if platform_binaries.get("macos") else None,
-            }
-            logger.info("[PLATFORM DEBUG] Final download_urls response: %s", download_urls_response)
-
-            return {
-                "job_id": job.job_id,
-                "status": "completed",
-                "download_url": f"/api/download/{job.job_id}",
-                "download_urls": download_urls_response,
-                "report_url": f"/api/report/{job.job_id}",
-            }
         else:
-            # Multi-file mode - return single platform response
-            return {
-                "job_id": job.job_id,
-                "status": "completed",
-                "download_url": f"/api/download/{job.job_id}",
-                "report_url": f"/api/report/{job.job_id}",
-            }
+            # For multi-file, use the original source file path
+            compile_source = source_path
+
+        for target_platform, target_arch in target_platforms:
+            if target_platform.value == primary_platform:
+                continue  # Already compiled for primary platform
+
+            try:
+                # Create platform-specific output directory
+                platform_dir = working_dir / target_platform.value
+                platform_dir.mkdir(exist_ok=True)
+
+                # Build config for this platform
+                platform_payload = payload.model_copy()
+                platform_payload.platform = target_platform
+                platform_payload.architecture = target_arch
+                platform_config = _build_config_from_request(platform_payload, platform_dir)
+
+                # Compile for this platform
+                platform_result = obfuscator.obfuscate(
+                    compile_source,
+                    platform_config,
+                    job_id=f"{job.job_id}_{target_platform.value}"
+                )
+
+                platform_binary = Path(platform_result.get("output_file", ""))
+                if platform_binary.exists():
+                    platform_binaries[target_platform.value] = str(platform_binary)
+                    logger.info(f"Built binary for {target_platform.value}: {platform_binary}")
+                else:
+                    logger.warning(f"Binary generation failed for {target_platform.value}")
+            except Exception as e:
+                logger.warning(f"Failed to build for {target_platform.value}: {e}")
+                # Continue with other platforms even if one fails
+
+        # Store platform binaries in job result
+        result["platform_binaries"] = platform_binaries
+        job_manager.update_job(job.job_id, result=result)
+
+        logger.info("[PLATFORM DEBUG] platform_binaries dict: %s", platform_binaries)
+        logger.info("[PLATFORM DEBUG] platform_binaries.get('linux'): %s", platform_binaries.get("linux"))
+        logger.info("[PLATFORM DEBUG] platform_binaries.get('windows'): %s", platform_binaries.get("windows"))
+        logger.info("[PLATFORM DEBUG] platform_binaries.get('macos'): %s", platform_binaries.get("macos"))
+
+        download_urls_response = {
+            "linux": f"/api/download/{job.job_id}/linux" if platform_binaries.get("linux") else None,
+            "windows": f"/api/download/{job.job_id}/windows" if platform_binaries.get("windows") else None,
+            "macos": f"/api/download/{job.job_id}/macos" if platform_binaries.get("macos") else None,
+        }
+        logger.info("[PLATFORM DEBUG] Final download_urls response: %s", download_urls_response)
+
+        return {
+            "job_id": job.job_id,
+            "status": "completed",
+            "download_url": f"/api/download/{job.job_id}",
+            "download_urls": download_urls_response,
+            "report_url": f"/api/report/{job.job_id}",
+        }
     except Exception as exc:
         logger.exception("Job %s failed", job.job_id)
         job_manager.update_job(job.job_id, status="failed", error=str(exc))

@@ -71,8 +71,7 @@ RUN mkdir -p /usr/local/llvm-obfuscator/lib
 
 # Copy custom LLVM 22 binaries and plugins
 COPY plugins/linux-x86_64/clang /usr/local/llvm-obfuscator/bin/clang.real
-COPY plugins/linux-x86_64/clang++ /usr/local/llvm-obfuscator/bin/clang++
-COPY plugins/linux-x86_64/opt /usr/local/llvm-obfuscator/bin/opt
+COPY plugins/linux-x86_64/opt /usr/local/llvm-obfuscator/lib/opt
 COPY plugins/linux-x86_64/llvm-dis /usr/local/llvm-obfuscator/bin/llvm-dis
 COPY plugins/linux-x86_64/mlir-opt /usr/local/llvm-obfuscator/bin/mlir-opt
 COPY plugins/linux-x86_64/mlir-translate /usr/local/llvm-obfuscator/bin/mlir-translate
@@ -90,8 +89,7 @@ RUN ln -sf /usr/local/llvm-obfuscator/bin/clang.real /usr/local/llvm-obfuscator/
 
 # Make binaries executable
 RUN chmod +x /usr/local/llvm-obfuscator/bin/clang.real
-RUN chmod +x /usr/local/llvm-obfuscator/bin/clang++
-RUN chmod +x /usr/local/llvm-obfuscator/bin/opt
+RUN chmod +x /usr/local/llvm-obfuscator/lib/opt
 RUN chmod +x /usr/local/llvm-obfuscator/bin/llvm-dis
 RUN chmod +x /usr/local/llvm-obfuscator/bin/mlir-opt
 RUN chmod +x /usr/local/llvm-obfuscator/bin/mlir-translate
@@ -110,11 +108,12 @@ RUN cp -rn /usr/lib/llvm-*/lib/clang/*/include/* \
 
 # Install macOS SDK for cross-compilation to macOS/Darwin targets
 # SDK is downloaded from GCP during CI and contains headers/libraries needed for --sysroot
+# NOTE: Skipped in local builds - will be copied if available during deployment
 COPY plugins/macos-sdk/MacOSX15.4.sdk /opt/MacOSX.sdk
 
 # Add custom LLVM toolchain to PATH
 ENV PATH="/usr/local/llvm-obfuscator/bin:${PATH}"
-ENV LD_LIBRARY_PATH="/usr/local/llvm-obfuscator/lib:${LD_LIBRARY_PATH}"
+ENV LD_LIBRARY_PATH="/usr/local/llvm-obfuscator/lib"
 
 # Verify custom LLVM 22 toolchain installation
 RUN /usr/local/llvm-obfuscator/bin/clang --version || echo "Custom clang installed"

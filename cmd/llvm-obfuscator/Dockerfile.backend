@@ -71,7 +71,9 @@ RUN mkdir -p /usr/local/llvm-obfuscator/lib
 
 # Copy custom LLVM 22 binaries and plugins
 COPY plugins/linux-x86_64/clang /usr/local/llvm-obfuscator/bin/clang.real
+COPY plugins/linux-x86_64/clang++ /usr/local/llvm-obfuscator/bin/clang++
 COPY plugins/linux-x86_64/opt /usr/local/llvm-obfuscator/bin/opt
+COPY plugins/linux-x86_64/llvm-dis /usr/local/llvm-obfuscator/bin/llvm-dis
 COPY plugins/linux-x86_64/mlir-opt /usr/local/llvm-obfuscator/bin/mlir-opt
 COPY plugins/linux-x86_64/mlir-translate /usr/local/llvm-obfuscator/bin/mlir-translate
 COPY plugins/linux-x86_64/clangir /usr/local/llvm-obfuscator/bin/clangir
@@ -88,7 +90,9 @@ RUN ln -sf /usr/local/llvm-obfuscator/bin/clang.real /usr/local/llvm-obfuscator/
 
 # Make binaries executable
 RUN chmod +x /usr/local/llvm-obfuscator/bin/clang.real
+RUN chmod +x /usr/local/llvm-obfuscator/bin/clang++
 RUN chmod +x /usr/local/llvm-obfuscator/bin/opt
+RUN chmod +x /usr/local/llvm-obfuscator/bin/llvm-dis
 RUN chmod +x /usr/local/llvm-obfuscator/bin/mlir-opt
 RUN chmod +x /usr/local/llvm-obfuscator/bin/mlir-translate
 RUN chmod +x /usr/local/llvm-obfuscator/bin/clangir

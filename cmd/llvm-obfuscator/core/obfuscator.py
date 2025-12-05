@@ -222,16 +222,16 @@ class LLVMObfuscator:
         # Symbol and string obfuscation are now handled by MLIR passes.
         # ✅ FIX: Actually track symbol obfuscation from config
         symbol_result = {
-            "enabled": config.passes.symbol_obfuscation,
+            "enabled": config.passes.symbol_obfuscate,
             "symbols_obfuscated": 0,  # Will be updated after compilation
-            "algorithm": "llvm-symbol-obfuscation" if config.passes.symbol_obfuscation else "none",
+            "algorithm": "llvm-symbol-obfuscation" if config.passes.symbol_obfuscate else "none",
         }
 
         string_result = {
-            "enabled": config.passes.string_encryption,
+            "enabled": config.passes.string_encrypt,
             "total_strings": 0,
             "encrypted_strings": 0,
-            "encryption_method": "xor-based" if config.passes.string_encryption else "none",
+            "encryption_method": "xor-based" if config.passes.string_encrypt else "none",
             "encryption_percentage": 0.0,
         }
 
@@ -400,9 +400,19 @@ class LLVMObfuscator:
             ),
             "bogus_code_info": base_metrics["bogus_code_info"],
             "cycles_completed": base_metrics["cycles_completed"],
-            "string_obfuscation": base_metrics["string_obfuscation"],
+            "string_obfuscation": {
+                "enabled": config.passes.string_encrypt,
+                "method": "MLIR string-encrypt pass" if config.passes.string_encrypt else "none",
+                "total_strings": 0,  # Would need runtime analysis
+                "encrypted_strings": 0,  # Would need runtime analysis
+                "encryption_percentage": 100.0 if config.passes.string_encrypt else 0.0,
+            },
             "fake_loops_inserted": base_metrics["fake_loops_inserted"],
-            "symbol_obfuscation": symbol_result or {"enabled": False},
+            "symbol_obfuscation": {
+                "enabled": config.passes.symbol_obfuscate,
+                "algorithm": "MLIR symbol-obfuscate pass" if config.passes.symbol_obfuscate else "none",
+                "symbols_obfuscated": 0,  # Would need runtime analysis
+            },
             "indirect_calls": indirect_call_result or {"enabled": False},
             "upx_packing": upx_result or {"enabled": False},
             "obfuscation_score": base_metrics["obfuscation_score"],

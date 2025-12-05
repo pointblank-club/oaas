@@ -32,6 +32,7 @@ from core import (
 from core.comparer import CompareConfig, compare_binaries
 from core.config import AdvancedConfiguration, PassConfiguration, UPXConfiguration, Architecture
 from core.exceptions import JobNotFoundError, ValidationError
+from core.ir_analyzer import IRAnalyzer
 from core.test_suite_integration import (
     run_obfuscation_tests,
     run_lightweight_tests,
@@ -901,6 +902,13 @@ async def api_obfuscate_sync(
                 logger.info(f"[OLLVM] Using opt: {opt_path}")
                 logger.info(f"[OLLVM] Plugin: {plugin_path}")
 
+                # Initialize IR analyzer for advanced metrics
+                opt_path = "/usr/local/llvm-obfuscator/bin/opt"
+                llvm_dis_path = "/usr/local/llvm-obfuscator/bin/llvm-dis"
+                ir_analyzer = IRAnalyzer(Path(opt_path), Path(llvm_dis_path))
+                baseline_ir_metrics = {}
+                obf_ir_metrics = {}
+
                 # Compile all sources to LLVM bitcode, apply passes, and collect object files
                 object_files = []
                 passes_actually_applied = list(enabled_passes)  # Track if passes were actually applied
@@ -932,6 +940,18 @@ async def api_obfuscate_sync(
 
                         logger.info(f"[OLLVM] Generated bitcode: {bc_file.name}")
 
+                        # Analyze baseline IR metrics
+                        try:
+                            baseline_cf = ir_analyzer.analyze_control_flow(bc_file)
+                            baseline_instr = ir_analyzer.analyze_instructions(bc_file)
+                            if baseline_cf:
+                                baseline_ir_metrics.update(baseline_cf)
+                            if baseline_instr:
+                                baseline_ir_metrics.update(baseline_instr)
+                            logger.info(f"[IR Analysis] Baseline metrics collected: {list(baseline_ir_metrics.keys())}")
+                        except Exception as e:
+                            logger.warning(f"[IR Analysis] Failed to analyze baseline IR: {e}")
+
                         # Apply OLLVM passes to this bitcode file
                         obf_bc_file = working_dir / f"{src_file.stem}_obf.bc"
 
@@ -961,6 +981,18 @@ async def api_obfuscate_sync(
                         else:
                             logger.warning(f"[OLLVM] No plugin or passes available, using unobfuscated bitcode")
                             obf_bc_file = bc_file
+
+                        # Analyze obfuscated IR metrics
+                        try:
+                            obf_cf = ir_analyzer.analyze_control_flow(obf_bc_file)
+                            obf_instr = ir_analyzer.analyze_instructions(obf_bc_file)
+                            if obf_cf:
+                                obf_ir_metrics.update(obf_cf)
+                            if obf_instr:
+                                obf_ir_metrics.update(obf_instr)
+                            logger.info(f"[IR Analysis] Obfuscated metrics collected: {list(obf_ir_metrics.keys())}")
+                        except Exception as e:
+                            logger.warning(f"[IR Analysis] Failed to analyze obfuscated IR: {e}")
 
                         # Compile obfuscated bitcode to object file
                         obj_file = working_dir / f"{src_file.stem}.o"
@@ -1180,6 +1212,54 @@ async def api_obfuscate_sync(
                             "output_file": str(final_binary),
                             "build_system": payload.build_system,
                             "source_obfuscation": obf_results,
+                            # Advanced metrics from IR analysis
+                            "control_flow_metrics": {
+                                "baseline": {
+                                    "basic_blocks": baseline_ir_metrics.get("basic_blocks", 0),
+                                    "cfg_edges": baseline_ir_metrics.get("cfg_edges", 0),
+                                    "cyclomatic_complexity": baseline_ir_metrics.get("cyclomatic_complexity", 0),
+                                    "functions": baseline_ir_metrics.get("functions", 0),
+                                    "loops": baseline_ir_metrics.get("loops", 0),
+                                },
+                                "obfuscated": {
+                                    "basic_blocks": obf_ir_metrics.get("basic_blocks", 0),
+                                    "cfg_edges": obf_ir_metrics.get("cfg_edges", 0),
+                                    "cyclomatic_complexity": obf_ir_metrics.get("cyclomatic_complexity", 0),
+                                    "functions": obf_ir_metrics.get("functions", 0),
+                                    "loops": obf_ir_metrics.get("loops", 0),
+                                },
+                                "comparison": {
+                                    "complexity_increase_percent": ((obf_ir_metrics.get("cyclomatic_complexity", 0) - baseline_ir_metrics.get("cyclomatic_complexity", 1)) / max(1, baseline_ir_metrics.get("cyclomatic_complexity", 1)) * 100) if baseline_ir_metrics.get("cyclomatic_complexity", 0) > 0 else 0,
+                                    "basic_blocks_added": max(0, obf_ir_metrics.get("basic_blocks", 0) - baseline_ir_metrics.get("basic_blocks", 0)),
+                                    "cfg_edges_added": max(0, obf_ir_metrics.get("cfg_edges", 0) - baseline_ir_metrics.get("cfg_edges", 0)),
+                                }
+                            } if baseline_ir_metrics else None,
+                            "instruction_metrics": {
+                                "baseline": {
+                                    "total_instructions": baseline_ir_metrics.get("total_instructions", 0),
+                                    "instruction_distribution": baseline_ir_metrics.get("instruction_distribution", {}),
+                                    "arithmetic_complexity_score": baseline_ir_metrics.get("arithmetic_complexity_score", 0),
+                                    "mba_expression_count": baseline_ir_metrics.get("mba_expression_count", 0),
+                                    "call_instruction_count": baseline_ir_metrics.get("call_instruction_count", 0),
+                                    "indirect_call_count": baseline_ir_metrics.get("indirect_call_count", 0),
+                                },
+                                "obfuscated": {
+                                    "total_instructions": obf_ir_metrics.get("total_instructions", 0),
+                                    "instruction_distribution": obf_ir_metrics.get("instruction_distribution", {}),
+                                    "arithmetic_complexity_score": obf_ir_metrics.get("arithmetic_complexity_score", 0),
+                                    "mba_expression_count": obf_ir_metrics.get("mba_expression_count", 0),
+                                    "call_instruction_count": obf_ir_metrics.get("call_instruction_count", 0),
+                                    "indirect_call_count": obf_ir_metrics.get("indirect_call_count", 0),
+                                },
+                                "comparison": {
+                                    "instruction_growth_percent": ((obf_ir_metrics.get("total_instructions", 0) - baseline_ir_metrics.get("total_instructions", 1)) / max(1, baseline_ir_metrics.get("total_instructions", 1)) * 100) if baseline_ir_metrics.get("total_instructions", 0) > 0 else 0,
+                                    "arithmetic_complexity_increase": ((obf_ir_metrics.get("arithmetic_complexity_score", 0) - baseline_ir_metrics.get("arithmetic_complexity_score", 0.1)) / max(0.1, baseline_ir_metrics.get("arithmetic_complexity_score", 0.1)) * 100) if baseline_ir_metrics.get("arithmetic_complexity_score", 0) > 0 else 0,
+                                    "mba_expressions_added": max(0, obf_ir_metrics.get("mba_expression_count", 0) - baseline_ir_metrics.get("mba_expression_count", 0)),
+                                }
+                            } if baseline_ir_metrics else None,
+                            "binary_structure": None,  # Can be enhanced with binary analysis
+                            "pattern_resistance": None,  # Can be enhanced with pattern analysis
+                            "call_graph_metrics": None,  # Can be enhanced with call graph analysis
                         }
 
                         # ✅ NEW: Run test suite to verify obfuscation correctness
@@ -1211,14 +1291,20 @@ async def api_obfuscate_sync(
                             # Continue without test results rather than failing the job
 
                         # Generate and export reports
-                        report = reporter.generate_report(job_data)
-                        report_formats = payload.report_formats or ["json", "markdown"]
-                        exported = reporter.export(report, job.job_id, report_formats)
-                        report_paths_dict = {fmt: str(path) for fmt, path in exported.items()}
-                        logger.info(f"Reports generated: {list(report_paths_dict.keys())}")
+                        try:
+                            report = reporter.generate_report(job_data)
+                            report_formats = payload.report_formats or ["json", "markdown"]
+                            exported = reporter.export(report, job.job_id, report_formats)
+                            report_paths_dict = {fmt: str(path) for fmt, path in exported.items()}
+                            logger.info(f"Reports generated: {list(report_paths_dict.keys())}")
+                        except Exception as report_error:
+                            logger.error(f"Failed to generate reports: {report_error}", exc_info=True)
+                            raise
+
                     except Exception as e:
                         logger.error(f"Failed to generate reports for custom build: {e}", exc_info=True)
-                        logger.error(f"Report paths dict: {report_paths_dict}")
+                        # Re-raise to ensure job fails if report generation fails
+                        raise HTTPException(status_code=500, detail=f"Report generation failed: {str(e)}")
 
                 result = {
                     "output_file": str(final_binary),

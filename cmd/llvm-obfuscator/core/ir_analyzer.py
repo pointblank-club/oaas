@@ -178,16 +178,19 @@ class IRAnalyzer:
     def _bitcode_to_text(self, bc_file: Path) -> Optional[str]:
         """Convert LLVM bitcode to text IR using llvm-dis."""
         try:
+            # Check if llvm-dis exists
+            if not self.llvm_dis_binary.exists():
+                self.logger.warning(f"llvm-dis not found at {self.llvm_dis_binary} - cannot convert bitcode to text")
+                return None
+
             # Use llvm-dis to convert
-            result = run_command(
-                [str(self.llvm_dis_binary), str(bc_file), "-o", "-"],
-                capture_output=True,
-                timeout=30
+            returncode, stdout, stderr = run_command(
+                [str(self.llvm_dis_binary), str(bc_file), "-o", "-"]
             )
-            if result.returncode == 0:
-                return result.stdout.decode('utf-8', errors='ignore')
+            if returncode == 0:
+                return stdout
             else:
-                self.logger.warning(f"llvm-dis failed for {bc_file}: {result.stderr.decode()}")
+                self.logger.warning(f"llvm-dis failed for {bc_file}: {stderr}")
                 return None
         except Exception as e:
             self.logger.error(f"Error converting bitcode to text: {e}")

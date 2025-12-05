@@ -86,6 +86,12 @@ class ObfuscationReport:
                     "level": job_data.get("metrics_reliability", "UNKNOWN"),
                     "warning": job_data.get("reliability_warning", "")
                 } if job_data.get("test_results") else None,  # Only include if test results exist
+                # ✅ NEW: Advanced IR and binary analysis metrics
+                "control_flow_metrics": job_data.get("control_flow_metrics"),
+                "instruction_metrics": job_data.get("instruction_metrics"),
+                "binary_structure": job_data.get("binary_structure"),
+                "pattern_resistance": job_data.get("pattern_resistance"),
+                "call_graph_metrics": job_data.get("call_graph_metrics"),
             }
         except Exception as exc:  # pragma: no cover - defensive
             raise ReportGenerationError("Failed to assemble report") from exc
@@ -659,14 +665,10 @@ class ObfuscationReport:
     </table>''' if cycles_html else ''}
 
     <!-- String Obfuscation -->
-    <h2>String Obfuscation</h2>
+    <h2>String Encryption</h2>
     <div class="field">
-        <div class="field-label">Total Strings:</div>
-        <div class="field-value">{total_strings}</div>
-    </div>
-    <div class="field">
-        <div class="field-label">Encrypted Strings:</div>
-        <div class="field-value">{encrypted_strings}</div>
+        <div class="field-label">Enabled:</div>
+        <div class="field-value">{"Yes" if string_obf.get('enabled', False) else "No"}</div>
     </div>
     <div class="field">
         <div class="field-label">Encryption Method:</div>
@@ -828,6 +830,22 @@ class ObfuscationReport:
 - **Enabled:** {"Yes" if symbol_obf.get('enabled', False) else "No"}
 - **Symbols Renamed:** {symbol_obf.get('symbols_obfuscated', 0)}
 - **Algorithm:** {symbol_obf.get('algorithm', 'N/A')}
+
+---
+
+## 📊 Advanced Metrics Dashboard
+
+### Control Flow Analysis
+{self._format_control_flow_markdown(report.get('control_flow_metrics'))}
+
+### Instruction-Level Metrics
+{self._format_instruction_metrics_markdown(report.get('instruction_metrics'))}
+
+### Binary Structure Analysis
+{self._format_binary_structure_markdown(report.get('binary_structure'))}
+
+### Pattern Resistance
+{self._format_pattern_resistance_markdown(report.get('pattern_resistance'))}
 
 ---
 
@@ -1044,9 +1062,8 @@ class ObfuscationReport:
         string_obf = report.get("string_obfuscation", {})
         string_data = [
             ['Metric', 'Value'],
-            ['Total Strings', str(string_obf.get('total_strings', 0))],
-            ['Encrypted Strings', str(string_obf.get('encrypted_strings', 0))],
-            ['Encryption Method', string_obf.get('encryption_method', 'none').upper()],
+            ['Enabled', "Yes" if string_obf.get('enabled', False) else "No"],
+            ['Encryption Method', string_obf.get('method', string_obf.get('encryption_method', 'none')).upper()],
             ['Encryption Rate', f"{string_obf.get('encryption_percentage', 0.0):.1f}%"],
         ]
         string_table = Table(string_data, colWidths=[3*inch, 3*inch])
@@ -1090,6 +1107,156 @@ class ObfuscationReport:
                 ('GRID', (0, 0), (-1, -1), 1, colors.black),
             ]))
             elements.append(symbol_table)
+            elements.append(Spacer(1, 0.2*inch))
+
+        # PAGE BREAK for advanced metrics
+        elements.append(PageBreak())
+
+        # ========== ADVANCED METRICS SECTION ==========
+        elements.append(Paragraph("📊 Advanced Analysis Dashboard", heading_style))
+        elements.append(Spacer(1, 0.1*inch))
+
+        # Control Flow Metrics
+        control_flow = report.get("control_flow_metrics")
+        if control_flow:
+            elements.append(Paragraph("🔀 Control Flow Analysis", heading_style))
+            baseline_cf = control_flow.get("baseline", {})
+            obf_cf = control_flow.get("obfuscated", {})
+            comparison_cf = control_flow.get("comparison", {})
+
+            cf_data = [
+                ['Metric', 'Baseline', 'Obfuscated', 'Change'],
+                ['Basic Blocks', str(baseline_cf.get('basic_blocks', 0)), str(obf_cf.get('basic_blocks', 0)),
+                 f"+{comparison_cf.get('basic_blocks_added', 0)}"],
+                ['CFG Edges', str(baseline_cf.get('cfg_edges', 0)), str(obf_cf.get('cfg_edges', 0)),
+                 f"+{comparison_cf.get('cfg_edges_added', 0)}"],
+                ['Cyclomatic Complexity', str(baseline_cf.get('cyclomatic_complexity', 0)),
+                 str(obf_cf.get('cyclomatic_complexity', 0)),
+                 f"+{comparison_cf.get('complexity_increase_percent', 0):.1f}%"],
+                ['Functions', str(baseline_cf.get('functions', 0)), str(obf_cf.get('functions', 0)),
+                 f"{obf_cf.get('functions', 0) - baseline_cf.get('functions', 0)}"],
+                ['Loops', str(baseline_cf.get('loops', 0)), str(obf_cf.get('loops', 0)),
+                 f"{obf_cf.get('loops', 0) - baseline_cf.get('loops', 0)}"],
+            ]
+
+            cf_table = Table(cf_data, colWidths=[1.8*inch, 1.5*inch, 1.5*inch, 1.2*inch])
+            cf_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#2ecc71')),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, 0), 10),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
+                ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor('#e8f8f5')),
+                ('GRID', (0, 0), (-1, -1), 1, colors.black),
+                ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#e8f8f5')]),
+            ]))
+            elements.append(cf_table)
+            elements.append(Spacer(1, 0.2*inch))
+
+        # Instruction-Level Metrics
+        instr_metrics = report.get("instruction_metrics")
+        if instr_metrics:
+            elements.append(Paragraph("💾 Instruction-Level Metrics", heading_style))
+            baseline_instr = instr_metrics.get("baseline", {})
+            obf_instr = instr_metrics.get("obfuscated", {})
+            comparison_instr = instr_metrics.get("comparison", {})
+
+            instr_data = [
+                ['Metric', 'Baseline', 'Obfuscated', 'Change'],
+                ['Total Instructions', str(baseline_instr.get('total_instructions', 0)),
+                 str(obf_instr.get('total_instructions', 0)),
+                 f"+{comparison_instr.get('instruction_growth_percent', 0):.1f}%"],
+                ['Arithmetic Complexity', f"{baseline_instr.get('arithmetic_complexity_score', 0):.2f}",
+                 f"{obf_instr.get('arithmetic_complexity_score', 0):.2f}",
+                 f"+{comparison_instr.get('arithmetic_complexity_increase', 0):.1f}%"],
+                ['Call Instructions', str(baseline_instr.get('call_instruction_count', 0)),
+                 str(obf_instr.get('call_instruction_count', 0)),
+                 f"{obf_instr.get('call_instruction_count', 0) - baseline_instr.get('call_instruction_count', 0)}"],
+                ['Indirect Calls', str(baseline_instr.get('indirect_call_count', 0)),
+                 str(obf_instr.get('indirect_call_count', 0)),
+                 f"+{obf_instr.get('indirect_call_count', 0) - baseline_instr.get('indirect_call_count', 0)}"],
+                ['MBA Expressions', str(baseline_instr.get('mba_expression_count', 0)),
+                 str(obf_instr.get('mba_expression_count', 0)),
+                 f"+{comparison_instr.get('mba_expressions_added', 0)}"],
+            ]
+
+            instr_table = Table(instr_data, colWidths=[1.8*inch, 1.5*inch, 1.5*inch, 1.2*inch])
+            instr_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#3498db')),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, 0), 10),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
+                ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor('#ebf5fb')),
+                ('GRID', (0, 0), (-1, -1), 1, colors.black),
+                ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#ebf5fb')]),
+            ]))
+            elements.append(instr_table)
+            elements.append(Spacer(1, 0.2*inch))
+
+        # Binary Structure Metrics
+        binary_struct = report.get("binary_structure")
+        if binary_struct:
+            elements.append(Paragraph("📦 Binary Structure Analysis", heading_style))
+            binary_data = [
+                ['Attribute', 'Value'],
+                ['Section Count', str(binary_struct.get('section_count', 0))],
+                ['Import Libraries', str(binary_struct.get('import_table', {}).get('library_count', 0))],
+                ['Imported Symbols', str(binary_struct.get('import_table', {}).get('imported_symbols', 0))],
+                ['Exported Symbols', str(binary_struct.get('export_table', {}).get('exported_symbols', 0))],
+                ['Relocations', str(binary_struct.get('relocations', {}).get('relocation_count', 0))],
+                ['Code-to-Data Ratio', f"{binary_struct.get('code_to_data_ratio', 0):.2f}"],
+            ]
+
+            binary_table = Table(binary_data, colWidths=[3*inch, 3*inch])
+            binary_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#e74c3c')),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, 0), 10),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
+                ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor('#fadbd8')),
+                ('GRID', (0, 0), (-1, -1), 1, colors.black),
+                ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#fadbd8')]),
+            ]))
+            elements.append(binary_table)
+            elements.append(Spacer(1, 0.2*inch))
+
+        # Pattern Resistance Metrics
+        pattern_resist = report.get("pattern_resistance")
+        if pattern_resist:
+            elements.append(Paragraph("🛡️ Pattern Resistance & RE Difficulty", heading_style))
+            string_analysis = pattern_resist.get('string_analysis', {})
+            code_analysis = pattern_resist.get('code_analysis', {})
+            re_difficulty = pattern_resist.get('reverse_engineering_difficulty', {})
+
+            pattern_data = [
+                ['Metric', 'Value'],
+                ['Visible Strings', str(string_analysis.get('visible_string_count', 0))],
+                ['String Entropy', f"{string_analysis.get('string_entropy', 0):.2f}"],
+                ['Opcode Distribution Entropy', f"{code_analysis.get('opcode_distribution_entropy', 0):.2f}"],
+                ['Known Patterns Detected', str(code_analysis.get('known_pattern_count', 0))],
+                ['Decompiler Confusion Score', f"{re_difficulty.get('decompiler_confusion_score', 0):.1f}/100"],
+                ['CFG Obfuscation Rating', str(re_difficulty.get('cfg_obfuscation_rating', 'N/A')).upper()],
+            ]
+
+            pattern_table = Table(pattern_data, colWidths=[3*inch, 3*inch])
+            pattern_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#9b59b6')),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, 0), 10),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
+                ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor('#f4ecf7')),
+                ('GRID', (0, 0), (-1, -1), 1, colors.black),
+                ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#f4ecf7')]),
+            ]))
+            elements.append(pattern_table)
+            elements.append(Spacer(1, 0.2*inch))
 
         # Footer
         elements.append(Spacer(1, 0.5*inch))
@@ -1101,3 +1268,61 @@ class ObfuscationReport:
 
         # Build PDF
         doc.build(elements)
+
+    def _format_control_flow_markdown(self, metrics: Dict) -> str:
+        """Format control flow metrics for markdown."""
+        if not metrics:
+            return "⚠️ Control flow metrics not available"
+
+        baseline = metrics.get("baseline", {})
+        obfuscated = metrics.get("obfuscated", {})
+        comparison = metrics.get("comparison", {})
+
+        return f"""| Metric | Baseline | Obfuscated | Change |
+|--------|----------|-----------|--------|
+| Basic Blocks | {baseline.get('basic_blocks', 0)} | {obfuscated.get('basic_blocks', 0)} | +{comparison.get('basic_blocks_added', 0)} |
+| CFG Edges | {baseline.get('cfg_edges', 0)} | {obfuscated.get('cfg_edges', 0)} | +{comparison.get('cfg_edges_added', 0)} |
+| Cyclomatic Complexity | {baseline.get('cyclomatic_complexity', 0)} | {obfuscated.get('cyclomatic_complexity', 0)} | +{comparison.get('complexity_increase_percent', 0):.1f}% |
+| Functions | {baseline.get('functions', 0)} | {obfuscated.get('functions', 0)} | {obfuscated.get('functions', 0) - baseline.get('functions', 0)} |
+| Loops | {baseline.get('loops', 0)} | {obfuscated.get('loops', 0)} | {obfuscated.get('loops', 0) - baseline.get('loops', 0)} |"""
+
+    def _format_instruction_metrics_markdown(self, metrics: Dict) -> str:
+        """Format instruction-level metrics for markdown."""
+        if not metrics:
+            return "⚠️ Instruction metrics not available"
+
+        baseline = metrics.get("baseline", {})
+        obfuscated = metrics.get("obfuscated", {})
+        comparison = metrics.get("comparison", {})
+
+        return f"""| Metric | Baseline | Obfuscated | Change |
+|--------|----------|-----------|--------|
+| Total Instructions | {baseline.get('total_instructions', 0)} | {obfuscated.get('total_instructions', 0)} | +{comparison.get('instruction_growth_percent', 0):.1f}% |
+| Arithmetic Complexity | - | - | +{comparison.get('arithmetic_complexity_increase', 0):.1f}% |
+| MBA Expressions | - | - | +{comparison.get('mba_expressions_added', 0)} |"""
+
+    def _format_binary_structure_markdown(self, metrics: Dict) -> str:
+        """Format binary structure metrics for markdown."""
+        if not metrics:
+            return "⚠️ Binary structure metrics not available"
+
+        return f"""- **Section Count:** {metrics.get('section_count', 0)}
+- **Import Count:** {metrics.get('import_table', {}).get('library_count', 0)}
+- **Export Count:** {metrics.get('export_table', {}).get('exported_symbols', 0)}
+- **Relocations:** {metrics.get('relocations', {}).get('relocation_count', 0)}
+- **Code-to-Data Ratio:** {metrics.get('code_to_data_ratio', 0):.2f}"""
+
+    def _format_pattern_resistance_markdown(self, metrics: Dict) -> str:
+        """Format pattern resistance metrics for markdown."""
+        if not metrics:
+            return "⚠️ Pattern resistance metrics not available"
+
+        string_analysis = metrics.get('string_analysis', {})
+        code_analysis = metrics.get('code_analysis', {})
+        re_difficulty = metrics.get('reverse_engineering_difficulty', {})
+
+        return f"""- **String Entropy:** {string_analysis.get('string_entropy', 0):.2f}
+- **Opcode Distribution Entropy:** {code_analysis.get('opcode_distribution_entropy', 0):.2f}
+- **Known Patterns Detected:** {code_analysis.get('known_pattern_count', 0)}
+- **Decompiler Confusion Score:** {re_difficulty.get('decompiler_confusion_score', 0):.1f}/100
+- **CFG Obfuscation Rating:** {re_difficulty.get('cfg_obfuscation_rating', 'UNKNOWN')}"""

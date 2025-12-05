@@ -1,20 +1,8 @@
 {
   "permissions": {
     "allow": [
-      "Bash(git add:*)",
-      "Bash(git commit:*)",
-      "Bash(git push)",
-      "Bash(git push:*)",
-      "Bash(llvm-config:*)",
-      "Bash(clang --version:*)",
-      "Bash(find:*)",
-      "WebSearch",
-      "WebFetch(domain:github.com)",
-      "Bash(cat:*)",
-      "Bash(git log:*)",
-      "Bash(git submodule:*)",
-      "mcp__playwright__browser_navigate",
-      "mcp__playwright__browser_click"
+      "Bash(git reflog:*)",
+      "Bash(git gc:*)"
     ],
     "deny": [],
     "ask": []

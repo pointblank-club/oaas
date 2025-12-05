@@ -169,6 +169,8 @@ class PassesModel(BaseModel):
     bogus_control_flow: bool = False
     split: bool = False
     linear_mba: bool = False
+    ollvm_split_num: int = Field(default=3, ge=1, le=10, description="Number of block splits")
+    ollvm_bogus_loop: int = Field(default=1, ge=1, le=5, description="Bogus CF iterations")
     # MLIR passes
     string_encrypt: bool = False
     symbol_obfuscate: bool = False
@@ -193,7 +195,10 @@ class ConfigModel(BaseModel):
     level: int = Field(3, ge=1, le=5)
     passes: PassesModel = PassesModel()
     cycles: int = Field(1, ge=1, le=5)
+    obfuscation_preset: str = Field(default="custom", description="Preset: minimal, balanced, maximum, custom")
     string_encryption: bool = False
+    string_min_length: int = Field(default=4, ge=1, le=20, description="Minimum string length to encrypt")
+    string_encrypt_format_strings: bool = Field(default=True, description="Also encrypt printf format strings")
     fake_loops: int = Field(0, ge=0, le=50)
     upx: UPXModel = UPXModel()
     indirect_calls: IndirectCallsModel = IndirectCallsModel()

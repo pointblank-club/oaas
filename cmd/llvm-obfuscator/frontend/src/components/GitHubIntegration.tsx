@@ -301,7 +301,6 @@ export const GitHubIntegration: React.FC<GitHubIntegrationProps> = ({ onFilesLoa
   return (
     <div className="github-integration">
       <div className="github-header">
-        <h3>🐙 GitHub Integration</h3>
         <div className="github-options">
           <button
             className={`github-option-btn ${!showPublicInput ? 'active' : ''}`}

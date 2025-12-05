@@ -356,6 +356,8 @@ body {
 
 .github-logo {
   font-size: 16px;
+  width: 20px;
+  height: 20px;
 }
 
 /* File Input */

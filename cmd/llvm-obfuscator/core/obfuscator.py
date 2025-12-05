@@ -1046,10 +1046,14 @@ class LLVMObfuscator:
             final_cmd.extend(macos_flags)
         # Add lld linker for LTO support (required for Linux and Windows, macOS uses ld64.lld)
         # lld handles LTO natively without needing LLVMgold.so
-        if config.platform == Platform.WINDOWS:
-            final_cmd.append("-fuse-ld=lld")
-        elif config.platform == Platform.LINUX:
-            final_cmd.append("-fuse-ld=lld")
+        # Only use lld when: 1) using bundled clang (has lld), or 2) LTO flags are present
+        uses_bundled_clang = "/llvm-obfuscator/" in compiler or "/llvm-project/build/" in compiler
+        has_lto_flags = any("-flto" in f for f in compiler_flags)
+        if uses_bundled_clang or has_lto_flags:
+            if config.platform == Platform.WINDOWS:
+                final_cmd.append("-fuse-ld=lld")
+            elif config.platform == Platform.LINUX:
+                final_cmd.append("-fuse-ld=lld")
         run_command(final_cmd, cwd=source_abs.parent)
 
         # Cleanup any remaining intermediate files
@@ -1247,10 +1251,14 @@ class LLVMObfuscator:
             final_cmd.extend(macos_flags)
         # Add lld linker for LTO support (required for Linux and Windows, macOS uses ld64.lld)
         # lld handles LTO natively without needing LLVMgold.so
-        if config.platform == Platform.WINDOWS:
-            final_cmd.append("-fuse-ld=lld")
-        elif config.platform == Platform.LINUX:
-            final_cmd.append("-fuse-ld=lld")
+        # Only use lld when: 1) using bundled clang (has lld), or 2) LTO flags are present
+        uses_bundled_clang = "/llvm-obfuscator/" in compiler or "/llvm-project/build/" in compiler
+        has_lto_flags = any("-flto" in f for f in compiler_flags)
+        if uses_bundled_clang or has_lto_flags:
+            if config.platform == Platform.WINDOWS:
+                final_cmd.append("-fuse-ld=lld")
+            elif config.platform == Platform.LINUX:
+                final_cmd.append("-fuse-ld=lld")
         run_command(final_cmd, cwd=source_abs.parent)
 
         # Cleanup intermediate files

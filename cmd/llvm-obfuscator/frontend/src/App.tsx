@@ -12,13 +12,13 @@ type Architecture = 'x86_64' | 'arm64' | 'i686';
 type DemoCategory = 'basic' | 'function' | 'recursion' | 'mathematical' | 'exception' | 'oop' | 'large';
 
 const DEMO_CATEGORIES: Record<DemoCategory, { name: string; description: string }> = {
-  'basic': { name: '🟢 Basic', description: 'Simple programs for getting started' },
-  'function': { name: '🔵 Function Based', description: 'Programs with multiple functions' },
-  'recursion': { name: '🟣 Recursion Based', description: 'Programs using recursive algorithms' },
-  'mathematical': { name: '🔴 Heavy Mathematical', description: 'Computationally intensive programs' },
-  'exception': { name: '🟠 Exception Based', description: 'Programs with error handling (C++)' },
-  'oop': { name: '🟡 OOP Based', description: 'Object-oriented programs (C++)' },
-  'large': { name: '⚫ Large Program', description: 'Programs with 1000+ lines' },
+  'basic': { name: 'Basic', description: 'Simple programs for getting started' },
+  'function': { name: 'Function Based', description: 'Programs with multiple functions' },
+  'recursion': { name: 'Recursion Based', description: 'Programs using recursive algorithms' },
+  'mathematical': { name: 'Heavy Mathematical', description: 'Computationally intensive programs' },
+  'exception': { name: 'Exception Based', description: 'Programs with error handling (C++)' },
+  'oop': { name: 'OOP Based', description: 'Object-oriented programs (C++)' },
+  'large': { name: 'Large Program', description: 'Programs with 1000+ lines' },
 };
 
 // Demo Programs
@@ -1670,7 +1670,7 @@ function App() {
   const [darkMode, setDarkMode] = useState(true);
   const [serverStatus, setServerStatus] = useState<'checking' | 'online' | 'offline'>('checking');
   const [file, setFile] = useState<File | null>(null);
-  const [inputMode, setInputMode] = useState<'file' | 'paste' | 'github'>('file');
+  const [inputMode, setInputMode] = useState<'file' | 'paste' | 'github' | 'demo'>('file');
   const [pastedSource, setPastedSource] = useState('');
   const [selectedDemo, setSelectedDemo] = useState<string>('');
   const [jobId, setJobId] = useState<string | null>(null);
@@ -2283,6 +2283,16 @@ function App() {
       return;
     }
 
+    // For Demo mode: require a demo to be selected
+    if (inputMode === 'demo' && !selectedDemo) {
+      setModal({
+        type: 'error',
+        title: 'No Demo Selected',
+        message: 'Please select a demo program from the dropdown.'
+      });
+      return;
+    }
+
     // Validation: Check if at least one layer is selected
     const layerCount = countLayers();
     if (layerCount === 0) {
@@ -2320,6 +2330,17 @@ function App() {
         language = detectLanguage('pasted_source', pastedSource);
         setDetectedLanguage(language);
         filename = language === 'cpp' ? 'pasted_source.cpp' : 'pasted_source.c';
+      } else if (inputMode === 'demo') {
+        // Demo mode: use selected demo program
+        const demo = DEMO_PROGRAMS[selectedDemo as keyof typeof DEMO_PROGRAMS];
+        if (demo) {
+          sourceCode = demo.code;
+          language = demo.language;
+          setDetectedLanguage(language);
+          filename = language === 'cpp' ? 'demo_source.cpp' : 'demo_source.c';
+        } else {
+          throw new Error('Demo program not found');
+        }
       } else {
         // GitHub mode - for multi-file projects, we don't need a specific file selected
         if (repoSessionId) {
@@ -2748,6 +2769,12 @@ function App() {
               >
                 GITHUB
               </button>
+              <button
+                className={inputMode === 'demo' ? 'active' : ''}
+                onClick={() => setInputMode('demo')}
+              >
+                DEMO
+              </button>
             </div>
             <button
               className="github-btn"
@@ -2761,27 +2788,47 @@ function App() {
             </button>
           </div>
 
-          {inputMode === 'paste' && (
-            <div className="config-grid" style={{ marginBottom: '15px' }}>
-              <label>
-                Load Demo Program:
-                <select value={selectedDemo} onChange={(e) => onSelectDemo(e.target.value)}>
-                  <option value="">-- Select Demo (13 programs) --</option>
-                  {Object.entries(DEMO_CATEGORIES).map(([categoryKey, categoryInfo]) => {
-                    const demosInCategory = Object.entries(DEMO_PROGRAMS).filter(
-                      ([, demo]) => demo.category === categoryKey
-                    );
-                    if (demosInCategory.length === 0) return null;
-                    return (
-                      <optgroup key={categoryKey} label={categoryInfo.name}>
-                        {demosInCategory.map(([key, demo]) => (
-                          <option key={key} value={key}>{demo.name}</option>
-                        ))}
-                      </optgroup>
-                    );
-                  })}
-                </select>
-              </label>
+          {inputMode === 'demo' && (
+            <div className="demo-section" style={{ padding: '20px', backgroundColor: 'var(--bg-tertiary)', borderRadius: '8px' }}>
+              <div className="config-grid">
+                <label>
+                  Select Demo Program:
+                  <select value={selectedDemo} onChange={(e) => onSelectDemo(e.target.value)}>
+                    <option value="">-- Select Demo (13 programs) --</option>
+                    {Object.entries(DEMO_CATEGORIES).map(([categoryKey, categoryInfo]) => {
+                      const demosInCategory = Object.entries(DEMO_PROGRAMS).filter(
+                        ([, demo]) => demo.category === categoryKey
+                      );
+                      if (demosInCategory.length === 0) return null;
+                      return (
+                        <optgroup key={categoryKey} label={categoryInfo.name}>
+                          {demosInCategory.map(([key, demo]) => (
+                            <option key={key} value={key}>{demo.name}</option>
+                          ))}
+                        </optgroup>
+                      );
+                    })}
+                  </select>
+                </label>
+              </div>
+              {selectedDemo && (
+                <div style={{ marginTop: '15px' }}>
+                  <p style={{ color: 'var(--text-secondary)', fontSize: '0.9em' }}>
+                    Selected: <strong>{DEMO_PROGRAMS[selectedDemo as keyof typeof DEMO_PROGRAMS]?.name}</strong> ({DEMO_PROGRAMS[selectedDemo as keyof typeof DEMO_PROGRAMS]?.language.toUpperCase()})
+                  </p>
+                  <pre style={{
+                    backgroundColor: 'var(--bg-secondary)',
+                    padding: '15px',
+                    borderRadius: '4px',
+                    maxHeight: '300px',
+                    overflow: 'auto',
+                    fontSize: '0.85em',
+                    marginTop: '10px'
+                  }}>
+                    {DEMO_PROGRAMS[selectedDemo as keyof typeof DEMO_PROGRAMS]?.code}
+                  </pre>
+                </div>
+              )}
             </div>
           )}
 
@@ -3537,7 +3584,8 @@ function App() {
             disabled={loading || (
               inputMode === 'file' ? (!file && !repoSessionId) :
                 inputMode === 'paste' ? pastedSource.trim().length === 0 :
-                  inputMode === 'github' ? (!repoSessionId && repoFiles.length === 0) : true
+                  inputMode === 'github' ? (!repoSessionId && repoFiles.length === 0) :
+                    inputMode === 'demo' ? !selectedDemo : true
             )}
           >
             {loading ? 'PROCESSING...' : '► OBFUSCATE'}

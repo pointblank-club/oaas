@@ -2769,7 +2769,7 @@ function App() {
               <label>
                 Load Demo Program:
                 <select value={selectedDemo} onChange={(e) => onSelectDemo(e.target.value)}>
-                  <option value="">-- Select Demo (10 programs) --</option>
+                  <option value="">-- Select Demo (13 programs) --</option>
                   {Object.entries(DEMO_CATEGORIES).map(([categoryKey, categoryInfo]) => {
                     const demosInCategory = Object.entries(DEMO_PROGRAMS).filter(
                       ([, demo]) => demo.category === categoryKey

@@ -409,7 +409,7 @@ def compile_multifile_ir_workflow(
     # Determine opt and clang binary paths
     plugin_path_resolved = Path(plugin_path)
     bundled_opt = plugin_path_resolved.parent / "opt"
-    bundled_clang = plugin_path_resolved.parent.parent / "bin" / "clang.real"
+    bundled_clang = plugin_path_resolved.parent / "clang"
 
     # Find opt binary
     opt_binary = None
@@ -424,8 +424,8 @@ def compile_multifile_ir_workflow(
         else:
             logger.warning("Bundled clang not found, using system clang (may have version mismatch)")
 
-    elif Path("/usr/local/llvm-obfuscator/lib/opt").exists():
-        opt_binary = Path("/usr/local/llvm-obfuscator/lib/opt")
+    elif Path("/usr/local/llvm-obfuscator/bin/opt").exists():
+        opt_binary = Path("/usr/local/llvm-obfuscator/bin/opt")
         logger.info(f"Using opt from Docker installation: {opt_binary}")
 
         # Use bundled clang from Docker installation (LLVM 22) for version compatibility

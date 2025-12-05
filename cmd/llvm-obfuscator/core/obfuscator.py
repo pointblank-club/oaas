@@ -555,7 +555,7 @@ class LLVMObfuscator:
             # Bundled LLVM 22 resource directory
             Path(__file__).parent.parent / "plugins" / "linux-x86_64" / "lib" / "clang" / "22",
             Path("/app/plugins/linux-x86_64/lib/clang/22"),  # Docker path
-            Path("/usr/lib/llvm-22/lib/clang/22"),  # Docker installed path
+            Path("/usr/local/llvm-obfuscator/lib/clang/22"),  # Docker installed path
             # System clang fallbacks
             Path("/usr/lib/llvm-19/lib/clang/19"),
             Path("/usr/lib/llvm-18/lib/clang/18"),
@@ -621,7 +621,7 @@ class LLVMObfuscator:
                 # System llvm-dis may be older (e.g., LLVM 19) and fail to read LLVM 22 bitcode
                 llvm_dis = None
                 bundled_llvm_dis_paths = [
-                    Path("/usr/lib/llvm-22/bin/llvm-dis"),  # Docker production
+                    Path("/usr/local/llvm-obfuscator/bin/llvm-dis"),  # Docker production
                     Path("/app/plugins/linux-x86_64/llvm-dis"),  # Docker backup
                 ]
 
@@ -993,10 +993,10 @@ class LLVMObfuscator:
                 if bundled_clang.exists():
                     self.logger.info("Using bundled clang from LLVM 22: %s", bundled_clang)
                     compiler = str(bundled_clang)
-            elif Path("/usr/lib/llvm-22/bin/opt").exists():
-                opt_binary = Path("/usr/lib/llvm-22/bin/opt")
+            elif Path("/usr/local/llvm-obfuscator/bin/opt").exists():
+                opt_binary = Path("/usr/local/llvm-obfuscator/bin/opt")
                 self.logger.info("Using opt from Docker installation: %s", opt_binary)
-                docker_clang = Path("/usr/bin/clang")
+                docker_clang = Path("/usr/local/llvm-obfuscator/bin/clang")
                 if docker_clang.exists():
                     compiler = str(docker_clang)
                     self.logger.info("Using bundled clang from Docker installation (LLVM 22): %s", compiler)
@@ -1483,7 +1483,7 @@ class LLVMObfuscator:
             # ✅ FIX: Use LLVM 22 clang/clang++ to match obfuscated compilation
             if source_file.suffix in ['.cpp', '.cxx', '.cc', '.c++']:
                 # Try LLVM 22 clang++, fall back to system clang++
-                llvm_clangxx = Path("/usr/bin/clang++")
+                llvm_clangxx = Path("/usr/local/llvm-obfuscator/bin/clang++")
                 if llvm_clangxx.exists():
                     compiler = str(llvm_clangxx)
                 else:
@@ -1491,7 +1491,7 @@ class LLVMObfuscator:
                 compile_flags = ["-lstdc++"]
             else:
                 # Try LLVM 22 clang, fall back to system clang
-                llvm_clang = Path("/usr/bin/clang")
+                llvm_clang = Path("/usr/local/llvm-obfuscator/bin/clang")
                 if llvm_clang.exists():
                     compiler = str(llvm_clang)
                 else:
@@ -1550,7 +1550,7 @@ class LLVMObfuscator:
 
             ir_cmd = [compiler, str(source_abs)] + additional_sources + ["-o", str(ir_file)] + ir_compile_flags
             self.logger.debug(f"Baseline IR compilation command: {' '.join(ir_cmd)}")
-            run_command(ir_cmd, cwd=project_root)
+            run_command(ir_cmd)
 
             # Stage 2: Compile IR to binary (no opt passes for baseline)
             self.logger.info("Compiling baseline IR to binary")

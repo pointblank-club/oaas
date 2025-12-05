@@ -899,8 +899,8 @@ async def api_obfuscate_sync(
                 logger.info(f"[OLLVM] Using main source: {main_source.name}")
 
                 # Use plugins binaries only (LLVM 22 compatible)
-                clang_path = "/usr/local/llvm-obfuscator/bin/clang.real"
-                opt_path = "/usr/local/llvm-obfuscator/lib/opt"
+                clang_path = "/usr/local/llvm-obfuscator/bin/clang"
+                opt_path = "/usr/local/llvm-obfuscator/bin/opt"
                 plugin_path = DEFAULT_PASS_PLUGIN_PATH if DEFAULT_PASS_PLUGIN_EXISTS else None
 
                 logger.info(f"[OLLVM] Using clang: {clang_path}")
@@ -908,7 +908,7 @@ async def api_obfuscate_sync(
                 logger.info(f"[OLLVM] Plugin: {plugin_path}")
 
                 # Initialize IR analyzer for advanced metrics
-                opt_path = "/usr/local/llvm-obfuscator/lib/opt"
+                opt_path = "/usr/local/llvm-obfuscator/bin/opt"
                 llvm_dis_path = "/usr/local/llvm-obfuscator/bin/llvm-dis"
                 ir_analyzer = IRAnalyzer(Path(opt_path), Path(llvm_dis_path))
                 baseline_ir_metrics = {}

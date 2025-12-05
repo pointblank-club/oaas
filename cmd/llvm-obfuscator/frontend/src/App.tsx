@@ -2651,6 +2651,11 @@ function App() {
             compression_level: layer5 ? upxCompression : 'best',
             use_lzma: layer5 ? upxLzma : true,
             preserve_original: layer5 ? upxPreserveOriginal : false
+          },
+          remarks: {
+            enabled: true,  // Always enable remarks by default
+            format: 'yaml',
+            pass_filter: '.*'  // Capture all optimization passes
           }
         },
         report_formats: ['json', 'markdown'],

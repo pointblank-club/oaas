@@ -5,8 +5,28 @@ import { MetricsDashboard } from './components/MetricsDashboard';
 import githubLogo from '../assets/github.png';
 import { DATABASE_ENGINE_C, GAME_ENGINE_CPP } from './largeDemos';
 
-type Platform = 'linux' | 'windows' | 'macos';
+type Platform = 'linux' | 'windows' | 'macos' | 'all';
+type DownloadablePlatform = 'linux' | 'windows' | 'macos';
 type Architecture = 'x86_64' | 'arm64' | 'i686';
+
+// Architecture options available for each platform
+const PLATFORM_ARCHITECTURES: Record<Platform, { value: Architecture; label: string; disabled?: boolean }[]> = {
+  linux: [
+    { value: 'x86_64', label: 'x86_64 (64-bit Intel/AMD)' },
+    { value: 'arm64', label: 'ARM64 (coming soon)', disabled: true },
+  ],
+  windows: [
+    { value: 'x86_64', label: 'x86_64 (64-bit Intel/AMD)' },
+    { value: 'arm64', label: 'ARM64 (coming soon)', disabled: true },
+  ],
+  macos: [
+    { value: 'x86_64', label: 'x86_64 (Intel + Apple Silicon via Rosetta 2)' },
+    { value: 'arm64', label: 'ARM64 Native (coming soon)', disabled: true },
+  ],
+  all: [
+    { value: 'x86_64', label: 'x86_64 (64-bit Intel/AMD)' },
+  ],
+};
 
 // Demo Program Categories
 type DemoCategory = 'basic' | 'function' | 'recursion' | 'mathematical' | 'exception' | 'oop' | 'large';
@@ -1685,7 +1705,7 @@ function App() {
   const [showGitHubModal, setShowGitHubModal] = useState(false);
   const [loadingSession, setLoadingSession] = useState(false);  // Loading saved session
   const [uploadingFiles, setUploadingFiles] = useState(false);  // Uploading local files
-  const [downloadUrls, setDownloadUrls] = useState<Record<Platform, string | null>>({
+  const [downloadUrls, setDownloadUrls] = useState<Record<DownloadablePlatform, string | null>>({
     linux: null,
     windows: null,
     macos: null,
@@ -2554,7 +2574,7 @@ function App() {
       setJobId(data.job_id);
 
       // Handle response - multi-platform builds
-      const downloadUrlsMap: Record<Platform, string | null> = {
+      const downloadUrlsMap: Record<DownloadablePlatform, string | null> = {
         linux: null,
         windows: null,
         macos: null,
@@ -2662,7 +2682,7 @@ function App() {
     showErrorModal
   ]);
 
-  const onDownloadBinary = useCallback((platform: Platform) => {
+  const onDownloadBinary = useCallback((platform: DownloadablePlatform) => {
     const url = downloadUrls[platform];
     if (!url) return;
     const link = document.createElement('a');
@@ -3469,25 +3489,36 @@ function App() {
               Target Platform:
               <select
                 value={targetPlatform}
-                onChange={(e) => setTargetPlatform(e.target.value as Platform)}
+                onChange={(e) => {
+                  const newPlatform = e.target.value as Platform;
+                  setTargetPlatform(newPlatform);
+                  // Reset architecture to first valid option for new platform
+                  const validArchs = PLATFORM_ARCHITECTURES[newPlatform];
+                  if (validArchs.length > 0 && !validArchs.find(a => a.value === targetArchitecture)) {
+                    setTargetArchitecture(validArchs[0].value);
+                  }
+                }}
               >
                 <option value="linux">Linux</option>
                 <option value="windows">Windows</option>
-                <option value="macos">macOS (ARM64)</option>
+                <option value="macos">macOS (Intel + Apple Silicon via Rosetta 2)</option>
+                <option value="all">All Platforms (Linux + Windows + macOS)</option>
               </select>
             </label>
 
-            <label>
-              Target Architecture:
-              <select
-                value={targetArchitecture}
-                onChange={(e) => setTargetArchitecture(e.target.value as Architecture)}
-              >
-                <option value="x86_64">x86_64 (64-bit Intel/AMD)</option>
-                <option value="arm64">ARM64 (Apple M1/M2, ARM servers)</option>
-                <option value="i686">i686 (32-bit x86)</option>
-              </select>
-            </label>
+            {targetPlatform !== 'all' && (
+              <label>
+                Target Architecture:
+                <select
+                  value={targetArchitecture}
+                  onChange={(e) => setTargetArchitecture(e.target.value as Architecture)}
+                >
+                  {PLATFORM_ARCHITECTURES[targetPlatform].map(arch => (
+                    <option key={arch.value} value={arch.value} disabled={arch.disabled}>{arch.label}</option>
+                  ))}
+                </select>
+              </label>
+            )}
 
             <label>
               Build System:
@@ -3600,18 +3631,18 @@ function App() {
             </div>
           )}
 
-          {(downloadUrls.linux || downloadUrls.windows) && (
+          {(downloadUrls.linux || downloadUrls.windows || downloadUrls.macos) && (
             <div className="download-section">
               <h3>Download Obfuscated Binary:</h3>
               <div className="download-buttons">
-                {(Object.keys(downloadUrls) as Platform[]).map(platform => (
+                {(Object.keys(downloadUrls) as DownloadablePlatform[]).map(platform => (
                   downloadUrls[platform] && (
                     <button
                       key={platform}
                       className="download-btn"
                       onClick={() => onDownloadBinary(platform)}
                     >
-                      ⬇ {platform.toUpperCase()}
+                      {platform.toUpperCase()}
                     </button>
                   )
                 ))}

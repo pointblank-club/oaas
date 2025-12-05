@@ -2651,7 +2651,7 @@ function App() {
           }
         },
         report_formats: ['json', 'markdown'],
-        custom_flags: Array.from(new Set(flags.flatMap(f => f.split(' ')).map(t => t.trim()).filter(t => t.length > 0)))
+        custom_flags: flags.flatMap(f => f.split(' ')).map(t => t.trim()).filter(t => t.length > 0)
       };
 
       setProgress({ message: 'Processing obfuscation...', percent: 30 });

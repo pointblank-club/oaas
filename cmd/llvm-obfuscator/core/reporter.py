@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List
 
 from .exceptions import ReportGenerationError
 from .utils import ensure_directory, get_timestamp, write_html, write_json
+
+logger = logging.getLogger(__name__)
 
 
 class ObfuscationReport:
@@ -132,26 +135,41 @@ class ObfuscationReport:
         }
 
     def export(self, report: Dict[str, Any], job_id: str, formats: List[str]) -> Dict[str, Path]:
+        logger.info("[EXPORT DEBUG] Starting export with formats: %s", formats)
         outputs: Dict[str, Path] = {}
         for fmt in formats:
             fmt_lower = fmt.lower()
-            if fmt_lower == "json":
-                path = self.output_dir / f"{job_id}.json"
-                write_json(path, report)
-                outputs["json"] = path
-            elif fmt_lower == "html":
-                path = self.output_dir / f"{job_id}.html"
-                html = self._render_html(report, job_id)
-                write_html(path, html)
-                outputs["html"] = path
-            elif fmt_lower in ["pdf", "markdown"]:
-                path = self.output_dir / f"{job_id}.{fmt_lower}"
-                if fmt_lower == "pdf":
-                    self._write_pdf(path, report, job_id)
+            logger.info("[EXPORT DEBUG] Processing format: %s (lowercased: %s)", fmt, fmt_lower)
+            try:
+                if fmt_lower == "json":
+                    path = self.output_dir / f"{job_id}.json"
+                    write_json(path, report)
+                    outputs["json"] = path
+                    logger.info("[EXPORT DEBUG] JSON written to: %s", path)
+                elif fmt_lower == "html":
+                    path = self.output_dir / f"{job_id}.html"
+                    html = self._render_html(report, job_id)
+                    write_html(path, html)
+                    outputs["html"] = path
+                    logger.info("[EXPORT DEBUG] HTML written to: %s", path)
+                elif fmt_lower in ["pdf", "markdown"]:
+                    path = self.output_dir / f"{job_id}.{fmt_lower}"
+                    logger.info("[EXPORT DEBUG] About to process format '%s', path: %s", fmt_lower, path)
+                    if fmt_lower == "pdf":
+                        logger.info("[EXPORT DEBUG] Calling _write_pdf for job %s", job_id)
+                        self._write_pdf(path, report, job_id)
+                        logger.info("[EXPORT DEBUG] PDF written to: %s, exists: %s", path, path.exists())
+                    else:
+                        markdown = self._render_markdown(report, job_id)
+                        path.write_text(markdown, encoding="utf-8")
+                        logger.info("[EXPORT DEBUG] Markdown written to: %s", path)
+                    outputs[fmt_lower] = path
                 else:
-                    markdown = self._render_markdown(report, job_id)
-                    path.write_text(markdown, encoding="utf-8")
-                outputs[fmt_lower] = path
+                    logger.warning("[EXPORT DEBUG] Unknown format: %s", fmt_lower)
+            except Exception as e:
+                logger.error("[EXPORT DEBUG] Error processing format %s: %s", fmt_lower, e, exc_info=True)
+                raise
+        logger.info("[EXPORT DEBUG] Export complete, outputs: %s", list(outputs.keys()))
         return outputs
 
     def _render_html(self, report: Dict[str, Any], job_id: str) -> str:
@@ -909,7 +927,9 @@ class ObfuscationReport:
 
     def _write_pdf(self, path: Path, report: Dict[str, Any], job_id: str) -> None:
         """Generate a PDF report using ReportLab."""
+        logger.info("[PDF_WRITE DEBUG] Starting PDF generation for job %s at %s", job_id, path)
         try:
+            logger.info("[PDF_WRITE DEBUG] Attempting to import reportlab...")
             from reportlab.lib import colors
             from reportlab.lib.pagesizes import letter, A4
             from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -919,8 +939,10 @@ class ObfuscationReport:
                 Spacer, PageBreak, Image
             )
             from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
-        except ImportError:
+            logger.info("[PDF_WRITE DEBUG] ReportLab imported successfully")
+        except ImportError as e:
             # Fallback if reportlab is not available
+            logger.error("[PDF_WRITE DEBUG] ReportLab import failed: %s", e)
             ensure_directory(path.parent)
             path.write_text(
                 f"PDF Report for Job {job_id}\n\n"

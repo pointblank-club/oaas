@@ -62,6 +62,9 @@ WORKDIR /app
 COPY requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r /app/requirements.txt
 
+# Ensure /app is in Python path
+ENV PYTHONPATH=/app
+
 # Install custom LLVM toolchain and passes (copy plugins first - they change less frequently)
 RUN mkdir -p /usr/local/llvm-obfuscator/bin /usr/local/llvm-obfuscator/lib
 
@@ -82,7 +85,14 @@ COPY scripts/clang-obfuscate scripts/clang++-obfuscate \
      /usr/local/llvm-obfuscator/bin/
 
 # Copy application code last (changes most frequently, so this layer invalidates less)
-COPY api/ core/ cli/ scripts/ *.py *.txt ./
+# Copy all source code - use explicit paths to ensure everything is copied
+COPY api ./api
+COPY core ./core
+COPY cli ./cli
+COPY scripts ./scripts
+# Copy any root-level Python files if they exist
+COPY *.py . 2>/dev/null || true
+COPY *.txt . 2>/dev/null || true
 
 # Rename clang, make binaries executable, and create symlinks in one layer
 RUN mv /usr/local/llvm-obfuscator/bin/clang /usr/local/llvm-obfuscator/bin/clang.real && \
@@ -120,4 +130,6 @@ EXPOSE 8000
 
 HEALTHCHECK CMD curl -fsS http://localhost:8000/api/health || exit 1
 
-CMD ["uvicorn", "api.server:app", "--host", "0.0.0.0", "--port", "8000"]
+# Ensure we're in /app and Python can find modules
+WORKDIR /app
+CMD ["python3", "-m", "uvicorn", "api.server:app", "--host", "0.0.0.0", "--port", "8000"]

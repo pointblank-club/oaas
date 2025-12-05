@@ -3762,6 +3762,7 @@ export const GAME_ENGINE_CPP: LargeDemo = {
 #include <cmath>
 #include <cstring>
 #include <cstdint>
+#include <climits>
 #include <random>
 #include <chrono>
 #include <string>

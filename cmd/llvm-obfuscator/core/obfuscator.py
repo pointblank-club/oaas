@@ -528,8 +528,10 @@ class LLVMObfuscator:
             return []
 
         # Check if this is a custom clang (not system clang) that needs resource-dir override
+        # NOTE: Only Docker paths (/app/plugins/) have complete headers. CI plugins path
+        # (relative plugins/linux-x86_64) has incomplete headers, so let it use system clang headers.
         is_custom_clang = (
-            "/plugins/" in resolved_path or  # Plugins clang (may need override)
+            "/app/plugins/" in resolved_path or  # Docker app path (complete headers)
             "/llvm-project/build/" in resolved_path  # LLVM build directory
         )
 
@@ -539,11 +541,11 @@ class LLVMObfuscator:
             return []
 
         # Try to find resource directory
-        # Priority: bundled LLVM 22 > system clang
+        # Priority: Docker LLVM 22 > system clang
+        # NOTE: CI plugins path excluded - headers are incomplete (missing __float_header_macro.h)
         resource_dir_candidates = [
-            # Bundled LLVM 22 resource directory
-            Path(__file__).parent.parent / "plugins" / "linux-x86_64" / "lib" / "clang" / "22",
-            Path("/app/plugins/linux-x86_64/lib/clang/22"),  # Docker path
+            # Docker LLVM 22 resource directories (complete headers)
+            Path("/app/plugins/linux-x86_64/lib/clang/22"),  # Docker app path
             Path("/usr/local/llvm-obfuscator/lib/clang/22"),  # Docker installed path
             # System clang fallbacks
             Path("/usr/lib/llvm-19/lib/clang/19"),

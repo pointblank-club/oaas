@@ -84,6 +84,13 @@ jobs:
         chmod +x cmd/llvm-obfuscator/plugins/linux-x86_64/mlir-opt || true
         chmod +x cmd/llvm-obfuscator/plugins/linux-x86_64/mlir-translate || true
         chmod +x cmd/llvm-obfuscator/plugins/linux-x86_64/clangir || true
+        chmod +x cmd/llvm-obfuscator/plugins/linux-x86_64/lld || true
+
+        # Create ld.lld symlink (clang looks for ld.lld when using -fuse-ld=lld)
+        if [ -f "cmd/llvm-obfuscator/plugins/linux-x86_64/lld" ]; then
+          ln -sf lld cmd/llvm-obfuscator/plugins/linux-x86_64/ld.lld
+          echo "✅ Created ld.lld symlink"
+        fi
 
         echo "✅ Binaries downloaded successfully"
         ls -lh cmd/llvm-obfuscator/plugins/linux-x86_64/

@@ -7,6 +7,7 @@ from typing import Dict, List, Optional
 from .config import Architecture, ObfuscationConfig, Platform
 from .exceptions import ObfuscationError
 from .fake_loop_inserter import FakeLoopGenerator
+from .ir_analyzer import IRAnalyzer
 from .multifile_compiler import compile_multifile_ir_workflow
 from .reporter import ObfuscationReport
 from .llvm_remarks import RemarksCollector
@@ -59,6 +60,11 @@ class LLVMObfuscator:
         self.fake_loop_generator = FakeLoopGenerator()
         self.remarks_collector = RemarksCollector()
         self.upx_packer = UPXPacker()
+        # ✅ NEW: Initialize IR analyzer for advanced metrics
+        opt_binary = Path("/usr/local/llvm-obfuscator/bin/opt")
+        llvm_dis_binary = Path("/usr/local/llvm-obfuscator/bin/llvm-dis")
+        self.ir_analyzer = IRAnalyzer(opt_binary, llvm_dis_binary)
+        self._baseline_ir_metrics = {}  # Store baseline IR for later comparison
 
     def _get_bundled_plugin_path(self, target_platform: Optional[Platform] = None) -> Optional[Path]:
         """Auto-detect bundled OLLVM plugin for current or target platform."""
@@ -300,10 +306,13 @@ class LLVMObfuscator:
         )
 
         # Track what actually happened
+        cycle_ir_metrics = {}  # ✅ NEW: Extract IR metrics from compilation
         if cycle_result:
             actually_applied_passes = cycle_result.get("applied_passes", [])
             # Always extend warnings list (even if empty, to maintain consistency)
             warnings_log.extend(cycle_result.get("warnings", []))
+            # ✅ NEW: Extract IR metrics if available
+            cycle_ir_metrics = cycle_result.get("ir_metrics", {})
 
         # UPX packing (if enabled) - applied as FINAL step after all obfuscation
         upx_result = None
@@ -408,6 +417,17 @@ class LLVMObfuscator:
             "code_complexity_factor": base_metrics["code_complexity_factor"],
             "detection_difficulty_rating": base_metrics["detection_difficulty_rating"],
             "protections_applied": base_metrics["protections_applied"],
+            # ✅ NEW: LLVM IR metrics for control flow and instruction analysis
+            "control_flow_metrics": {
+                "baseline": self._baseline_ir_metrics if self._baseline_ir_metrics else {},
+                "obfuscated": cycle_ir_metrics.get("obfuscated", {}),
+                "comparison": cycle_ir_metrics.get("comparison", {}),
+            },
+            "instruction_metrics": {
+                "baseline": self._baseline_ir_metrics if self._baseline_ir_metrics else {},
+                "obfuscated": cycle_ir_metrics.get("obfuscated", {}),
+                "comparison": cycle_ir_metrics.get("comparison", {}),
+            },
             "output_file": str(output_binary),
         }
 
@@ -946,14 +966,39 @@ class LLVMObfuscator:
         final_cmd.extend([f"--target={target_triple}"])
         run_command(final_cmd, cwd=source_abs.parent)
 
-        # Cleanup any remaining intermediate files
-        if current_input != source_abs and current_input.exists():
+        # ✅ NEW: Analyze obfuscated IR before cleanup
+        obf_ir_metrics = {}
+        obf_ir_comparison = {}
+        if config.advanced.ir_metrics_enabled and current_input.exists():
+            try:
+                obf_ir_metrics = self.ir_analyzer.analyze_control_flow(current_input)
+                obf_ir_metrics.update(self.ir_analyzer.analyze_instructions(current_input))
+                self.logger.info(f"Obfuscated IR analysis: {obf_ir_metrics.get('basic_blocks', 0)} blocks, "
+                               f"{obf_ir_metrics.get('total_instructions', 0)} instructions")
+
+                # Compare baseline vs obfuscated IR metrics
+                if self._baseline_ir_metrics:
+                    obf_ir_comparison = self.ir_analyzer.compare_ir_metrics(self._baseline_ir_metrics, obf_ir_metrics)
+                    self.logger.info(f"IR comparison: +{obf_ir_comparison.get('complexity_increase_percent', 0):.1f}% complexity, "
+                                   f"+{obf_ir_comparison.get('instruction_growth_percent', 0):.1f}% instructions")
+            except Exception as e:
+                self.logger.warning(f"Obfuscated IR analysis failed: {e}")
+
+        # Cleanup any remaining intermediate files (unless preserve_ir is enabled)
+        if not config.advanced.preserve_ir and current_input != source_abs and current_input.exists():
             current_input.unlink()
+        elif config.advanced.preserve_ir and current_input != source_abs:
+            self.logger.info(f"IR file preserved for analysis: {current_input}")
 
         return {
             "applied_passes": actually_applied_passes,
             "warnings": warnings,
-            "disabled_passes": []
+            "disabled_passes": [],
+            # ✅ NEW: Include IR metrics in result
+            "ir_metrics": {
+                "obfuscated": obf_ir_metrics,
+                "comparison": obf_ir_comparison
+            }
         }
 
     def _compile_with_clangir(
@@ -1374,11 +1419,27 @@ class LLVMObfuscator:
                 self.logger.debug(f"Baseline binary compilation command: {' '.join(final_cmd)}")
                 run_command(final_cmd)
 
-                # Clean up temporary IR file
-                try:
-                    ir_file.unlink()
-                except Exception:
-                    pass
+                # ✅ NEW: Analyze baseline IR for control flow and instruction metrics
+                if config.advanced.ir_metrics_enabled:
+                    try:
+                        baseline_ir_metrics = self.ir_analyzer.analyze_control_flow(ir_file)
+                        baseline_ir_metrics.update(self.ir_analyzer.analyze_instructions(ir_file))
+                        self.logger.info(f"Baseline IR analysis: {baseline_ir_metrics.get('basic_blocks', 0)} blocks, "
+                                       f"{baseline_ir_metrics.get('total_instructions', 0)} instructions")
+                        # Store baseline IR metrics for later comparison
+                        self._baseline_ir_metrics = baseline_ir_metrics
+                    except Exception as e:
+                        self.logger.warning(f"Baseline IR analysis failed: {e}")
+                        self._baseline_ir_metrics = {}
+
+                # Clean up temporary IR file (unless preserve_ir is enabled)
+                if not config.advanced.preserve_ir:
+                    try:
+                        ir_file.unlink()
+                    except Exception:
+                        pass
+                else:
+                    self.logger.info(f"IR file preserved for analysis: {ir_file}")
             else:
                 self.logger.error(f"Baseline IR file was not created: {ir_file}")
                 return failed_metrics

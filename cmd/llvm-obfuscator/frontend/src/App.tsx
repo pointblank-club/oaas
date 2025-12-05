@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect } from 'react';
 import './App.css';
 import { GitHubIntegration, FileTree, TestResults } from './components';
+import { MetricsDashboard } from './components/MetricsDashboard';
 
 type Platform = 'linux' | 'windows';  // macOS disabled - requires Apple SDK
 type Architecture = 'x86_64' | 'arm64' | 'i686';
@@ -316,6 +317,69 @@ interface ReportData {
     string_encryption?: boolean;
     indirect_calls?: boolean;
     total_protections_enabled?: number;
+  };
+  // ✅ NEW: LLVM IR Analysis Metrics
+  control_flow_metrics?: {
+    baseline: {
+      basic_blocks: number;
+      cfg_edges: number;
+      cyclomatic_complexity: number;
+      functions: number;
+      loops: number;
+      avg_bb_per_function: number;
+    };
+    obfuscated: {
+      basic_blocks: number;
+      cfg_edges: number;
+      cyclomatic_complexity: number;
+      functions: number;
+      loops: number;
+      avg_bb_per_function: number;
+    };
+    comparison: {
+      complexity_increase_percent: number;
+      basic_blocks_added: number;
+      cfg_edges_added: number;
+      instruction_growth_percent: number;
+      mba_expressions_added: number;
+      arithmetic_complexity_increase: number;
+    };
+  };
+  instruction_metrics?: {
+    baseline: {
+      total_instructions: number;
+      instruction_distribution: {
+        load: number;
+        store: number;
+        call: number;
+        br: number;
+        phi: number;
+        arithmetic: number;
+        other: number;
+      };
+      call_instruction_count: number;
+      indirect_call_count: number;
+    };
+    obfuscated: {
+      total_instructions: number;
+      instruction_distribution: {
+        load: number;
+        store: number;
+        call: number;
+        br: number;
+        phi: number;
+        arithmetic: number;
+        other: number;
+      };
+      call_instruction_count: number;
+      indirect_call_count: number;
+    };
+    comparison: {
+      instruction_growth_percent: number;
+      mba_expressions_added: number;
+      substituted_instructions: number;
+      arithmetic_complexity_increase: number;
+    };
   };
 }
 
@@ -2734,6 +2798,14 @@ function App() {
                 )}
               </div>
             </div>
+          </section>
+        )}
+
+        {/* ✅ NEW: Advanced Metrics Dashboard */}
+        {report && (report.control_flow_metrics || report.instruction_metrics) && (
+          <section className="section report-section">
+            <h2 className="section-title">[6] ADVANCED METRICS DASHBOARD</h2>
+            <MetricsDashboard report={report} />
           </section>
         )}
 

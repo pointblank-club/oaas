@@ -90,9 +90,8 @@ COPY api ./api
 COPY core ./core
 COPY cli ./cli
 COPY scripts ./scripts
-# Copy any root-level Python files if they exist
-COPY *.py . 2>/dev/null || true
-COPY *.txt . 2>/dev/null || true
+# Copy root-level package files (setup.py may be needed for imports)
+COPY setup.py ./
 
 # Rename clang, make binaries executable, and create symlinks in one layer
 RUN mv /usr/local/llvm-obfuscator/bin/clang /usr/local/llvm-obfuscator/bin/clang.real && \

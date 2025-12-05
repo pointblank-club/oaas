@@ -788,6 +788,18 @@ class LLVMObfuscator:
 
         compiler = base_compiler
 
+        # Bug #1 Fix: Remove -mspeculative-load-hardening for macOS
+        # This flag generates retpoline code with COMDAT sections, which Mach-O doesn't support
+        # Error: "MachO doesn't support COMDATs, '__llvm_retpoline_r11' cannot be lowered"
+        if config.platform in [Platform.MACOS, Platform.DARWIN]:
+            if "-mspeculative-load-hardening" in compiler_flags:
+                compiler_flags = [f for f in compiler_flags if f != "-mspeculative-load-hardening"]
+                self.logger.info("Removed -mspeculative-load-hardening for macOS (incompatible with Mach-O)")
+            # Also remove -Wl,-s which is a Linux linker flag
+            if "-Wl,-s" in compiler_flags:
+                compiler_flags = [f for f in compiler_flags if f != "-Wl,-s"]
+                self.logger.info("Removed -Wl,-s for macOS (Linux linker flag)")
+
         mlir_passes = [p for p in enabled_passes if p in ["string-encrypt", "symbol-obfuscate", "crypto-hash", "constant-obfuscate"]]
         ollvm_passes = [p for p in enabled_passes if p not in mlir_passes]
 

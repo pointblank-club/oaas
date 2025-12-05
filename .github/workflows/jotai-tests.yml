@@ -84,6 +84,22 @@ jobs:
         chmod +x cmd/llvm-obfuscator/plugins/linux-x86_64/mlir-opt || true
         chmod +x cmd/llvm-obfuscator/plugins/linux-x86_64/mlir-translate || true
         chmod +x cmd/llvm-obfuscator/plugins/linux-x86_64/clangir || true
+        chmod +x cmd/llvm-obfuscator/plugins/linux-x86_64/lld || true
+
+        # Create ld.lld symlink (clang looks for ld.lld when using -fuse-ld=lld)
+        if [ -f "cmd/llvm-obfuscator/plugins/linux-x86_64/lld" ]; then
+          ln -sf lld cmd/llvm-obfuscator/plugins/linux-x86_64/ld.lld
+          echo "✅ Created ld.lld symlink"
+        fi
+
+        # Fix incomplete bundled headers by copying missing files from system clang
+        # These headers are required for LTO compilation to work correctly
+        INCLUDE_DIR="cmd/llvm-obfuscator/plugins/linux-x86_64/lib/clang/22/include"
+        if [ -d "$INCLUDE_DIR" ]; then
+          cp /usr/lib/llvm-*/lib/clang/*/include/__stddef_header_macro.h "$INCLUDE_DIR/" 2>/dev/null || true
+          cp /usr/lib/llvm-*/lib/clang/*/include/__float_header_macro.h "$INCLUDE_DIR/" 2>/dev/null || true
+          echo "✅ Copied missing header files from system clang"
+        fi
 
         echo "✅ Binaries downloaded successfully"
         ls -lh cmd/llvm-obfuscator/plugins/linux-x86_64/

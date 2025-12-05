@@ -528,8 +528,10 @@ class LLVMObfuscator:
             return []
 
         # Check if this is a custom clang (not system clang) that needs resource-dir override
+        # NOTE: Only Docker paths (/app/plugins/) have complete headers. CI plugins path
+        # (relative plugins/linux-x86_64) has incomplete headers, so let it use system clang headers.
         is_custom_clang = (
-            "/plugins/" in resolved_path or  # Plugins clang (may need override)
+            "/app/plugins/" in resolved_path or  # Docker app path (complete headers)
             "/llvm-project/build/" in resolved_path  # LLVM build directory
         )
 
@@ -539,11 +541,11 @@ class LLVMObfuscator:
             return []
 
         # Try to find resource directory
-        # Priority: bundled LLVM 22 > system clang
+        # Priority: Docker LLVM 22 > system clang
+        # NOTE: CI plugins path excluded - headers are incomplete (missing __float_header_macro.h)
         resource_dir_candidates = [
-            # Bundled LLVM 22 resource directory
-            Path(__file__).parent.parent / "plugins" / "linux-x86_64" / "lib" / "clang" / "22",
-            Path("/app/plugins/linux-x86_64/lib/clang/22"),  # Docker path
+            # Docker LLVM 22 resource directories (complete headers)
+            Path("/app/plugins/linux-x86_64/lib/clang/22"),  # Docker app path
             Path("/usr/local/llvm-obfuscator/lib/clang/22"),  # Docker installed path
             # System clang fallbacks
             Path("/usr/lib/llvm-19/lib/clang/19"),
@@ -777,11 +779,16 @@ class LLVMObfuscator:
         # The MLIR pipeline uses LLVM 22, so final compilation must also use LLVM 22
         # Otherwise, LLVM 22 IR features (like 'captures(none)') won't be understood
         # NOTE: clang++ binary doesn't exist in container, use clang with -x c++ for C++
-        bundled_clang = Path("/usr/local/llvm-obfuscator/bin/clang")
+        bundled_clang_candidates = [
+            Path("/usr/local/llvm-obfuscator/bin/clang"),  # Docker production
+            Path(__file__).parent.parent / "plugins" / "linux-x86_64" / "clang",  # CI/local relative
+            Path("/app/plugins/linux-x86_64/clang"),  # Docker app path
+        ]
+        bundled_clang = next((p for p in bundled_clang_candidates if p.exists()), None)
 
         is_cpp = source_abs.suffix in ['.cpp', '.cxx', '.cc', '.c++']
 
-        if bundled_clang.exists():
+        if bundled_clang:
             base_compiler = str(bundled_clang)
             if is_cpp:
                 # Use clang with -x c++ flag to compile C++ (clang++ doesn't exist)
@@ -1046,10 +1053,14 @@ class LLVMObfuscator:
             final_cmd.extend(macos_flags)
         # Add lld linker for LTO support (required for Linux and Windows, macOS uses ld64.lld)
         # lld handles LTO natively without needing LLVMgold.so
-        if config.platform == Platform.WINDOWS:
-            final_cmd.append("-fuse-ld=lld")
-        elif config.platform == Platform.LINUX:
-            final_cmd.append("-fuse-ld=lld")
+        # Only use lld when: 1) using bundled clang (has lld), or 2) LTO flags are present
+        uses_bundled_clang = "/llvm-obfuscator/" in compiler or "/llvm-project/build/" in compiler or "plugins/linux-x86_64" in compiler
+        has_lto_flags = any("-flto" in f for f in compiler_flags)
+        if uses_bundled_clang or has_lto_flags:
+            if config.platform == Platform.WINDOWS:
+                final_cmd.append("-fuse-ld=lld")
+            elif config.platform == Platform.LINUX:
+                final_cmd.append("-fuse-ld=lld")
         run_command(final_cmd, cwd=source_abs.parent)
 
         # Cleanup any remaining intermediate files
@@ -1247,10 +1258,14 @@ class LLVMObfuscator:
             final_cmd.extend(macos_flags)
         # Add lld linker for LTO support (required for Linux and Windows, macOS uses ld64.lld)
         # lld handles LTO natively without needing LLVMgold.so
-        if config.platform == Platform.WINDOWS:
-            final_cmd.append("-fuse-ld=lld")
-        elif config.platform == Platform.LINUX:
-            final_cmd.append("-fuse-ld=lld")
+        # Only use lld when: 1) using bundled clang (has lld), or 2) LTO flags are present
+        uses_bundled_clang = "/llvm-obfuscator/" in compiler or "/llvm-project/build/" in compiler or "plugins/linux-x86_64" in compiler
+        has_lto_flags = any("-flto" in f for f in compiler_flags)
+        if uses_bundled_clang or has_lto_flags:
+            if config.platform == Platform.WINDOWS:
+                final_cmd.append("-fuse-ld=lld")
+            elif config.platform == Platform.LINUX:
+                final_cmd.append("-fuse-ld=lld")
         run_command(final_cmd, cwd=source_abs.parent)
 
         # Cleanup intermediate files
@@ -1304,19 +1319,27 @@ class LLVMObfuscator:
 
             # Detect compiler - use LLVM 22 for consistent compilation
             # ✅ FIX: Use LLVM 22 clang/clang++ to match obfuscated compilation
+            # Check multiple paths: Docker production, CI plugins, Docker app
+            bundled_clang_candidates = [
+                Path("/usr/local/llvm-obfuscator/bin/clang"),  # Docker production
+                Path(__file__).parent.parent / "plugins" / "linux-x86_64" / "clang",  # CI/local relative
+                Path("/app/plugins/linux-x86_64/clang"),  # Docker app path
+            ]
+            bundled_clang = next((p for p in bundled_clang_candidates if p.exists()), None)
+
             if source_file.suffix in ['.cpp', '.cxx', '.cc', '.c++']:
-                # Try LLVM 22 clang++, fall back to system clang++
-                llvm_clangxx = Path("/usr/local/llvm-obfuscator/bin/clang++")
-                if llvm_clangxx.exists():
-                    compiler = str(llvm_clangxx)
+                # Try LLVM 22 clang with -x c++, fall back to system clang++
+                if bundled_clang:
+                    compiler = str(bundled_clang)
+                    # Use clang with -x c++ flag to compile C++ (clang++ doesn't exist in bundled)
+                    compile_flags = ["-x", "c++", "-lstdc++"]
                 else:
                     compiler = "clang++"
-                compile_flags = ["-lstdc++"]
+                    compile_flags = ["-lstdc++"]
             else:
                 # Try LLVM 22 clang, fall back to system clang
-                llvm_clang = Path("/usr/local/llvm-obfuscator/bin/clang")
-                if llvm_clang.exists():
-                    compiler = str(llvm_clang)
+                if bundled_clang:
+                    compiler = str(bundled_clang)
                 else:
                     compiler = "clang"
                 compile_flags = []
@@ -1327,7 +1350,7 @@ class LLVMObfuscator:
 
             # Log which compiler is being used for transparency
             self.logger.info(f"Baseline compilation using: {compiler}")
-            if "llvm-obfuscator" in compiler:
+            if "llvm-obfuscator" in compiler or "plugins/linux-x86_64" in compiler:
                 self.logger.info("✓ Using LLVM 22 compiler for baseline (matches obfuscated compilation)")
             else:
                 self.logger.warning("⚠️  Using system compiler for baseline - this may cause baseline/obfuscated comparison issues")
@@ -1362,6 +1385,21 @@ class LLVMObfuscator:
             # Add include flags
             for include_dir in include_dirs:
                 compile_flags.append(f"-I{include_dir}")
+
+            # Add resource-dir flag for bundled clang (needed for stddef.h, stdint.h, etc.)
+            resource_dir_flags = self._get_resource_dir_flag(compiler)
+            if resource_dir_flags:
+                compile_flags.extend(resource_dir_flags)
+                self.logger.info(f"Added resource-dir for baseline: {resource_dir_flags}")
+
+            # Add lld linker for LTO support when using bundled clang
+            uses_bundled_clang = "/llvm-obfuscator/" in compiler or "/llvm-project/build/" in compiler or "plugins/linux-x86_64" in compiler
+            has_lto_flags = any("-flto" in f for f in config.compiler_flags)
+            if uses_bundled_clang or has_lto_flags:
+                if config.platform == Platform.LINUX:
+                    compile_flags.append("-fuse-ld=lld")
+                elif config.platform == Platform.WINDOWS:
+                    compile_flags.append("-fuse-ld=lld")
 
             # Add additional source files from compiler_flags (for multi-file projects)
             # Filter out source files from compiler flags

@@ -48,6 +48,7 @@ jobs:
 
         # Download all individual files from GCP bucket
         echo "Downloading individual binaries from gs://${GCP_BUCKET}/linux-x86_64/..."
+        echo "Using parallel download with optimized settings..."
 
         gsutil -m cp -r "gs://${GCP_BUCKET}/linux-x86_64/*" cmd/llvm-obfuscator/plugins/linux-x86_64/ || {
           echo "❌ ERROR: Failed to download binaries from GCP Cloud Storage"

@@ -31,7 +31,7 @@ from core import (
     report_converter,
 )
 from core.comparer import CompareConfig, compare_binaries
-from core.config import AdvancedConfiguration, PassConfiguration, UPXConfiguration, Architecture
+from core.config import AdvancedConfiguration, PassConfiguration, UPXConfiguration, Architecture, RemarksConfiguration
 from core.exceptions import JobNotFoundError, ValidationError
 from core.ir_analyzer import IRAnalyzer
 from core.test_suite_integration import (
@@ -190,6 +190,11 @@ class IndirectCallsModel(BaseModel):
     obfuscate_custom: bool = True
 
 
+class RemarksModel(BaseModel):
+    enabled: bool = True  # Enable remarks by default
+    format: str = Field(default="yaml", description="Remarks format: yaml or bitstream")
+    pass_filter: str = Field(default=".*", description="Regex filter for passes")
+
 
 class ConfigModel(BaseModel):
     level: int = Field(3, ge=1, le=5)
@@ -202,6 +207,7 @@ class ConfigModel(BaseModel):
     fake_loops: int = Field(0, ge=0, le=50)
     upx: UPXModel = UPXModel()
     indirect_calls: IndirectCallsModel = IndirectCallsModel()
+    remarks: RemarksModel = RemarksModel()  # Enable remarks by default
 
 
 class ObfuscateRequest(BaseModel):
@@ -351,10 +357,18 @@ def _build_config_from_request(payload: ObfuscateRequest, destination_dir: Path,
         use_lzma=payload.config.upx.use_lzma,
         preserve_original=payload.config.upx.preserve_original,
     )
+    # Configure remarks (enabled by default)
+    remarks_config = RemarksConfiguration(
+        enabled=payload.config.remarks.enabled,
+        format=payload.config.remarks.format,
+        pass_filter=payload.config.remarks.pass_filter,
+    )
+    
     advanced = AdvancedConfiguration(
         cycles=payload.config.cycles,
         fake_loops=payload.config.fake_loops,
         upx_packing=upx_config,
+        remarks=remarks_config,
     )
     # Auto-load plugin if passes are requested and no explicit plugin provided
     any_pass_requested = (

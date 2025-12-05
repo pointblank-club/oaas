@@ -100,9 +100,12 @@ RUN chmod +x /usr/local/llvm-obfuscator/bin/clang-obfuscate
 RUN chmod +x /usr/local/llvm-obfuscator/bin/clang++-obfuscate
 
 # Note: UPX compression removed - binaries from GCP are uncompressed for faster execution
-# Fix incomplete bundled headers by copying missing file from system clang
+# Fix incomplete bundled headers by copying missing files from system clang
+# These headers are required for LTO compilation to work correctly
 RUN cp /usr/lib/llvm-*/lib/clang/*/include/__stddef_header_macro.h \
-       /usr/local/llvm-obfuscator/lib/clang/22/include/ || true
+       /usr/local/llvm-obfuscator/lib/clang/22/include/ 2>/dev/null || true
+RUN cp /usr/lib/llvm-*/lib/clang/*/include/__float_header_macro.h \
+       /usr/local/llvm-obfuscator/lib/clang/22/include/ 2>/dev/null || true
 
 # Add custom LLVM toolchain to PATH
 ENV PATH="/usr/local/llvm-obfuscator/bin:${PATH}"

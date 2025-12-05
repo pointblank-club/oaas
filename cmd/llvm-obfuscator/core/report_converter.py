@@ -421,38 +421,75 @@ def json_to_pdf(report: Dict[str, Any]) -> bytes:
             story.append(bogus_table)
             story.append(Spacer(1, 0.15*inch))
 
-    # String Obfuscation
+    # String Obfuscation - with real metrics
     string_obf = report.get('string_obfuscation', {})
-    string_obf_info = report.get('string_obfuscation_info', '')
-    # Handle both dict format and string descriptions
-    if (isinstance(string_obf, dict) and string_obf.get('enabled')) or (isinstance(string_obf_info, str) and string_obf_info):
-        story.append(Paragraph("<b>String Obfuscation</b>", styles['Heading2']))
-        story.append(Spacer(1, 0.08*inch))
+    if isinstance(string_obf, dict):
+        is_enabled = string_obf.get('enabled', False)
+        total_strings = string_obf.get('total_strings', 0)
+        encrypted_strings = string_obf.get('encrypted_strings', 0)
+        encryption_pct = string_obf.get('encryption_percentage', 0.0)
+        method = string_obf.get('method', 'MLIR string-encrypt pass')
 
-        if isinstance(string_obf, dict) and string_obf.get('enabled'):
+        # Only show if enabled or has actual metrics
+        if is_enabled or total_strings > 0:
+            story.append(Paragraph("<b>🔐 String Obfuscation</b>", styles['Heading2']))
+            story.append(Spacer(1, 0.08*inch))
+
             string_data = [
-                ['Total Strings', str(string_obf.get('total_strings', 0))],
-                ['Encrypted Strings', str(string_obf.get('encrypted_strings', 0))],
-                ['Encryption Method', string_obf.get('encryption_method', 'N/A')],
-                ['Encryption %', f"{string_obf.get('encryption_percentage', 0):.1f}%"],
+                ['Total Strings Found', f"{total_strings:,}"],
+                ['Strings Encrypted', f"{encrypted_strings:,}"],
+                ['Encryption Rate', f"{encryption_pct:.1f}%"],
+                ['Method', method],
             ]
-            string_table = Table(string_data, colWidths=[2*inch, 5*inch])
+            string_table = Table(string_data, colWidths=[2.5*inch, 4.5*inch])
             string_table.setStyle(TableStyle([
                 ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#28a745')),
                 ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
                 ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
                 ('FONTNAME', (0, 1), (0, -1), 'Helvetica-Bold'),
                 ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
-                ('FONTSIZE', (0, 0), (-1, -1), 9),
+                ('FONTSIZE', (0, 0), (-1, -1), 10),
                 ('PADDING', (0, 0), (-1, -1), 10),
                 ('BACKGROUND', (0, 1), (-1, -1), colors.white),
                 ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#e8f5e9')]),
                 ('GRID', (0, 0), (-1, -1), 1, colors.HexColor('#e0e0e0')),
             ]))
             story.append(string_table)
-        elif isinstance(string_obf_info, str) and string_obf_info:
-            story.append(Paragraph(str(string_obf_info), styles['Normal']))
-        story.append(Spacer(1, 0.15*inch))
+            story.append(Spacer(1, 0.15*inch))
+
+    # Symbol Obfuscation - with real metrics
+    symbol_obf = report.get('symbol_obfuscation', {})
+    if isinstance(symbol_obf, dict):
+        is_enabled = symbol_obf.get('enabled', False)
+        symbols_obfuscated = symbol_obf.get('symbols_obfuscated', 0)
+        reduction_pct = symbol_obf.get('reduction_percentage', 0.0)
+        algorithm = symbol_obf.get('algorithm', 'MLIR symbol-obfuscate pass')
+
+        # Show if enabled
+        if is_enabled or symbols_obfuscated > 0:
+            story.append(Paragraph("<b>🔤 Symbol Obfuscation</b>", styles['Heading2']))
+            story.append(Spacer(1, 0.08*inch))
+
+            symbol_data = [
+                ['Symbols Obfuscated', f"{symbols_obfuscated:,}"],
+                ['Symbol Reduction', f"{reduction_pct:.1f}%"],
+                ['Algorithm', algorithm],
+            ]
+            symbol_table = Table(symbol_data, colWidths=[2.5*inch, 4.5*inch])
+            symbol_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#8957e5')),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTNAME', (0, 1), (0, -1), 'Helvetica-Bold'),
+                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                ('FONTSIZE', (0, 0), (-1, -1), 10),
+                ('PADDING', (0, 0), (-1, -1), 10),
+                ('BACKGROUND', (0, 1), (-1, -1), colors.white),
+                ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#f0e6ff')]),
+                ('GRID', (0, 0), (-1, -1), 1, colors.HexColor('#e0e0e0')),
+            ]))
+            story.append(symbol_table)
+            story.append(Spacer(1, 0.15*inch))
 
     # Cycles Completed
     cycles = report.get('cycles_completed', {})

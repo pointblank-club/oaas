@@ -1329,9 +1329,11 @@ class LLVMObfuscator:
                 # Try LLVM 22 clang with -x c++, fall back to system clang++
                 if bundled_clang:
                     compiler = str(bundled_clang)
+                    # Use clang with -x c++ flag to compile C++ (clang++ doesn't exist in bundled)
+                    compile_flags = ["-x", "c++", "-lstdc++"]
                 else:
                     compiler = "clang++"
-                compile_flags = ["-lstdc++"]
+                    compile_flags = ["-lstdc++"]
             else:
                 # Try LLVM 22 clang, fall back to system clang
                 if bundled_clang:
@@ -1381,6 +1383,21 @@ class LLVMObfuscator:
             # Add include flags
             for include_dir in include_dirs:
                 compile_flags.append(f"-I{include_dir}")
+
+            # Add resource-dir flag for bundled clang (needed for stddef.h, stdint.h, etc.)
+            resource_dir_flags = self._get_resource_dir_flag(compiler)
+            if resource_dir_flags:
+                compile_flags.extend(resource_dir_flags)
+                self.logger.info(f"Added resource-dir for baseline: {resource_dir_flags}")
+
+            # Add lld linker for LTO support when using bundled clang
+            uses_bundled_clang = "/llvm-obfuscator/" in compiler or "/llvm-project/build/" in compiler or "plugins/linux-x86_64" in compiler
+            has_lto_flags = any("-flto" in f for f in config.compiler_flags)
+            if uses_bundled_clang or has_lto_flags:
+                if config.platform == Platform.LINUX:
+                    compile_flags.append("-fuse-ld=lld")
+                elif config.platform == Platform.WINDOWS:
+                    compile_flags.append("-fuse-ld=lld")
 
             # Add additional source files from compiler_flags (for multi-file projects)
             # Filter out source files from compiler flags

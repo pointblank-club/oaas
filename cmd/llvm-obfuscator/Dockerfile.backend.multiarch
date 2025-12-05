@@ -71,6 +71,13 @@ RUN ARCH=$(dpkg --print-architecture) && \
     fi
     # Note: UPX compression removed - binaries from GCP are uncompressed for faster execution
 
+# Fix incomplete bundled headers by copying ALL missing files from system clang
+# These headers are required for cross-compilation (Windows/macOS targets)
+# Includes: mm_malloc.h, xmmintrin.h, immintrin.h, arm_neon.h, and 200+ intrinsic headers
+RUN mkdir -p /usr/local/llvm-obfuscator/lib/clang/22/include && \
+    cp -rn /usr/lib/llvm-*/lib/clang/*/include/* \
+       /usr/local/llvm-obfuscator/lib/clang/22/include/ 2>/dev/null || true
+
 # Add custom LLVM toolchain to PATH
 ENV PATH="/usr/local/llvm-obfuscator/bin:${PATH}"
 ENV LD_LIBRARY_PATH="/usr/local/llvm-obfuscator/lib:${LD_LIBRARY_PATH}"

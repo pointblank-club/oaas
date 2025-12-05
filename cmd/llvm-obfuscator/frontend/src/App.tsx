@@ -1718,6 +1718,9 @@ function App() {
   const [progress, setProgress] = useState<{ message: string; percent: number } | null>(null);
   const [detectedLanguage, setDetectedLanguage] = useState<'c' | 'cpp' | null>(null);
 
+  // Preset state (changed when user modifies any layer setting)
+  const [obfuscationPreset, setObfuscationPreset] = useState<'minimal' | 'balanced' | 'maximum' | 'custom'>('custom');
+
   // Layer states (execution order: 1→2→3→4→5)
   const [layer1, setLayer1] = useState(false); // Symbol obfuscation (PRE-COMPILE, FIRST)
   const [layer2, setLayer2] = useState(false); // String encryption (PRE-COMPILE, SECOND)
@@ -1734,6 +1737,8 @@ function App() {
 
   // Layer 2: String Encryption sub-options
   const [fakeLoops, setFakeLoops] = useState<number | string>(0);
+  const [stringMinLength, setStringMinLength] = useState<number | string>(4);
+  const [stringEncryptFormatStrings, setStringEncryptFormatStrings] = useState(true);
 
   // Layer 2.5: Indirect Call Obfuscation sub-options
   const [indirectStdlib, setIndirectStdlib] = useState(true);
@@ -1746,6 +1751,8 @@ function App() {
   const [passSplitBasicBlocks, setPassSplitBasicBlocks] = useState(false);
   const [passLinearMBA, setPassLinearMBA] = useState(false);
   const [cycles, setCycles] = useState<number | string>(1);
+  const [ollvmSplitNum, setOllvmSplitNum] = useState<number | string>(3);
+  const [ollvmBogusLoop, setOllvmBogusLoop] = useState<number | string>(1);
 
   // Layer 4: Compiler Flags sub-options
   const [flagSymbolHiding, setFlagSymbolHiding] = useState(false);
@@ -2261,15 +2268,91 @@ function App() {
   };
 
   // Handle cascading layer selection
+  // Apply preset configuration
+  const applyPreset = useCallback((preset: 'minimal' | 'balanced' | 'maximum' | 'custom') => {
+    if (preset === 'minimal') {
+      // Minimal: fast compilation, minimal size increase
+      setObfuscationLevel(2);
+      // Only substitution + split
+      setPassFlattening(false);
+      setPassSubstitution(true);
+      setPassBogusControlFlow(false);
+      setPassSplitBasicBlocks(true);
+      setPassLinearMBA(false);
+      setCycles(1);
+      // Disable UPX
+      setLayer5(false);
+      // Disable all other layers
+      setLayer1(false);
+      setLayer2(false);
+      setLayer2_5(false);
+      setLayer3(true); // Enable Layer 3 to use passes
+      setLayer4(false);
+      setObfuscationPreset('minimal');
+    } else if (preset === 'balanced') {
+      // Balanced: recommended, good balance of speed/size/strength
+      setObfuscationLevel(4);
+      // All OLLVM except MBA
+      setPassFlattening(true);
+      setPassSubstitution(true);
+      setPassBogusControlFlow(true);
+      setPassSplitBasicBlocks(true);
+      setPassLinearMBA(false);
+      setCycles(2);
+      // Default UPX (fast)
+      setLayer5(true);
+      setUpxCompression('fast');
+      setUpxLzma(false);
+      // Disable symbol obfuscation and extra features
+      setLayer1(false);
+      setLayer2(false);
+      setLayer2_5(false);
+      setLayer3(true); // Enable Layer 3 for passes
+      setLayer4(false);
+      setObfuscationPreset('balanced');
+    } else if (preset === 'maximum') {
+      // Maximum: strongest obfuscation, slower, larger size
+      setObfuscationLevel(5);
+      // All OLLVM passes
+      setPassFlattening(true);
+      setPassSubstitution(true);
+      setPassBogusControlFlow(true);
+      setPassSplitBasicBlocks(true);
+      setPassLinearMBA(true);
+      setCycles(3);
+      // Best UPX compression with LZMA
+      setLayer5(true);
+      setUpxCompression('best');
+      setUpxLzma(true);
+      // Symbol obfuscation enabled
+      setLayer1(true);
+      setLayer2(false);
+      setLayer2_5(false);
+      setLayer3(true); // Layer 3 for passes
+      setLayer4(false);
+      setObfuscationPreset('maximum');
+    }
+    // 'custom' doesn't auto-apply anything - user controls layers manually
+  }, []);
+
+  // Handle preset selection change
+  const handlePresetChange = useCallback((newPreset: 'minimal' | 'balanced' | 'maximum' | 'custom') => {
+    applyPreset(newPreset);
+  }, [applyPreset]);
+
+  // Track layer changes to auto-switch to 'custom' preset
   const handleLayerChange = (layer: number, value: boolean) => {
     if (layer === 1) setLayer1(value);
     if (layer === 2) setLayer2(value);
+    if (layer === 2.5) setLayer2_5(value);
     if (layer === 3) {
       setLayer3(value);
       // LTO now works with Layer 3 (OLLVM) thanks to -fuse-ld=lld fix
     }
     if (layer === 4) setLayer4(value);
     if (layer === 5) setLayer5(value);
+    // Auto-switch to custom when user manually changes layers
+    setObfuscationPreset('custom');
   };
 
   const onSubmit = useCallback(async () => {
@@ -2498,9 +2581,17 @@ function App() {
         if (flagSpeculativeLoadHardening) flags.push('-mspeculative-load-hardening');
       }
 
+      // Add OLLVM pass parameters (Layer 3) as -mllvm flags
+      if (layer3) {
+        const splitNum = typeof ollvmSplitNum === 'number' ? ollvmSplitNum : parseInt(String(ollvmSplitNum)) || 3;
+        const bogusLoop = typeof ollvmBogusLoop === 'number' ? ollvmBogusLoop : parseInt(String(ollvmBogusLoop)) || 1;
+        flags.push(`-mllvm -split_num=${splitNum}`);
+        flags.push(`-mllvm -bcf_loop=${bogusLoop}`);
+      }
+
       // NOTE: Layer 3 OLLVM passes are handled via config.passes object below
       // The server uses wrapper scripts (clang-obfuscate) which apply passes via opt tool
-      // No -mllvm flags needed here - they're passed via OLLVM_PASSES environment variable
+      // Pass parameters are passed via -mllvm flags above and config.passes object below
 
       const payload = {
         source_code: source_b64,
@@ -2524,10 +2615,15 @@ function App() {
             substitution: layer3 && passSubstitution,
             bogus_control_flow: layer3 && passBogusControlFlow,
             split: layer3 && passSplitBasicBlocks,
-            linear_mba: layer3 && passLinearMBA
+            linear_mba: layer3 && passLinearMBA,
+            ollvm_split_num: layer3 ? (typeof ollvmSplitNum === 'number' ? ollvmSplitNum : parseInt(String(ollvmSplitNum)) || 3) : 3,
+            ollvm_bogus_loop: layer3 ? (typeof ollvmBogusLoop === 'number' ? ollvmBogusLoop : parseInt(String(ollvmBogusLoop)) || 1) : 1
           },
           cycles: layer3 ? (typeof cycles === 'number' ? cycles : parseInt(String(cycles)) || 1) : 1,
+          obfuscation_preset: obfuscationPreset,
           string_encryption: layer2,
+          string_min_length: layer2 ? (typeof stringMinLength === 'number' ? stringMinLength : parseInt(String(stringMinLength)) || 4) : 4,
+          string_encrypt_format_strings: layer2 ? stringEncryptFormatStrings : true,
           fake_loops: layer2 ? (typeof fakeLoops === 'number' ? fakeLoops : parseInt(String(fakeLoops)) || 0) : 0,
           symbol_obfuscation: {
             enabled: layer1,
@@ -2671,9 +2767,12 @@ function App() {
   }, [
     file, inputMode, pastedSource, obfuscationLevel, cycles, targetPlatform, targetArchitecture, entrypointCommand,
     layer1, layer2, layer3, layer4, layer2_5, layer5,
+    obfuscationPreset,
     symbolAlgorithm, symbolHashLength, symbolPrefix, symbolSalt,
+    stringMinLength, stringEncryptFormatStrings,
     fakeLoops, indirectStdlib, indirectCustom,
     passFlattening, passSubstitution, passBogusControlFlow, passSplitBasicBlocks, passLinearMBA,
+    ollvmSplitNum, ollvmBogusLoop,
     flagSymbolHiding, flagOmitFramePointer, flagSpeculativeLoadHardening,
     flagO3, flagStripSymbols, flagNoBuiltin,
     upxCompression, upxLzma, upxPreserveOriginal,
@@ -3081,11 +3180,58 @@ function App() {
           ) : null}
         </section>
 
+        {/* Quick Preset Selection */}
+        <section className="section">
+          <h2 className="section-title">[1.5] QUICK PRESET</h2>
+          <div className="layer-description">
+            Choose a preset configuration or customize layers manually
+          </div>
+          <div style={{ marginBottom: '20px' }}>
+            <label style={{ display: 'block', marginBottom: '8px', fontWeight: 'bold' }}>
+              Obfuscation Preset:
+            </label>
+            <select
+              value={obfuscationPreset}
+              onChange={(e) => handlePresetChange(e.target.value as 'minimal' | 'balanced' | 'maximum' | 'custom')}
+              style={{
+                width: '100%',
+                padding: '8px 12px',
+                fontSize: '1em',
+                borderRadius: '4px',
+                border: '1px solid #ccc',
+                backgroundColor: '#fff',
+                cursor: 'pointer'
+              }}
+            >
+              <option value="minimal">
+                Minimal - Fast compilation, minimal size increase (substitution + split, 1 cycle)
+              </option>
+              <option value="balanced">
+                Balanced - Recommended balance (all passes except MBA, 2 cycles, UPX fast)
+              </option>
+              <option value="maximum">
+                Maximum - Strongest obfuscation (all passes, 3 cycles, UPX best + LZMA)
+              </option>
+              <option value="custom">
+                Custom - Use layer settings below (manual control)
+              </option>
+            </select>
+            <small style={{ display: 'block', color: '#888', marginTop: '6px' }}>
+              Select a preset or choose "Custom" to manually configure each layer
+            </small>
+          </div>
+        </section>
+
         {/* Layer Selection */}
         <section className="section">
           <h2 className="section-title">[2] OBFUSCATION LAYERS</h2>
           <div className="layer-description">
             Select any combination of layers and their individual options
+            {obfuscationPreset !== 'custom' && (
+              <span style={{ color: '#666', marginLeft: '10px' }}>
+                (Currently using <strong>{obfuscationPreset}</strong> preset)
+              </span>
+            )}
           </div>
           <div style={{ display: 'flex', gap: '10px', marginBottom: '15px' }}>
             <button
@@ -3183,6 +3329,28 @@ function App() {
 
             {layer2 && (
               <div className="layer-config">
+                <label>
+                  Min String Length (1-20):
+                  <input
+                    type="number"
+                    min="1"
+                    max="20"
+                    value={stringMinLength}
+                    onChange={(e) => setStringMinLength(e.target.value === '' ? '' : parseInt(e.target.value) || 4)}
+                    onBlur={(e) => {
+                      const val = parseInt(e.target.value) || 4;
+                      setStringMinLength(Math.min(20, Math.max(1, val)));
+                    }}
+                  />
+                </label>
+                <label className="sub-option">
+                  <input
+                    type="checkbox"
+                    checked={stringEncryptFormatStrings}
+                    onChange={(e) => setStringEncryptFormatStrings(e.target.checked)}
+                  />
+                  Encrypt Format Strings
+                </label>
                 <label>
                   Fake Loops (0-50):
                   <input
@@ -3307,6 +3475,36 @@ function App() {
                   Linear MBA (Mixed Boolean-Arithmetic)
                   <small style={{ display: 'block', color: '#888', marginTop: '2px', marginLeft: '20px' }}>
                     Replaces AND/OR/XOR with per-bit reconstruction
+                  </small>
+                </label>
+                <label>
+                  Split Count (1-10):
+                  <input
+                    type="range"
+                    min="1"
+                    max="10"
+                    value={ollvmSplitNum}
+                    onChange={(e) => setOllvmSplitNum(parseInt(e.target.value))}
+                    title="Number of block splits (higher = more fragmented code)"
+                    style={{ width: '100%', marginTop: '4px' }}
+                  />
+                  <small style={{ display: 'block', color: '#888', marginTop: '4px' }}>
+                    Value: {ollvmSplitNum} • Higher = more fragmented, slower execution
+                  </small>
+                </label>
+                <label>
+                  Bogus CF Iterations (1-5):
+                  <input
+                    type="range"
+                    min="1"
+                    max="5"
+                    value={ollvmBogusLoop}
+                    onChange={(e) => setOllvmBogusLoop(parseInt(e.target.value))}
+                    title="Number of bogus control flow iterations (higher = more complex CF)"
+                    style={{ width: '100%', marginTop: '4px' }}
+                  />
+                  <small style={{ display: 'block', color: '#888', marginTop: '4px' }}>
+                    Value: {ollvmBogusLoop} • Higher = more bogus branches and jumps
                   </small>
                 </label>
                 <label>

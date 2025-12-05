@@ -110,6 +110,7 @@ RUN cp -rn /usr/lib/llvm-*/lib/clang/*/include/* \
 
 # Install macOS SDK for cross-compilation to macOS/Darwin targets
 # SDK is downloaded from GCP during CI and contains headers/libraries needed for --sysroot
+# NOTE: Skipped in local builds - will be copied if available during deployment
 COPY plugins/macos-sdk/MacOSX15.4.sdk /opt/MacOSX.sdk
 
 # Add custom LLVM toolchain to PATH

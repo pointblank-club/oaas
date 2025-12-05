@@ -410,26 +410,26 @@ def compile_multifile_ir_workflow(
     plugin_path_resolved = Path(plugin_path)
     bundled_opt = plugin_path_resolved.parent / "opt"
     bundled_clang = plugin_path_resolved.parent / "clang"
-    
+
     # Find opt binary
     opt_binary = None
     if bundled_opt.exists():
         logger.info(f"Using bundled opt: {bundled_opt}")
         opt_binary = bundled_opt
-        
+
         # Also use bundled clang if available
         if bundled_clang.exists():
             logger.info(f"Using bundled clang from LLVM 22: {bundled_clang}")
             compiler = str(bundled_clang)
         else:
             logger.warning("Bundled clang not found, using system clang (may have version mismatch)")
-            
+
     elif Path("/usr/local/llvm-obfuscator/bin/opt").exists():
         opt_binary = Path("/usr/local/llvm-obfuscator/bin/opt")
         logger.info(f"Using opt from Docker installation: {opt_binary}")
 
         # Use bundled clang from Docker installation (LLVM 22) for version compatibility
-        docker_clang = Path("/usr/local/llvm-obfuscator/bin/clang")
+        docker_clang = Path("/usr/local/llvm-obfuscator/bin/clang.real")
         if docker_clang.exists():
             compiler = str(docker_clang)
             logger.info(f"Using bundled clang from Docker installation (LLVM 22): {compiler}")

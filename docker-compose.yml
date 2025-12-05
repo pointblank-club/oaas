@@ -1,5 +1,3 @@
-version: "3.9"
-
 services:
   backend:
     build:
@@ -12,6 +10,12 @@ services:
       - ./cmd/llvm-obfuscator/reports:/app/reports
     expose:
       - "8000"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
 
   frontend:
     build:
@@ -21,6 +25,7 @@ services:
     ports:
       - "8080:4666"
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
 
 

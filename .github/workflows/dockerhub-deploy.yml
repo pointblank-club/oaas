@@ -34,14 +34,25 @@ jobs:
     - name: Set up Cloud SDK
       uses: google-github-actions/setup-gcloud@v2
 
-    - name: Download LLVM binaries from GCP Cloud Storage
+    - name: Download LLVM binaries from artifact
+      id: download-artifact
+      continue-on-error: true
+      uses: actions/download-artifact@v4
+      with:
+        name: llvm-binaries-linux-x86_64
+        path: cmd/llvm-obfuscator/plugins/linux-x86_64
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Download LLVM binaries from GCP (if artifact not found)
       id: download-binaries
+      if: steps.download-artifact.outcome != 'success'
       env:
         GCP_BUCKET: llvmbins
       run: |
         echo "=========================================="
         echo "Downloading LLVM binaries from GCP Cloud Storage"
         echo "=========================================="
+        echo "⚠️  Artifact not found, downloading from GCP (this will take longer)"
 
         # Create target directory
         mkdir -p cmd/llvm-obfuscator/plugins/linux-x86_64
@@ -83,6 +94,24 @@ jobs:
         rm -rf /tmp/macos-sdk /tmp/macos-sdk.tar.gz
         echo "✅ macOS SDK downloaded successfully"
         ls -la cmd/llvm-obfuscator/plugins/macos-sdk/
+
+    - name: Upload LLVM binaries as artifact
+      if: steps.download-binaries.outcome == 'success'
+      uses: actions/upload-artifact@v4
+      with:
+        name: llvm-binaries-linux-x86_64
+        path: cmd/llvm-obfuscator/plugins/linux-x86_64
+        retention-days: 30
+        if-no-files-found: error
+
+    - name: Upload LLVM binaries as artifact
+      if: steps.download-binaries.outcome == 'success'
+      uses: actions/upload-artifact@v4
+      with:
+        name: llvm-binaries-linux-x86_64
+        path: cmd/llvm-obfuscator/plugins/linux-x86_64
+        retention-days: 30
+        if-no-files-found: error
 
     - name: Verify binaries are present (REQUIRED)
       run: |

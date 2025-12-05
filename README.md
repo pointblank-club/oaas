@@ -1144,7 +1144,7 @@ MIT License - See `LICENSE` file for details.
 - **Issues:** https://github.com/your-org/llvm-obfuscator/issues
 - **Discussions:** https://github.com/your-org/llvm-obfuscator/discussions
 
----
+----
 
 **Project Status:** Production Ready ✅
 **Last Updated:** 2025-10-13

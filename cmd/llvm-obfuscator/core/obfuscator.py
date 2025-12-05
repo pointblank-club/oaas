@@ -1093,6 +1093,9 @@ class LLVMObfuscator:
             final_cmd.append("-fuse-ld=lld")
             if is_macos_cross_compile:
                 self.logger.info("Using lld linker for macOS cross-compilation")
+
+        # Add LLVM remarks flags if enabled (for optimization analysis)
+        self._add_remarks_flags(final_cmd, config, destination_abs)
         run_command(final_cmd, cwd=source_abs.parent)
 
         # ✅ NEW: Analyze obfuscated IR before cleanup
@@ -1298,6 +1301,7 @@ class LLVMObfuscator:
         # Add cross-compilation flags (target triple + sysroot for macOS)
         cross_compile_flags = self._get_cross_compile_flags(config.platform, config.architecture)
         final_cmd.extend(cross_compile_flags)
+        self._add_remarks_flags(final_cmd, config, destination_abs)
         # Add lld linker for:
         # 1. LTO support (lld handles LTO natively without needing LLVMgold.so plugin)
         # 2. macOS cross-compilation (system ld doesn't understand Mach-O on Linux)

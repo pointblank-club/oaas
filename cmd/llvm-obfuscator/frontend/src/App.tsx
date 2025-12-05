@@ -1143,7 +1143,7 @@ function App() {
 
     setLoading(true);
     setReport(null);
-    setDownloadUrls({ linux: null, windows: null });
+    setDownloadUrls({ linux: null, windows: null, macos: null });
     setBinaryName(null);
     setProgress({ message: 'Initializing...', percent: 0 });
 

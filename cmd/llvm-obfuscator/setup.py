@@ -59,6 +59,7 @@ setup(
     entry_points={
         "console_scripts": [
             "llvm-obfuscate=cli.obfuscate:app",
+            "obfuscate=cli.obfuscate:app",  # Shorter alias for tab completion
         ],
     },
 

@@ -108,14 +108,9 @@ RUN cp -rn /usr/lib/llvm-*/lib/clang/*/include/* \
     cp -rn /usr/lib/llvm-*/lib/clang/*/include/* \
        /app/plugins/linux-x86_64/lib/clang/22/include/ 2>/dev/null || true
 
-# Download and install macOS SDK for cross-compilation to macOS/Darwin targets
-# SDK is stored in GCP bucket and contains headers/libraries needed for --sysroot
-RUN curl -fsSL https://storage.googleapis.com/llvmbins/macos-sdk-15.4-minimal.tar.gz -o /tmp/macos-sdk.tar.gz && \
-    mkdir -p /tmp/macos-sdk && \
-    tar -xzf /tmp/macos-sdk.tar.gz -C /tmp/macos-sdk && \
-    mv /tmp/macos-sdk/macos-sdk/MacOSX15.4.sdk /opt/MacOSX.sdk && \
-    rm -rf /tmp/macos-sdk /tmp/macos-sdk.tar.gz && \
-    echo "macOS SDK installed at /opt/MacOSX.sdk"
+# Install macOS SDK for cross-compilation to macOS/Darwin targets
+# SDK is downloaded from GCP during CI and contains headers/libraries needed for --sysroot
+COPY plugins/macos-sdk/MacOSX15.4.sdk /opt/MacOSX.sdk
 
 # Add custom LLVM toolchain to PATH
 ENV PATH="/usr/local/llvm-obfuscator/bin:${PATH}"

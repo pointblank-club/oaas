@@ -521,10 +521,15 @@ class LLVMObfuscator:
         else:
             self.logger.info(f"[RESOURCE-DIR-DEBUG] Compiler path already resolved: {resolved_path}")
 
-        # Check if this is a custom clang (not system clang)
+        # Check if this is the bundled llvm-obfuscator clang (has its own complete resource dir)
+        # Don't override resource-dir for this one - it knows where its headers are
+        if "/usr/local/llvm-obfuscator/" in resolved_path:
+            self.logger.info(f"[RESOURCE-DIR-DEBUG] Using bundled llvm-obfuscator clang, no resource-dir override needed")
+            return []
+
+        # Check if this is a custom clang (not system clang) that needs resource-dir override
         is_custom_clang = (
-            "/plugins/" in resolved_path or  # Bundled clang
-            "/usr/local/llvm-obfuscator/" in resolved_path or  # Custom installed clang
+            "/plugins/" in resolved_path or  # Plugins clang (may need override)
             "/llvm-project/build/" in resolved_path  # LLVM build directory
         )
 
@@ -768,14 +773,41 @@ class LLVMObfuscator:
         actually_applied_passes = list(enabled_passes)  # Start with requested passes
 
         # Detect compiler based on file extension
-        if source_abs.suffix in ['.cpp', '.cxx', '.cc', '.c++']:
-            base_compiler = "clang++"
-            # Add C++ standard library linking
-            compiler_flags = compiler_flags + ["-lstdc++"]
+        # Bug #2 Fix: Use bundled LLVM 22 clang to avoid version mismatch
+        # The MLIR pipeline uses LLVM 22, so final compilation must also use LLVM 22
+        # Otherwise, LLVM 22 IR features (like 'captures(none)') won't be understood
+        # NOTE: clang++ binary doesn't exist in container, use clang with -x c++ for C++
+        bundled_clang = Path("/usr/local/llvm-obfuscator/bin/clang")
+
+        is_cpp = source_abs.suffix in ['.cpp', '.cxx', '.cc', '.c++']
+
+        if bundled_clang.exists():
+            base_compiler = str(bundled_clang)
+            if is_cpp:
+                # Use clang with -x c++ flag to compile C++ (clang++ doesn't exist)
+                compiler_flags = ["-x", "c++"] + compiler_flags + ["-lstdc++"]
+                self.logger.info(f"Using bundled clang (LLVM 22) with -x c++ for C++: {base_compiler}")
+            else:
+                self.logger.info(f"Using bundled clang (LLVM 22) for C: {base_compiler}")
         else:
-            base_compiler = "clang"
+            # Fallback to system compiler (may cause version mismatch)
+            if is_cpp:
+                base_compiler = "clang++"
+                compiler_flags = compiler_flags + ["-lstdc++"]
+                self.logger.warning("Using system clang++ - may cause version mismatch with MLIR (LLVM 22)")
+            else:
+                base_compiler = "clang"
+                self.logger.warning("Using system clang - may cause version mismatch with MLIR (LLVM 22)")
 
         compiler = base_compiler
+
+        # Bug #1 Fix: Remove -mspeculative-load-hardening for macOS
+        # This flag generates retpoline code with COMDAT sections, which Mach-O doesn't support
+        # Error: "MachO doesn't support COMDATs, '__llvm_retpoline_r11' cannot be lowered"
+        if config.platform in [Platform.MACOS, Platform.DARWIN]:
+            if "-mspeculative-load-hardening" in compiler_flags:
+                compiler_flags = [f for f in compiler_flags if f != "-mspeculative-load-hardening"]
+                self.logger.info("Removed -mspeculative-load-hardening for macOS (incompatible with Mach-O)")
 
         # Check if target is macOS (for cross-compilation flags)
         is_macos_target = config.platform in [Platform.MACOS, Platform.DARWIN]

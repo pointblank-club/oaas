@@ -1933,6 +1933,50 @@ async def api_download_binary(job_id: str):
     )
 
 
+@app.get("/api/remarks/{job_id}")
+async def api_get_remarks(job_id: str):
+    """Get LLVM remarks file for a completed obfuscation job."""
+    try:
+        job = job_manager.get_job(job_id)
+    except JobNotFoundError:
+        raise HTTPException(status_code=404, detail="Job not found")
+    
+    result = job.metadata.get("result")
+    if not result:
+        raise HTTPException(status_code=400, detail="Job not completed")
+    
+    # Find the output binary path
+    output_file = result.get("output_file", "")
+    if not output_file:
+        raise HTTPException(status_code=404, detail="Output file not found in job result")
+    
+    binary_path = Path(output_file)
+    if not binary_path.exists():
+        raise HTTPException(status_code=404, detail="Obfuscated binary not found")
+    
+    # Remarks file is in the same directory as the binary with .opt.yaml extension
+    remarks_file = binary_path.parent / f"{binary_path.stem}.opt.yaml"
+    
+    if not remarks_file.exists():
+        raise HTTPException(
+            status_code=404, 
+            detail=f"Remarks file not found. Expected at: {remarks_file}. Remarks may not have been enabled for this job."
+        )
+    
+    # Read and return the remarks file content
+    try:
+        remarks_content = remarks_file.read_text(encoding='utf-8')
+        return JSONResponse({
+            "job_id": job_id,
+            "remarks_file": str(remarks_file),
+            "content": remarks_content,
+            "size": remarks_file.stat().st_size
+        })
+    except Exception as e:
+        logger.error(f"Failed to read remarks file: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to read remarks file: {str(e)}")
+
+
 @app.get("/api/health")
 async def api_health():
     return {"status": "ok"}

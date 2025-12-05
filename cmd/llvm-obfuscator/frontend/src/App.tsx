@@ -1717,6 +1717,9 @@ function App() {
   const [showErrorDetails, setShowErrorDetails] = useState(false);
   const [progress, setProgress] = useState<{ message: string; percent: number } | null>(null);
   const [detectedLanguage, setDetectedLanguage] = useState<'c' | 'cpp' | null>(null);
+  const [showRemarksModal, setShowRemarksModal] = useState(false);
+  const [remarksContent, setRemarksContent] = useState<string | null>(null);
+  const [remarksLoading, setRemarksLoading] = useState(false);
 
   // Preset state (changed when user modifies any layer setting)
   const [obfuscationPreset, setObfuscationPreset] = useState<'minimal' | 'balanced' | 'maximum' | 'custom'>('custom');
@@ -2795,6 +2798,34 @@ function App() {
     document.body.removeChild(link);
   }, [downloadUrls, binaryName]);
 
+  const onShowRemarks = useCallback(async () => {
+    if (!jobId) return;
+    
+    setRemarksLoading(true);
+    setShowRemarksModal(true);
+    setRemarksContent(null);
+    
+    try {
+      const response = await fetch(`/api/remarks/${jobId}`);
+      if (!response.ok) {
+        if (response.status === 404) {
+          setRemarksContent('Remarks file not found. Remarks may not have been enabled for this obfuscation job.');
+        } else {
+          const error = await response.text();
+          setRemarksContent(`Error: ${error}`);
+        }
+        return;
+      }
+      
+      const data = await response.json();
+      setRemarksContent(data.content || 'No remarks content available.');
+    } catch (error) {
+      setRemarksContent(`Failed to fetch remarks: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    } finally {
+      setRemarksLoading(false);
+    }
+  }, [jobId]);
+
   return (
     <div className="container">
       {/* Header */}
@@ -2842,6 +2873,52 @@ function App() {
             <div className="modal-footer">
               <button className="modal-btn" onClick={() => { setModal(null); setShowErrorDetails(false); }}>
                 {modal.type === 'success' ? 'OK' : 'Close'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Remarks Modal */}
+      {showRemarksModal && (
+        <div className="modal-overlay" onClick={() => { setShowRemarksModal(false); setRemarksContent(null); }}>
+          <div className="modal" style={{ maxWidth: '90vw', maxHeight: '90vh', width: '800px' }} onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3>LLVM Remarks Output</h3>
+              <button className="modal-close" onClick={() => { setShowRemarksModal(false); setRemarksContent(null); }}>×</button>
+            </div>
+            <div className="modal-body" style={{ maxHeight: '70vh', overflow: 'auto' }}>
+              {remarksLoading ? (
+                <div style={{ padding: '20px', textAlign: 'center' }}>
+                  <p>Loading remarks...</p>
+                </div>
+              ) : remarksContent ? (
+                <div>
+                  <p style={{ marginBottom: '10px', fontSize: '0.9em', color: 'var(--text-secondary)' }}>
+                    This YAML file contains optimization remarks showing which optimizations were applied or missed during compilation.
+                  </p>
+                  <pre style={{
+                    backgroundColor: 'var(--bg-secondary)',
+                    padding: '15px',
+                    borderRadius: '4px',
+                    overflow: 'auto',
+                    fontSize: '0.85em',
+                    maxHeight: '60vh',
+                    whiteSpace: 'pre-wrap',
+                    wordBreak: 'break-word'
+                  }}>
+                    {remarksContent}
+                  </pre>
+                </div>
+              ) : (
+                <div style={{ padding: '20px', textAlign: 'center' }}>
+                  <p>No remarks content available.</p>
+                </div>
+              )}
+            </div>
+            <div className="modal-footer">
+              <button className="modal-btn" onClick={() => { setShowRemarksModal(false); setRemarksContent(null); }}>
+                Close
               </button>
             </div>
           </div>
@@ -3902,6 +3979,21 @@ function App() {
                       }}
                     >
                       📋 PDF
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {jobId && (
+                <div style={{ marginTop: '15px' }}>
+                  <h3>LLVM Remarks:</h3>
+                  <div className="download-buttons">
+                    <button
+                      className="download-btn"
+                      onClick={onShowRemarks}
+                      style={{ backgroundColor: '#6c757d' }}
+                    >
+                      📊 Show Remarks Output
                     </button>
                   </div>
                 </div>

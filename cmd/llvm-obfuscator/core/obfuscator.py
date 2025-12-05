@@ -311,7 +311,16 @@ class LLVMObfuscator:
                 # Continue with original source if insertion fails
 
         enabled_passes = config.passes.enabled_passes()
-        compiler_flags = merge_flags(self.BASE_FLAGS, config.compiler_flags)
+        
+        # Filter out platform-incompatible flags from BASE_FLAGS
+        # -mspeculative-load-hardening uses retpolines which require COMDAT sections
+        # Mach-O (macOS) doesn't support COMDAT, so we must skip this flag for Darwin targets
+        base_flags = self.BASE_FLAGS
+        if config.platform in [Platform.MACOS, Platform.DARWIN]:
+            base_flags = [f for f in base_flags if f != "-mspeculative-load-hardening"]
+            self.logger.info("Disabled -mspeculative-load-hardening for macOS (COMDAT not supported in Mach-O)")
+        
+        compiler_flags = merge_flags(base_flags, config.compiler_flags)
 
         # Cycles apply OLLVM passes multiple times on the IR for stronger obfuscation
         effective_cycles = config.advanced.cycles if config.advanced.cycles > 0 else 1

@@ -2575,6 +2575,7 @@ function App() {
 
       // Build compiler flags based on Layer 4 (Compiler Flags) - only selected flags
       const flags: string[] = [];
+      const isMacOSTarget = targetPlatform === 'macos';
       if (layer4) {
         // Add non-LTO flags first
         if (flagO3) flags.push('-O3');
@@ -2582,17 +2583,19 @@ function App() {
         if (flagStripSymbols) flags.push('-Wl,-s');
         if (flagSymbolHiding) flags.push('-fvisibility=hidden');
         if (flagOmitFramePointer) flags.push('-fomit-frame-pointer');
-        if (flagSpeculativeLoadHardening) flags.push('-mspeculative-load-hardening');
+        // Skip -mspeculative-load-hardening for macOS - it uses COMDAT sections which Mach-O doesn't support
+        if (flagSpeculativeLoadHardening && !isMacOSTarget) flags.push('-mspeculative-load-hardening');
         // LTO (Link-Time Optimization) - enables whole-program optimization
         if (flagLTO) flags.push('-flto');
       }
 
       // Add OLLVM pass parameters (Layer 3) as -mllvm flags
+      // Each -mllvm flag must be a separate array element so they become separate command arguments
       if (layer3) {
         const splitNum = typeof ollvmSplitNum === 'number' ? ollvmSplitNum : parseInt(String(ollvmSplitNum)) || 3;
         const bogusLoop = typeof ollvmBogusLoop === 'number' ? ollvmBogusLoop : parseInt(String(ollvmBogusLoop)) || 1;
-        flags.push(`-mllvm -split_num=${splitNum}`);
-        flags.push(`-mllvm -bcf_loop=${bogusLoop}`);
+        flags.push('-mllvm', `-split_num=${splitNum}`);
+        flags.push('-mllvm', `-bcf_loop=${bogusLoop}`);
       }
 
       // NOTE: Layer 3 OLLVM passes are handled via config.passes object below

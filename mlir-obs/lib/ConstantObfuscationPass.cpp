@@ -67,6 +67,24 @@ void ConstantObfuscationPass::runOnOperation() {
     if (symName.starts_with("__obfs_") || symName.starts_with("llvm."))
       return;
 
+    // BUG #3 FIX: Skip C++ compiler-generated global initializers
+    // These have section specifiers that must NOT be encrypted
+    if (symName.starts_with("__cxx_global_var_init") ||
+        symName.starts_with("_GLOBAL__sub_I_") ||
+        symName.starts_with("__cxx_global_array_dtor") ||
+        symName.starts_with("__dtor_") ||
+        symName.starts_with("__ctor_") ||
+        symName.starts_with("GCC_except_table") ||
+        symName.starts_with("__func__") ||
+        symName.starts_with("__PRETTY_FUNCTION__") ||
+        symName.starts_with("__FUNCTION__"))
+      return;
+
+    // BUG #3 FIX: Skip globals with section attributes (section specifiers)
+    // Section names like "__TEXT,__StaticInit" must not be encrypted
+    if (globalOp.getSection().has_value())
+      return;
+
     // Check if this is a string constant
     if (auto strAttr = globalOp.getValueAttr()) {
       if (auto stringAttr = llvm::dyn_cast<StringAttr>(strAttr)) {
@@ -74,6 +92,10 @@ void ConstantObfuscationPass::runOnOperation() {
 
         // Skip empty strings
         if (original.empty())
+          return;
+
+        // BUG #3 FIX: Skip very short strings (likely metadata, not user data)
+        if (original.size() < 2)
           return;
 
         std::string encrypted = xorEncrypt(original, key);
@@ -121,11 +143,13 @@ void ConstantObfuscationPass::runOnOperation() {
   }
 
   // Create the decrypt function if it doesn't exist
+  // BUG #4 FIX: Use Internal linkage (not Private) to prevent dead code elimination
+  // BUG #4 FIX: Use NoInline instead of AlwaysInline to prevent function removal
   if (!module.lookupSymbol<LLVM::LLVMFuncOp>("__obfs_decrypt")) {
     auto funcType = LLVM::LLVMFunctionType::get(voidType, {i8PtrType, i32Type}, false);
     auto decryptFunc = builder.create<LLVM::LLVMFuncOp>(
-        loc, "__obfs_decrypt", funcType, LLVM::Linkage::Private);
-    decryptFunc.setAlwaysInline(true);
+        loc, "__obfs_decrypt", funcType, LLVM::Linkage::Internal);
+    decryptFunc.setNoInline(true);
 
     // Create function body with XOR decryption loop
     Block *entryBlock = decryptFunc.addEntryBlock(builder);
@@ -185,8 +209,11 @@ void ConstantObfuscationPass::runOnOperation() {
   auto initFuncType = LLVM::LLVMFunctionType::get(voidType, {}, false);
 
   if (!module.lookupSymbol<LLVM::LLVMFuncOp>("__obfs_init")) {
+    // BUG #4 FIX: Use External linkage to ensure linker doesn't remove this function
+    // The function is referenced by global_ctors but optimizer may not see that
     auto initFunc = builder.create<LLVM::LLVMFuncOp>(
-        loc, "__obfs_init", initFuncType, LLVM::Linkage::Internal);
+        loc, "__obfs_init", initFuncType, LLVM::Linkage::External);
+    initFunc.setNoInline(true);
 
     Block *entryBlock = initFunc.addEntryBlock(builder);
     builder.setInsertionPointToStart(entryBlock);
@@ -230,9 +257,10 @@ void ConstantObfuscationPass::runOnOperation() {
         newData.push_back(attr);
     }
 
-    // Add our init function with null data (no associated data)
+    // BUG #4 FIX: Use priority 101 (high) instead of 65535 (lowest)
+    // Lower number = higher priority, runs earlier before user code
     newCtors.push_back(FlatSymbolRefAttr::get(ctx, "__obfs_init"));
-    newPriorities.push_back(builder.getI32IntegerAttr(65535));
+    newPriorities.push_back(builder.getI32IntegerAttr(101));
     newData.push_back(LLVM::ZeroAttr::get(ctx));
 
     // Replace the old op with updated one
@@ -251,7 +279,8 @@ void ConstantObfuscationPass::runOnOperation() {
     SmallVector<Attribute> data;
 
     ctors.push_back(FlatSymbolRefAttr::get(ctx, "__obfs_init"));
-    priorities.push_back(builder.getI32IntegerAttr(65535));
+    // BUG #4 FIX: Use priority 101 (high) instead of 65535 (lowest)
+    priorities.push_back(builder.getI32IntegerAttr(101));
     data.push_back(LLVM::ZeroAttr::get(ctx));
 
     builder.create<LLVM::GlobalCtorsOp>(

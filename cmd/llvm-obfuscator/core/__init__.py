@@ -1,6 +1,7 @@
 """Core package for LLVM obfuscator."""
 
 from . import compat as _compat  # noqa: F401  # ensure compatibility patches load
+from . import report_converter
 from .analyzer import analyze_binary
 from .comparer import compare_binaries
 from .config import (

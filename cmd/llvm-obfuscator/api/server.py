@@ -28,10 +28,12 @@ from core import (
     ObfuscationReport,
     Platform,
     analyze_binary,
+    report_converter,
 )
 from core.comparer import CompareConfig, compare_binaries
 from core.config import AdvancedConfiguration, PassConfiguration, UPXConfiguration, Architecture
 from core.exceptions import JobNotFoundError, ValidationError
+from core.ir_analyzer import IRAnalyzer
 from core.test_suite_integration import (
     run_obfuscation_tests,
     run_lightweight_tests,
@@ -204,7 +206,7 @@ class ObfuscateRequest(BaseModel):
     architecture: Architecture = Architecture.X86_64
     entrypoint_command: Optional[str] = Field(default="./a.out")
     config: ConfigModel = ConfigModel()
-    report_formats: Optional[list[str]] = Field(default_factory=lambda: ["json", "markdown"])
+    report_formats: Optional[list[str]] = Field(default_factory=lambda: ["json", "markdown", "pdf"])
     custom_flags: Optional[list[str]] = None
     custom_pass_plugin: Optional[str] = None
     source_files: Optional[List[SourceFile]] = None  # For multi-file projects (GitHub repos)
@@ -768,7 +770,10 @@ def _run_obfuscation(job_id: str, source_path: Path, config: ObfuscationConfig) 
         progress_tracker.publish_sync(ProgressEvent(job_id=job_id, stage="running", progress=0.1, message="Compilation started"))
         result = obfuscator.obfuscate(source_path, config, job_id=job_id)
         job_manager.update_job(job_id, status="completed", result=result)
-        job_manager.attach_reports(job_id, result.get("report_paths", {}))
+        report_paths = result.get("report_paths", {})
+        logger.info("[PDF DEBUG] Attaching reports at line 772 - report_paths keys: %s", list(report_paths.keys()))
+        logger.info("[PDF DEBUG] Full report_paths: %s", report_paths)
+        job_manager.attach_reports(job_id, report_paths)
         progress_tracker.publish_sync(ProgressEvent(job_id=job_id, stage="completed", progress=1.0, message="Obfuscation completed"))
     except Exception as exc:  # pragma: no cover - background tasks
         logger.exception("Job %s failed", job_id)
@@ -901,6 +906,13 @@ async def api_obfuscate_sync(
                 logger.info(f"[OLLVM] Using opt: {opt_path}")
                 logger.info(f"[OLLVM] Plugin: {plugin_path}")
 
+                # Initialize IR analyzer for advanced metrics
+                opt_path = "/usr/local/llvm-obfuscator/bin/opt"
+                llvm_dis_path = "/usr/local/llvm-obfuscator/bin/llvm-dis"
+                ir_analyzer = IRAnalyzer(Path(opt_path), Path(llvm_dis_path))
+                baseline_ir_metrics = {}
+                obf_ir_metrics = {}
+
                 # Compile all sources to LLVM bitcode, apply passes, and collect object files
                 object_files = []
                 passes_actually_applied = list(enabled_passes)  # Track if passes were actually applied
@@ -932,6 +944,18 @@ async def api_obfuscate_sync(
 
                         logger.info(f"[OLLVM] Generated bitcode: {bc_file.name}")
 
+                        # Analyze baseline IR metrics
+                        try:
+                            baseline_cf = ir_analyzer.analyze_control_flow(bc_file)
+                            baseline_instr = ir_analyzer.analyze_instructions(bc_file)
+                            if baseline_cf:
+                                baseline_ir_metrics.update(baseline_cf)
+                            if baseline_instr:
+                                baseline_ir_metrics.update(baseline_instr)
+                            logger.info(f"[IR Analysis] Baseline metrics collected: {list(baseline_ir_metrics.keys())}")
+                        except Exception as e:
+                            logger.warning(f"[IR Analysis] Failed to analyze baseline IR: {e}")
+
                         # Apply OLLVM passes to this bitcode file
                         obf_bc_file = working_dir / f"{src_file.stem}_obf.bc"
 
@@ -961,6 +985,18 @@ async def api_obfuscate_sync(
                         else:
                             logger.warning(f"[OLLVM] No plugin or passes available, using unobfuscated bitcode")
                             obf_bc_file = bc_file
+
+                        # Analyze obfuscated IR metrics
+                        try:
+                            obf_cf = ir_analyzer.analyze_control_flow(obf_bc_file)
+                            obf_instr = ir_analyzer.analyze_instructions(obf_bc_file)
+                            if obf_cf:
+                                obf_ir_metrics.update(obf_cf)
+                            if obf_instr:
+                                obf_ir_metrics.update(obf_instr)
+                            logger.info(f"[IR Analysis] Obfuscated metrics collected: {list(obf_ir_metrics.keys())}")
+                        except Exception as e:
+                            logger.warning(f"[IR Analysis] Failed to analyze obfuscated IR: {e}")
 
                         # Compile obfuscated bitcode to object file
                         obj_file = working_dir / f"{src_file.stem}.o"
@@ -1180,6 +1216,54 @@ async def api_obfuscate_sync(
                             "output_file": str(final_binary),
                             "build_system": payload.build_system,
                             "source_obfuscation": obf_results,
+                            # Advanced metrics from IR analysis
+                            "control_flow_metrics": {
+                                "baseline": {
+                                    "basic_blocks": baseline_ir_metrics.get("basic_blocks", 0),
+                                    "cfg_edges": baseline_ir_metrics.get("cfg_edges", 0),
+                                    "cyclomatic_complexity": baseline_ir_metrics.get("cyclomatic_complexity", 0),
+                                    "functions": baseline_ir_metrics.get("functions", 0),
+                                    "loops": baseline_ir_metrics.get("loops", 0),
+                                },
+                                "obfuscated": {
+                                    "basic_blocks": obf_ir_metrics.get("basic_blocks", 0),
+                                    "cfg_edges": obf_ir_metrics.get("cfg_edges", 0),
+                                    "cyclomatic_complexity": obf_ir_metrics.get("cyclomatic_complexity", 0),
+                                    "functions": obf_ir_metrics.get("functions", 0),
+                                    "loops": obf_ir_metrics.get("loops", 0),
+                                },
+                                "comparison": {
+                                    "complexity_increase_percent": ((obf_ir_metrics.get("cyclomatic_complexity", 0) - baseline_ir_metrics.get("cyclomatic_complexity", 1)) / max(1, baseline_ir_metrics.get("cyclomatic_complexity", 1)) * 100) if baseline_ir_metrics.get("cyclomatic_complexity", 0) > 0 else 0,
+                                    "basic_blocks_added": max(0, obf_ir_metrics.get("basic_blocks", 0) - baseline_ir_metrics.get("basic_blocks", 0)),
+                                    "cfg_edges_added": max(0, obf_ir_metrics.get("cfg_edges", 0) - baseline_ir_metrics.get("cfg_edges", 0)),
+                                }
+                            } if baseline_ir_metrics else None,
+                            "instruction_metrics": {
+                                "baseline": {
+                                    "total_instructions": baseline_ir_metrics.get("total_instructions", 0),
+                                    "instruction_distribution": baseline_ir_metrics.get("instruction_distribution", {}),
+                                    "arithmetic_complexity_score": baseline_ir_metrics.get("arithmetic_complexity_score", 0),
+                                    "mba_expression_count": baseline_ir_metrics.get("mba_expression_count", 0),
+                                    "call_instruction_count": baseline_ir_metrics.get("call_instruction_count", 0),
+                                    "indirect_call_count": baseline_ir_metrics.get("indirect_call_count", 0),
+                                },
+                                "obfuscated": {
+                                    "total_instructions": obf_ir_metrics.get("total_instructions", 0),
+                                    "instruction_distribution": obf_ir_metrics.get("instruction_distribution", {}),
+                                    "arithmetic_complexity_score": obf_ir_metrics.get("arithmetic_complexity_score", 0),
+                                    "mba_expression_count": obf_ir_metrics.get("mba_expression_count", 0),
+                                    "call_instruction_count": obf_ir_metrics.get("call_instruction_count", 0),
+                                    "indirect_call_count": obf_ir_metrics.get("indirect_call_count", 0),
+                                },
+                                "comparison": {
+                                    "instruction_growth_percent": ((obf_ir_metrics.get("total_instructions", 0) - baseline_ir_metrics.get("total_instructions", 1)) / max(1, baseline_ir_metrics.get("total_instructions", 1)) * 100) if baseline_ir_metrics.get("total_instructions", 0) > 0 else 0,
+                                    "arithmetic_complexity_increase": ((obf_ir_metrics.get("arithmetic_complexity_score", 0) - baseline_ir_metrics.get("arithmetic_complexity_score", 0.1)) / max(0.1, baseline_ir_metrics.get("arithmetic_complexity_score", 0.1)) * 100) if baseline_ir_metrics.get("arithmetic_complexity_score", 0) > 0 else 0,
+                                    "mba_expressions_added": max(0, obf_ir_metrics.get("mba_expression_count", 0) - baseline_ir_metrics.get("mba_expression_count", 0)),
+                                }
+                            } if baseline_ir_metrics else None,
+                            "binary_structure": None,  # Can be enhanced with binary analysis
+                            "pattern_resistance": None,  # Can be enhanced with pattern analysis
+                            "call_graph_metrics": None,  # Can be enhanced with call graph analysis
                         }
 
                         # ✅ NEW: Run test suite to verify obfuscation correctness
@@ -1211,14 +1295,20 @@ async def api_obfuscate_sync(
                             # Continue without test results rather than failing the job
 
                         # Generate and export reports
-                        report = reporter.generate_report(job_data)
-                        report_formats = payload.report_formats or ["json", "markdown"]
-                        exported = reporter.export(report, job.job_id, report_formats)
-                        report_paths_dict = {fmt: str(path) for fmt, path in exported.items()}
-                        logger.info(f"Reports generated: {list(report_paths_dict.keys())}")
+                        try:
+                            report = reporter.generate_report(job_data)
+                            report_formats = payload.report_formats or ["json", "markdown", "pdf"]
+                            exported = reporter.export(report, job.job_id, report_formats)
+                            report_paths_dict = {fmt: str(path) for fmt, path in exported.items()}
+                            logger.info(f"Reports generated: {list(report_paths_dict.keys())}")
+                        except Exception as report_error:
+                            logger.error(f"Failed to generate reports: {report_error}", exc_info=True)
+                            raise
+
                     except Exception as e:
                         logger.error(f"Failed to generate reports for custom build: {e}", exc_info=True)
-                        logger.error(f"Report paths dict: {report_paths_dict}")
+                        # Re-raise to ensure job fails if report generation fails
+                        raise HTTPException(status_code=500, detail=f"Report generation failed: {str(e)}")
 
                 result = {
                     "output_file": str(final_binary),
@@ -1371,12 +1461,25 @@ async def api_obfuscate_sync(
 
             # Find baseline binary
             baseline_candidates = []
+
+            # Search in both output_dir and working_dir (for multifile projects)
+            search_dirs = []
             if output_dir and output_dir.exists():
-                logger.info(f"Searching for baseline binary in: {output_dir}")
+                search_dirs.append(output_dir)
+
+            # For multifile projects, also search in working_dir
+            working_dir = Path(os.environ.get("REPORT_BASE", "/app/reports")) / job.job_id
+            if working_dir.exists():
+                search_dirs.append(working_dir)
+                logger.info(f"Also searching in working directory: {working_dir}")
+
+            for search_dir in search_dirs:
+                logger.info(f"Searching for baseline binary in: {search_dir}")
                 # Look for files with _baseline suffix
-                for candidate in output_dir.glob(f"*_baseline"):
+                for candidate in search_dir.glob(f"*_baseline"):
                     logger.info(f"  Found candidate: {candidate}")
-                    baseline_candidates.append(candidate)
+                    if candidate not in baseline_candidates:
+                        baseline_candidates.append(candidate)
 
                 # Try multiple expected names
                 expected_names = [
@@ -1386,7 +1489,7 @@ async def api_obfuscate_sync(
                 ]
 
                 for expected_name in expected_names:
-                    expected_baseline = output_dir / expected_name
+                    expected_baseline = search_dir / expected_name
                     logger.info(f"Checking: {expected_baseline}")
                     if expected_baseline.exists():
                         logger.info(f"  ✓ Found: {expected_name}")
@@ -1397,10 +1500,14 @@ async def api_obfuscate_sync(
                         logger.info(f"  ✗ Not found: {expected_name}")
 
             if not baseline_candidates:
-                logger.warning(f"No baseline binaries found in {output_dir}")
+                logger.warning(f"No baseline binaries found in any search directory")
                 logger.warning("Listing files in output directory:")
                 if output_dir and output_dir.exists():
                     for item in output_dir.iterdir():
+                        logger.warning(f"  {item.name}")
+                logger.warning("Listing files in working directory:")
+                if working_dir.exists():
+                    for item in working_dir.iterdir():
                         logger.warning(f"  {item.name}")
                 raise FileNotFoundError(f"No baseline binary found for {source_stem}")
 
@@ -1421,7 +1528,7 @@ async def api_obfuscate_sync(
             test_results = run_obfuscation_tests(
                 baseline_binary=baseline_binary,
                 obfuscated_binary=obfuscated_binary,
-                program_name=source_stem,
+                program_name=payload.name or source_stem,
                 results_dir=Path(job.job_id)
             )
 
@@ -1430,7 +1537,7 @@ async def api_obfuscate_sync(
                 test_results = run_lightweight_tests(
                     baseline_binary=baseline_binary,
                     obfuscated_binary=obfuscated_binary,
-                    program_name=source_stem
+                    program_name=payload.name or source_stem
                 )
 
             if test_results:
@@ -1529,15 +1636,23 @@ async def api_obfuscate_sync(
             result["platform_binaries"] = platform_binaries
             job_manager.update_job(job.job_id, result=result)
 
+            logger.info("[PLATFORM DEBUG] platform_binaries dict: %s", platform_binaries)
+            logger.info("[PLATFORM DEBUG] platform_binaries.get('linux'): %s", platform_binaries.get("linux"))
+            logger.info("[PLATFORM DEBUG] platform_binaries.get('windows'): %s", platform_binaries.get("windows"))
+            logger.info("[PLATFORM DEBUG] platform_binaries.get('macos'): %s", platform_binaries.get("macos"))
+
+            download_urls_response = {
+                "linux": f"/api/download/{job.job_id}/linux" if platform_binaries.get("linux") else None,
+                "windows": f"/api/download/{job.job_id}/windows" if platform_binaries.get("windows") else None,
+                "macos": f"/api/download/{job.job_id}/macos" if platform_binaries.get("macos") else None,
+            }
+            logger.info("[PLATFORM DEBUG] Final download_urls response: %s", download_urls_response)
+
             return {
                 "job_id": job.job_id,
                 "status": "completed",
                 "download_url": f"/api/download/{job.job_id}",
-                "download_urls": {
-                    "linux": f"/api/download/{job.job_id}/linux" if platform_binaries.get("linux") else None,
-                    "windows": f"/api/download/{job.job_id}/windows" if platform_binaries.get("windows") else None,
-                    "macos": f"/api/download/{job.job_id}/macos" if platform_binaries.get("macos") else None,
-                },
+                "download_urls": download_urls_response,
                 "report_url": f"/api/report/{job.job_id}",
             }
         else:
@@ -1649,17 +1764,75 @@ async def api_list_jobs():
 
 @app.get("/api/report/{job_id}")
 async def api_get_report(job_id: str, fmt: str = "json"):
+    logger.info("[REPORT] Requesting report - job_id: %s, format: %s", job_id, fmt)
     try:
         job = job_manager.get_job(job_id)
+        logger.info("[REPORT] Job found: %s", job.job_id)
     except JobNotFoundError:
+        logger.error("[REPORT] Job not found: %s", job_id)
         raise HTTPException(status_code=404, detail="Job not found")
-    report_path = job.report_paths.get(fmt)
-    if not report_path:
-        raise HTTPException(status_code=404, detail="Report not available")
-    path = Path(report_path)
-    if not path.exists():
+
+    fmt_lower = fmt.lower()
+    logger.info("[REPORT] Format requested (lowercased): %s", fmt_lower)
+
+    # Always require JSON as base (we convert from JSON to other formats)
+    json_report_path = job.report_paths.get("json")
+    if not json_report_path:
+        logger.error("[REPORT] No JSON report available")
+        raise HTTPException(status_code=404, detail="JSON report not found")
+
+    json_path = Path(json_report_path)
+    if not json_path.exists():
+        logger.error("[REPORT] JSON report file missing at: %s", json_path)
         raise HTTPException(status_code=404, detail="Report file missing")
-    return FileResponse(path)
+
+    # Load JSON report
+    try:
+        with open(json_path, 'r') as f:
+            report_data = json.load(f)
+        logger.info("[REPORT] JSON report loaded successfully")
+    except Exception as e:
+        logger.error("[REPORT] Failed to load JSON report: %s", e)
+        raise HTTPException(status_code=500, detail="Failed to load report")
+
+    # Return format based on request
+    if fmt_lower == "json":
+        logger.info("[REPORT] Returning JSON report")
+        return FileResponse(json_path, media_type="application/json", filename=f"{job_id}.json")
+
+    elif fmt_lower == "markdown":
+        logger.info("[REPORT] Converting to Markdown")
+        try:
+            markdown_content = report_converter.json_to_markdown(report_data)
+            logger.info("[REPORT] Markdown conversion successful")
+            from fastapi.responses import StreamingResponse
+            return StreamingResponse(
+                iter([markdown_content.encode('utf-8')]),
+                media_type="text/markdown",
+                headers={"Content-Disposition": f'attachment; filename="{job_id}.markdown"'}
+            )
+        except Exception as e:
+            logger.error("[REPORT] Markdown conversion failed: %s", e, exc_info=True)
+            raise HTTPException(status_code=500, detail="Failed to generate markdown report")
+
+    elif fmt_lower == "pdf":
+        logger.info("[REPORT] Converting to PDF")
+        try:
+            pdf_content = report_converter.json_to_pdf(report_data)
+            logger.info("[REPORT] PDF conversion successful, size: %d bytes", len(pdf_content))
+            from fastapi.responses import StreamingResponse
+            return StreamingResponse(
+                iter([pdf_content]),
+                media_type="application/pdf",
+                headers={"Content-Disposition": f'attachment; filename="{job_id}.pdf"'}
+            )
+        except Exception as e:
+            logger.error("[REPORT] PDF conversion failed: %s", e, exc_info=True)
+            raise HTTPException(status_code=500, detail="Failed to generate PDF report")
+
+    else:
+        logger.warning("[REPORT] Unknown format requested: %s", fmt_lower)
+        raise HTTPException(status_code=400, detail=f"Unsupported format: {fmt}")
 
 
 @app.websocket("/ws/jobs/{job_id}")

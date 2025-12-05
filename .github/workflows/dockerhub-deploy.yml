@@ -69,13 +69,6 @@ jobs:
         echo "✅ Binaries downloaded successfully"
         ls -lh cmd/llvm-obfuscator/plugins/linux-x86_64/
 
-        # Download macOS SDK for cross-compilation
-        echo "Downloading macOS SDK from gs://${GCP_BUCKET}/macos-sdk/..."
-        mkdir -p cmd/llvm-obfuscator/macos-sdk
-        gsutil -m cp -r "gs://${GCP_BUCKET}/macos-sdk/MacOSX15.4.sdk" cmd/llvm-obfuscator/macos-sdk/
-
-        echo "✅ macOS SDK downloaded successfully"
-
     - name: Verify binaries are present (REQUIRED)
       run: |
         echo "=========================================="

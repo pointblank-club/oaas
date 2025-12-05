@@ -148,11 +148,16 @@ class AdvancedConfiguration:
     indirect_calls: IndirectCallConfiguration = field(default_factory=IndirectCallConfiguration)
     remarks: RemarksConfiguration = field(default_factory=RemarksConfiguration)
     upx_packing: UPXConfiguration = field(default_factory=UPXConfiguration)
+    # ✅ NEW: IR and advanced metrics analysis options
+    preserve_ir: bool = True  # Keep IR files after compilation for analysis
+    ir_metrics_enabled: bool = True  # Extract CFG and instruction metrics
+    per_pass_metrics: bool = False  # Analyze IR after each pass (expensive)
+    binary_analysis_extended: bool = True  # Extended binary structure analysis
 
 @dataclass
 class OutputConfiguration:
     directory: Path
-    report_formats: List[str] = field(default_factory=lambda: ["json"])  # json, html, pdf
+    report_formats: List[str] = field(default_factory=lambda: ["json", "markdown", "pdf"])  # json, markdown, pdf
 
 @dataclass
 class ObfuscationConfig:

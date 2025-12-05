@@ -1,10 +1,11 @@
 import { useState, useCallback, useEffect } from 'react';
 import './App.css';
 import { GitHubIntegration, FileTree, TestResults } from './components';
+import { MetricsDashboard } from './components/MetricsDashboard';
 import githubLogo from '../assets/github.png';
 
 type Platform = 'linux' | 'windows' | 'macos';
-type Architecture = 'x86_64' | 'arm64';
+type Architecture = 'x86_64' | 'arm64' | 'i686';
 
 // Demo Programs
 const DEMO_PROGRAMS = {
@@ -303,6 +304,84 @@ interface ReportData {
   size_reduction: number;
   entropy_increase: number;
   estimated_re_effort: string;
+  // ✅ NEW: Comprehensive metrics fields
+  total_passes_applied?: number;
+  total_obfuscation_overhead?: number;
+  code_complexity_factor?: number;
+  detection_difficulty_rating?: string;
+  protections_applied?: {
+    control_flow_flattening?: boolean;
+    bogus_control_flow?: boolean;
+    symbol_obfuscation?: boolean;
+    function_hiding?: boolean;
+    fake_loops_injected?: boolean;
+    string_encryption?: boolean;
+    indirect_calls?: boolean;
+    total_protections_enabled?: number;
+  };
+  // ✅ NEW: LLVM IR Analysis Metrics
+  control_flow_metrics?: {
+    baseline: {
+      basic_blocks: number;
+      cfg_edges: number;
+      cyclomatic_complexity: number;
+      functions: number;
+      loops: number;
+      avg_bb_per_function: number;
+    };
+    obfuscated: {
+      basic_blocks: number;
+      cfg_edges: number;
+      cyclomatic_complexity: number;
+      functions: number;
+      loops: number;
+      avg_bb_per_function: number;
+    };
+    comparison: {
+      complexity_increase_percent: number;
+      basic_blocks_added: number;
+      cfg_edges_added: number;
+      instruction_growth_percent: number;
+      mba_expressions_added: number;
+      arithmetic_complexity_increase: number;
+    };
+  };
+  instruction_metrics?: {
+    baseline: {
+      total_instructions: number;
+      instruction_distribution: {
+        load: number;
+        store: number;
+        call: number;
+        br: number;
+        phi: number;
+        arithmetic: number;
+        other: number;
+      };
+      call_instruction_count: number;
+      indirect_call_count: number;
+    };
+    obfuscated: {
+      total_instructions: number;
+      instruction_distribution: {
+        load: number;
+        store: number;
+        call: number;
+        br: number;
+        phi: number;
+        arithmetic: number;
+        other: number;
+      };
+      call_instruction_count: number;
+      indirect_call_count: number;
+    };
+    comparison: {
+      instruction_growth_percent: number;
+      mba_expressions_added: number;
+      substituted_instructions: number;
+      arithmetic_complexity_increase: number;
+    };
+  };
 }
 
 interface Modal {
@@ -1194,16 +1273,24 @@ function App() {
         macos: null,
       };
 
+      console.log('[DEBUG] Full response data:', JSON.stringify(data, null, 2));
+      console.log('[DEBUG] data.download_urls:', data.download_urls);
+      console.log('[DEBUG] data.download_url:', data.download_url);
+
       if (data.download_urls) {
         // Multi-platform build - use platform-specific URLs
+        console.log('[DEBUG] Using multi-platform URLs');
         downloadUrlsMap.linux = data.download_urls.linux || null;
         downloadUrlsMap.windows = data.download_urls.windows || null;
         downloadUrlsMap.macos = data.download_urls.macos || null;
+        console.log('[DEBUG] Download URLs map:', downloadUrlsMap);
       } else if (data.download_url) {
         // Legacy single platform build
+        console.log('[DEBUG] Using legacy single platform URL:', data.download_url);
         downloadUrlsMap.linux = data.download_url;
       }
 
+      console.log('[DEBUG] Final downloadUrlsMap before setState:', downloadUrlsMap);
       setDownloadUrls(downloadUrlsMap);
       setBinaryName(customBinaryName);
       setProgress({ message: 'Complete!', percent: 100 });
@@ -2087,6 +2174,7 @@ function App() {
               >
                 <option value="x86_64">x86_64 (64-bit Intel/AMD)</option>
                 <option value="arm64">ARM64 (Apple M1/M2, ARM servers)</option>
+                <option value="i686">i686 (32-bit x86)</option>
               </select>
             </label>
 
@@ -2248,6 +2336,19 @@ function App() {
                     >
                       📊 JSON
                     </button>
+                    <button
+                      className="download-btn"
+                      onClick={() => {
+                        const link = document.createElement('a');
+                        link.href = `/api/report/${jobId}?fmt=pdf`;
+                        link.download = `report_${jobId}.pdf`;
+                        document.body.appendChild(link);
+                        link.click();
+                        document.body.removeChild(link);
+                      }}
+                    >
+                      📋 PDF
+                    </button>
                   </div>
                 </div>
               )}
@@ -2358,8 +2459,8 @@ function App() {
                         <span className="comparison-label">After:</span>
                         <span className="comparison-value">{report.output_attributes.symbols_count}</span>
                       </div>
-                      <div className="comparison-change positive">
-                        ✓ {report.comparison.symbols_removed} removed ({report.comparison.symbols_removed_percent.toFixed(1)}%)
+                      <div className={`comparison-change ${report.comparison.symbols_removed_percent > 0 ? 'positive' : 'neutral'}`}>
+                        {report.comparison.symbols_removed_percent > 0 ? '✓' : '•'} {report.comparison.symbols_removed} removed ({Math.abs(report.comparison.symbols_removed_percent).toFixed(1)}%)
                       </div>
                       <div className="progress-bar-container">
                         <div className="progress-bar-fill" style={{ width: `${Math.min(100, Math.abs(report.comparison.symbols_removed_percent))}%` }}>
@@ -2378,8 +2479,8 @@ function App() {
                         <span className="comparison-label">After:</span>
                         <span className="comparison-value">{report.output_attributes.functions_count}</span>
                       </div>
-                      <div className="comparison-change positive">
-                        ✓ {report.comparison.functions_removed} hidden ({report.comparison.functions_removed_percent.toFixed(1)}%)
+                      <div className={`comparison-change ${report.comparison.functions_removed_percent > 0 ? 'positive' : 'neutral'}`}>
+                        {report.comparison.functions_removed_percent > 0 ? '✓' : '•'} {report.comparison.functions_removed} hidden ({Math.abs(report.comparison.functions_removed_percent).toFixed(1)}%)
                       </div>
                       <div className="progress-bar-container">
                         <div className="progress-bar-fill" style={{ width: `${Math.min(100, Math.abs(report.comparison.functions_removed_percent))}%` }}>
@@ -2398,8 +2499,8 @@ function App() {
                         <span className="comparison-label">After:</span>
                         <span className="comparison-value">{report.output_attributes.entropy.toFixed(3)}</span>
                       </div>
-                      <div className="comparison-change positive">
-                        ✓ +{report.comparison.entropy_increase.toFixed(3)} ({report.comparison.entropy_increase_percent > 0 ? '+' : ''}{report.comparison.entropy_increase_percent.toFixed(1)}%)
+                      <div className={`comparison-change ${report.comparison.entropy_increase_percent > 0 ? 'positive' : 'neutral'}`}>
+                        {report.comparison.entropy_increase_percent > 0 ? '✓' : '•'} {report.comparison.entropy_increase > 0 ? '+' : ''}{report.comparison.entropy_increase.toFixed(3)} ({report.comparison.entropy_increase_percent > 0 ? '+' : ''}{report.comparison.entropy_increase_percent.toFixed(1)}%)
                       </div>
                     </div>
                   </div>
@@ -2491,17 +2592,228 @@ function App() {
                 </div>
               )}
 
-              {/* Metrics */}
-              <div className="report-block">
-                <h3>EFFECTIVENESS METRICS</h3>
-                <div className="report-item">Obfuscation Score: {report.obfuscation_score ?? 0}/100</div>
-                <div className="report-item">Symbol Reduction: {report.symbol_reduction ?? 0}%</div>
-                <div className="report-item">Function Reduction: {report.function_reduction ?? 0}%</div>
-                <div className="report-item">Size Change: {(report.size_reduction ?? 0) > 0 ? '+' : ''}{report.size_reduction ?? 0}%</div>
-                <div className="report-item">Entropy Increase: {report.entropy_increase ?? 0}%</div>
-                <div className="report-item">Est. RE Effort: {report.estimated_re_effort || 'N/A'}</div>
+              {/* ✅ REDESIGNED: Comprehensive Metrics Section */}
+              <div style={{ gridColumn: '1 / -1', marginTop: '20px' }}>
+                {/* Main Score Card */}
+                <div style={{
+                  backgroundColor: 'var(--bg-secondary)',
+                  border: `3px solid ${report.obfuscation_score >= 80 ? '#28a745' : report.obfuscation_score >= 60 ? '#ffc107' : '#dc3545'}`,
+                  borderRadius: '8px',
+                  padding: '24px',
+                  marginBottom: '20px',
+                  textAlign: 'center'
+                }}>
+                  <div style={{ fontSize: '14px', color: 'var(--text-secondary)', marginBottom: '8px' }}>OBFUSCATION SCORE</div>
+                  <div style={{
+                    fontSize: '48px',
+                    fontWeight: 'bold',
+                    color: report.obfuscation_score >= 80 ? '#28a745' : report.obfuscation_score >= 60 ? '#ffc107' : '#dc3545',
+                    marginBottom: '8px'
+                  }}>
+                    {(report.obfuscation_score ?? 0).toFixed(1)}/100
+                  </div>
+                  <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+                    {report.obfuscation_score >= 80 ? '🟢 Excellent Protection' : report.obfuscation_score >= 60 ? '🟡 Good Protection' : '🔴 Moderate Protection'}
+                  </div>
+                  <div style={{ fontSize: '14px', color: 'var(--text-primary)', marginTop: '12px', fontWeight: 'bold' }}>
+                    RE Difficulty: {report.estimated_re_effort || 'N/A'}
+                  </div>
+                  {report.detection_difficulty_rating && (
+                    <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '8px' }}>
+                      Detection Difficulty: <strong>{report.detection_difficulty_rating}</strong>
+                    </div>
+                  )}
+                </div>
+
+                {/* Metrics Grid */}
+                <div style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
+                  gap: '16px',
+                  marginBottom: '20px'
+                }}>
+                  {/* Symbol Reduction */}
+                  <div style={{
+                    backgroundColor: 'var(--bg-secondary)',
+                    border: `1px solid var(--border-color)`,
+                    borderRadius: '6px',
+                    padding: '16px'
+                  }}>
+                    <div style={{ fontSize: '11px', color: 'var(--text-secondary)', textTransform: 'uppercase', marginBottom: '8px' }}>Symbol Reduction</div>
+                    <div style={{
+                      fontSize: '28px',
+                      fontWeight: 'bold',
+                      color: (report.symbol_reduction ?? 0) > 0 ? '#28a745' : 'var(--text-secondary)',
+                      marginBottom: '4px'
+                    }}>
+                      {Math.abs(report.symbol_reduction ?? 0).toFixed(1)}%
+                    </div>
+                    <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
+                      {(report.symbol_reduction ?? 0) > 0 ? '✓ Symbols hidden' : '• No reduction'}
+                    </div>
+                  </div>
+
+                  {/* Function Reduction */}
+                  <div style={{
+                    backgroundColor: 'var(--bg-secondary)',
+                    border: `1px solid var(--border-color)`,
+                    borderRadius: '6px',
+                    padding: '16px'
+                  }}>
+                    <div style={{ fontSize: '11px', color: 'var(--text-secondary)', textTransform: 'uppercase', marginBottom: '8px' }}>Function Hiding</div>
+                    <div style={{
+                      fontSize: '28px',
+                      fontWeight: 'bold',
+                      color: (report.function_reduction ?? 0) > 0 ? '#28a745' : 'var(--text-secondary)',
+                      marginBottom: '4px'
+                    }}>
+                      {Math.abs(report.function_reduction ?? 0).toFixed(1)}%
+                    </div>
+                    <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
+                      {(report.function_reduction ?? 0) > 0 ? '✓ Functions hidden' : '• No reduction'}
+                    </div>
+                  </div>
+
+                  {/* Entropy */}
+                  <div style={{
+                    backgroundColor: 'var(--bg-secondary)',
+                    border: `1px solid var(--border-color)`,
+                    borderRadius: '6px',
+                    padding: '16px'
+                  }}>
+                    <div style={{ fontSize: '11px', color: 'var(--text-secondary)', textTransform: 'uppercase', marginBottom: '8px' }}>Entropy Increase</div>
+                    <div style={{
+                      fontSize: '28px',
+                      fontWeight: 'bold',
+                      color: (report.entropy_increase ?? 0) > 0 ? '#28a745' : 'var(--text-secondary)',
+                      marginBottom: '4px'
+                    }}>
+                      {((report.entropy_increase ?? 0) > 0 ? '+' : '')}{(report.entropy_increase ?? 0).toFixed(1)}%
+                    </div>
+                    <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
+                      {(report.entropy_increase ?? 0) > 0 ? '✓ Code complexity' : '• No increase'}
+                    </div>
+                  </div>
+
+                  {/* Size Change */}
+                  <div style={{
+                    backgroundColor: 'var(--bg-secondary)',
+                    border: `1px solid var(--border-color)`,
+                    borderRadius: '6px',
+                    padding: '16px'
+                  }}>
+                    <div style={{ fontSize: '11px', color: 'var(--text-secondary)', textTransform: 'uppercase', marginBottom: '8px' }}>Binary Size</div>
+                    <div style={{
+                      fontSize: '28px',
+                      fontWeight: 'bold',
+                      color: (report.size_reduction ?? 0) > 100 ? '#dc3545' : (report.size_reduction ?? 0) > 0 ? '#ffc107' : '#28a745',
+                      marginBottom: '4px'
+                    }}>
+                      {((report.size_reduction ?? 0) > 0 ? '+' : '')}{(report.size_reduction ?? 0).toFixed(1)}%
+                    </div>
+                    <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
+                      {(report.size_reduction ?? 0) > 100 ? '⚠ Extreme overhead' : (report.size_reduction ?? 0) > 0 ? 'ℹ Expected increase' : '✓ Size reduced'}
+                    </div>
+                  </div>
+
+                  {/* Complexity Factor */}
+                  {report.code_complexity_factor && (
+                    <div style={{
+                      backgroundColor: 'var(--bg-secondary)',
+                      border: `1px solid var(--border-color)`,
+                      borderRadius: '6px',
+                      padding: '16px'
+                    }}>
+                      <div style={{ fontSize: '11px', color: 'var(--text-secondary)', textTransform: 'uppercase', marginBottom: '8px' }}>Code Complexity</div>
+                      <div style={{
+                        fontSize: '28px',
+                        fontWeight: 'bold',
+                        color: report.code_complexity_factor > 1.3 ? '#28a745' : '#ffc107',
+                        marginBottom: '4px'
+                      }}>
+                        {(report.code_complexity_factor ?? 1).toFixed(2)}x
+                      </div>
+                      <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
+                        {report.code_complexity_factor > 1.3 ? '✓ High complexity' : 'ℹ Moderate'}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Passes Applied */}
+                  {report.total_passes_applied && (
+                    <div style={{
+                      backgroundColor: 'var(--bg-secondary)',
+                      border: `1px solid var(--border-color)`,
+                      borderRadius: '6px',
+                      padding: '16px'
+                    }}>
+                      <div style={{ fontSize: '11px', color: 'var(--text-secondary)', textTransform: 'uppercase', marginBottom: '8px' }}>Passes Applied</div>
+                      <div style={{
+                        fontSize: '28px',
+                        fontWeight: 'bold',
+                        color: '#007bff',
+                        marginBottom: '4px'
+                      }}>
+                        {report.total_passes_applied}
+                      </div>
+                      <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
+                        obfuscation layers
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Protections Applied */}
+                {report.protections_applied && (
+                  <div style={{
+                    backgroundColor: 'var(--bg-secondary)',
+                    border: `1px solid var(--border-color)`,
+                    borderRadius: '6px',
+                    padding: '16px',
+                    marginBottom: '20px'
+                  }}>
+                    <div style={{ fontSize: '12px', color: 'var(--text-secondary)', textTransform: 'uppercase', marginBottom: '12px', fontWeight: 'bold' }}>
+                      Protections Enabled ({report.protections_applied.total_protections_enabled || 0})
+                    </div>
+                    <div style={{
+                      display: 'grid',
+                      gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))',
+                      gap: '12px'
+                    }}>
+                      {report.protections_applied.control_flow_flattening && (
+                        <div style={{ fontSize: '11px', color: '#28a745' }}>✓ Control Flow Flattening</div>
+                      )}
+                      {report.protections_applied.bogus_control_flow && (
+                        <div style={{ fontSize: '11px', color: '#28a745' }}>✓ Bogus Control Flow</div>
+                      )}
+                      {report.protections_applied.symbol_obfuscation && (
+                        <div style={{ fontSize: '11px', color: '#28a745' }}>✓ Symbol Obfuscation</div>
+                      )}
+                      {report.protections_applied.function_hiding && (
+                        <div style={{ fontSize: '11px', color: '#28a745' }}>✓ Function Hiding</div>
+                      )}
+                      {report.protections_applied.fake_loops_injected && (
+                        <div style={{ fontSize: '11px', color: '#28a745' }}>✓ Fake Loops</div>
+                      )}
+                      {report.protections_applied.string_encryption && (
+                        <div style={{ fontSize: '11px', color: '#28a745' }}>✓ String Encryption</div>
+                      )}
+                      {report.protections_applied.indirect_calls && (
+                        <div style={{ fontSize: '11px', color: '#28a745' }}>✓ Indirect Calls</div>
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
+          </section>
+        )}
+
+        {/* ✅ NEW: Advanced Metrics Dashboard */}
+        {report && (report.control_flow_metrics || report.instruction_metrics) && (
+          <section className="section report-section">
+            <h2 className="section-title">[6] ADVANCED METRICS DASHBOARD</h2>
+            <MetricsDashboard report={report} />
           </section>
         )}
 

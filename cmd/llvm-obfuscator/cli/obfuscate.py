@@ -28,6 +28,293 @@ from core.utils import create_logger, load_yaml, normalize_flags_and_passes
 app = typer.Typer(add_completion=False, help="LLVM-based binary obfuscation toolkit")
 logger = create_logger("cli", logging.INFO)
 
+# ANSI color codes
+class Colors:
+    RED = '\033[91m'
+    GREEN = '\033[92m'
+    YELLOW = '\033[93m'
+    BLUE = '\033[94m'
+    MAGENTA = '\033[95m'
+    CYAN = '\033[96m'
+    WHITE = '\033[97m'
+    RESET = '\033[0m'
+    BOLD = '\033[1m'
+
+
+def print_banner():
+    """Print OAAS ASCII art banner with colored letters."""
+    # Easy to modify ASCII art - each letter can be changed independently
+    # To modify: change the characters in each letter's section (O, A, A, S)
+    # Colors: RED, GREEN, YELLOW, BLUE (change Colors.RED, Colors.GREEN, etc.)
+    
+    # Letter O (RED)
+    o_line1 = f"{Colors.RED}{Colors.BOLD}  ___  "
+    o_line2 = f"{Colors.RED}{Colors.BOLD} / _ \\ "
+    o_line3 = f"{Colors.RED}{Colors.BOLD}| | | |"
+    o_line4 = f"{Colors.RED}{Colors.BOLD}| |_| |"
+    o_line5 = f"{Colors.RED}{Colors.BOLD} \\___/ "
+    
+    # Letter A (GREEN) - first A
+    a1_line1 = f"{Colors.GREEN}{Colors.BOLD}  ___  "
+    a1_line2 = f"{Colors.GREEN}{Colors.BOLD} / _ \\ "
+    a1_line3 = f"{Colors.GREEN}{Colors.BOLD}| / \\ |"
+    a1_line4 = f"{Colors.GREEN}{Colors.BOLD}| |_| |"
+    a1_line5 = f"{Colors.GREEN}{Colors.BOLD}|_/ \\_|"
+    
+    # Letter A (YELLOW) - second A
+    a2_line1 = f"{Colors.YELLOW}{Colors.BOLD}  ___  "
+    a2_line2 = f"{Colors.YELLOW}{Colors.BOLD} / _ \\ "
+    a2_line3 = f"{Colors.YELLOW}{Colors.BOLD}| / \\ |"
+    a2_line4 = f"{Colors.YELLOW}{Colors.BOLD}| |_| |"
+    a2_line5 = f"{Colors.YELLOW}{Colors.BOLD}|_/ \\_|"
+    
+    # Letter S (BLUE)
+    s_line1 = f"{Colors.BLUE}{Colors.BOLD}  ___  "
+    s_line2 = f"{Colors.BLUE}{Colors.BOLD} / __| "
+    s_line3 = f"{Colors.BLUE}{Colors.BOLD}| (__  "
+    s_line4 = f"{Colors.BLUE}{Colors.BOLD} \\___ \\"
+    s_line5 = f"{Colors.BLUE}{Colors.BOLD} |___/ "
+    
+    banner = f"""
+{o_line1}{a1_line1}{a2_line1}{s_line1}
+{o_line2}{a1_line2}{a2_line2}{s_line2}
+{o_line3}{a1_line3}{a2_line3}{s_line3}
+{o_line4}{a1_line4}{a2_line4}{s_line4}
+{o_line5}{a1_line5}{a2_line5}{s_line5}
+{Colors.RESET}
+"""
+    typer.echo(banner, err=False)
+
+
+# Create a help sub-app for organized help commands
+help_app = typer.Typer(name="help", help="Detailed help and documentation", invoke_without_command=True)
+
+@help_app.callback(invoke_without_command=True)
+def help_callback(ctx: typer.Context):
+    """Show basic commands, usage, and available help topics."""
+    if ctx.invoked_subcommand is None:
+        # Show main app help by invoking it programmatically
+        import sys
+        from typer.main import get_command
+        from click.testing import CliRunner
+        
+        root_cmd = get_command(app)
+        runner = CliRunner()
+        result = runner.invoke(root_cmd, ['--help'])
+        typer.echo(result.output)
+        
+        typer.echo("\nBasic Usage Examples:")
+        typer.echo("  python -m cli.obfuscate compile examples/hello.c --output ./output")
+        typer.echo("  python -m cli.obfuscate analyze ./output/hello")
+        typer.echo("  python -m cli.obfuscate compare ./baseline/hello ./obfuscated/hello")
+        
+        typer.echo("\nFor detailed documentation on obfuscation layers, use:")
+        typer.echo("  python -m cli.obfuscate help <topic>")
+        typer.echo("\nAvailable help topics:")
+        typer.echo("  layers     - Overview of obfuscation layers and architecture")
+        typer.echo("  mlir       - Layer 1: MLIR obfuscation passes (string-encrypt, symbol-obfuscate, etc.)")
+        typer.echo("  ollvm      - Layer 2: OLLVM obfuscation passes (flattening, substitution, etc.)")
+        typer.echo("  advanced   - Layer 3: Advanced features (indirect calls, UPX, cycles, fake loops)")
+        typer.echo("  strategies - Pre-configured obfuscation strategies for different use cases")
+        typer.echo("  examples   - Detailed usage examples for common scenarios")
+
+@help_app.command("layers")
+def help_layers():
+    """Overview of obfuscation layers and architecture."""
+    typer.echo("Obfuscation Architecture - Layer Overview\n")
+    typer.echo("The obfuscator applies transformations in multiple layers, each targeting")
+    typer.echo("different aspects of your code. You can selectively enable/disable each layer")
+    typer.echo("to achieve the desired balance between protection and performance.\n")
+    typer.echo("Use 'help mlir', 'help ollvm', or 'help advanced' for detailed information.")
+
+@help_app.command("mlir")
+def help_mlir():
+    """Layer 1: MLIR Obfuscation passes."""
+    typer.echo("Layer 1: MLIR Obfuscation (High-Level Transformations)\n")
+    typer.echo("MLIR passes operate on the Multi-Level Intermediate Representation, providing")
+    typer.echo("high-level semantic obfuscation before code generation.\n")
+    
+    typer.echo("1. String Encryption (--enable-string-encrypt)")
+    typer.echo("   • Encrypts string literals at compile-time")
+    typer.echo("   • Decryption happens at runtime via injected decryption functions")
+    typer.echo("   • Prevents static analysis tools from extracting sensitive strings")
+    typer.echo("   • Impact: Low performance overhead, high security value\n")
+    
+    typer.echo("2. Symbol Obfuscation (--enable-symbol-obfuscate)")
+    typer.echo("   • Renames function and variable symbols to meaningless identifiers")
+    typer.echo("   • Makes reverse engineering significantly harder")
+    typer.echo("   • Preserves linkage and external visibility requirements")
+    typer.echo("   • Impact: Minimal performance overhead\n")
+    
+    typer.echo("3. Constant Obfuscation (--enable-constant-obfuscate)")
+    typer.echo("   • Obfuscates numeric constants using mathematical transformations")
+    typer.echo("   • Replaces direct constants with equivalent expressions")
+    typer.echo("   • Hides magic numbers and configuration values")
+    typer.echo("   • Impact: Negligible performance overhead\n")
+    
+    typer.echo("4. Crypto Hash (via config file)")
+    typer.echo("   • Advanced symbol obfuscation using cryptographic hashing")
+    typer.echo("   • Uses SHA-256 or other algorithms to generate symbol names")
+    typer.echo("   • Provides stronger obfuscation than basic symbol obfuscation")
+    typer.echo("   • Impact: Minimal overhead, replaces symbol-obfuscate")
+
+@help_app.command("ollvm")
+def help_ollvm():
+    """Layer 2: OLLVM Obfuscation passes."""
+    typer.echo("Layer 2: OLLVM Obfuscation (Control Flow & Instructions)\n")
+    typer.echo("OLLVM (Obfuscator-LLVM) passes transform the LLVM IR to obfuscate control")
+    typer.echo("flow and instruction patterns, making decompilation extremely difficult.\n")
+    
+    typer.echo("1. Control Flow Flattening (--enable-flattening)")
+    typer.echo("   • Flattens function control flow graphs into switch-based state machines")
+    typer.echo("   • Eliminates natural control flow patterns")
+    typer.echo("   • Makes function logic extremely hard to follow")
+    typer.echo("   • Impact: Moderate performance overhead (10-30%), very high security\n")
+    
+    typer.echo("2. Instruction Substitution (--enable-substitution)")
+    typer.echo("   • Replaces simple instructions with equivalent complex expressions")
+    typer.echo("   • Uses mathematical identities (e.g., a+b → (a^b)+2*(a&b))")
+    typer.echo("   • Makes pattern matching and instruction analysis harder")
+    typer.echo("   • Impact: Low to moderate overhead (5-15%)\n")
+    
+    typer.echo("3. Bogus Control Flow (--enable-bogus-cf)")
+    typer.echo("   • Inserts fake conditional branches that always take the same path")
+    typer.echo("   • Adds opaque predicates (always true/false conditions)")
+    typer.echo("   • Creates dead code blocks to confuse reverse engineers")
+    typer.echo("   • Impact: Moderate overhead (15-25%), high confusion value\n")
+    
+    typer.echo("4. Basic Block Splitting (--enable-split)")
+    typer.echo("   • Splits large basic blocks into smaller fragments")
+    typer.echo("   • Breaks up linear code sequences")
+    typer.echo("   • Makes control flow reconstruction more difficult")
+    typer.echo("   • Impact: Low overhead (5-10%)\n")
+    
+    typer.echo("5. Linear MBA Obfuscation (--enable-linear-mba)")
+    typer.echo("   • Applies Mixed Boolean-Arithmetic transformations")
+    typer.echo("   • Replaces arithmetic operations with complex bitwise expressions")
+    typer.echo("   • Uses linear MBA formulas to hide operation semantics")
+    typer.echo("   • Impact: Moderate overhead (10-20%)")
+
+@help_app.command("advanced")
+def help_advanced():
+    """Layer 3: Advanced features and binary protection."""
+    typer.echo("Layer 3: Advanced Features (Runtime & Binary Protection)\n")
+    
+    typer.echo("1. Indirect Call Obfuscation (--enable-indirect-calls)")
+    typer.echo("   • Replaces direct function calls with indirect calls via function pointers")
+    typer.echo("   • Obfuscates call graphs and function relationships")
+    typer.echo("   • Options:")
+    typer.echo("     --indirect-stdlib: Obfuscate standard library calls")
+    typer.echo("     --indirect-custom: Obfuscate custom function calls")
+    typer.echo("   • Impact: Low overhead (5-10%), breaks static call analysis\n")
+    
+    typer.echo("2. Fake Loops (--fake-loops N)")
+    typer.echo("   • Injects N fake loops that never execute")
+    typer.echo("   • Creates noise in control flow graphs")
+    typer.echo("   • Range: 0-50 loops (default: 0)")
+    typer.echo("   • Impact: Minimal overhead, increases binary size\n")
+    
+    typer.echo("3. UPX Binary Packing (--enable-upx)")
+    typer.echo("   • Compresses and packs the final binary using UPX")
+    typer.echo("   • Adds an unpacking layer at runtime")
+    typer.echo("   • Options:")
+    typer.echo("     --upx-compression: fast|default|best|brute")
+    typer.echo("     --upx-lzma: Use LZMA compression algorithm")
+    typer.echo("     --upx-preserve-original: Keep backup of pre-packed binary")
+    typer.echo("   • Impact: Increases startup time, reduces binary size\n")
+    
+    typer.echo("4. Obfuscation Cycles (--cycles N)")
+    typer.echo("   • Applies OLLVM passes N times in sequence")
+    typer.echo("   • Each cycle further obfuscates the code")
+    typer.echo("   • Range: 1-5 cycles (default: 1)")
+    typer.echo("   • Impact: Exponential overhead, maximum security")
+
+@help_app.command("strategies")
+def help_strategies():
+    """Pre-configured obfuscation strategies for different use cases."""
+    typer.echo("Selective Obfuscation Strategies\n")
+    
+    typer.echo("Minimal Protection (Fast, Low Overhead):")
+    typer.echo("  --enable-string-encrypt --enable-symbol-obfuscate")
+    typer.echo("  • Best for: Production code needing basic protection")
+    typer.echo("  • Overhead: <5%\n")
+    
+    typer.echo("Balanced Protection (Recommended):")
+    typer.echo("  --level 3 --enable-flattening --enable-substitution --enable-string-encrypt")
+    typer.echo("  • Best for: Most applications")
+    typer.echo("  • Overhead: 15-25%\n")
+    
+    typer.echo("High Security (Maximum Protection):")
+    typer.echo("  --level 5 --enable-flattening --enable-substitution --enable-bogus-cf")
+    typer.echo("  --enable-split --enable-linear-mba --enable-string-encrypt")
+    typer.echo("  --enable-symbol-obfuscate --enable-constant-obfuscate")
+    typer.echo("  --enable-indirect-calls --cycles 3 --fake-loops 10")
+    typer.echo("  • Best for: Critical security-sensitive code")
+    typer.echo("  • Overhead: 50-100%\n")
+    
+    typer.echo("Control Flow Focus:")
+    typer.echo("  --enable-flattening --enable-bogus-cf --enable-split")
+    typer.echo("  • Best for: Algorithms and business logic protection")
+    typer.echo("  • Overhead: 30-40%\n")
+    
+    typer.echo("Data Protection Focus:")
+    typer.echo("  --enable-string-encrypt --enable-constant-obfuscate --enable-linear-mba")
+    typer.echo("  • Best for: Protecting sensitive data and constants")
+    typer.echo("  • Overhead: 10-15%")
+
+@help_app.command("examples")
+def help_examples():
+    """Usage examples for common scenarios."""
+    typer.echo("Usage Examples\n")
+    
+    typer.echo("Basic compilation:")
+    typer.echo("  python -m cli.obfuscate compile examples/hello.c --output ./output\n")
+    
+    typer.echo("Layer 1 only (MLIR obfuscation):")
+    typer.echo("  python -m cli.obfuscate compile examples/hello.c \\")
+    typer.echo("    --output ./output \\")
+    typer.echo("    --enable-string-encrypt \\")
+    typer.echo("    --enable-symbol-obfuscate \\")
+    typer.echo("    --enable-constant-obfuscate\n")
+    
+    typer.echo("Layer 2 only (OLLVM obfuscation):")
+    typer.echo("  python -m cli.obfuscate compile examples/hello.c \\")
+    typer.echo("    --output ./output \\")
+    typer.echo("    --enable-flattening \\")
+    typer.echo("    --enable-substitution \\")
+    typer.echo("    --enable-bogus-cf \\")
+    typer.echo("    --enable-split\n")
+    
+    typer.echo("All layers (maximum protection):")
+    typer.echo("  python -m cli.obfuscate compile examples/hello.c \\")
+    typer.echo("    --output ./output \\")
+    typer.echo("    --level 5 \\")
+    typer.echo("    --enable-flattening --enable-substitution --enable-bogus-cf \\")
+    typer.echo("    --enable-split --enable-linear-mba \\")
+    typer.echo("    --enable-string-encrypt --enable-symbol-obfuscate \\")
+    typer.echo("    --enable-constant-obfuscate \\")
+    typer.echo("    --enable-indirect-calls \\")
+    typer.echo("    --cycles 3 --fake-loops 10 \\")
+    typer.echo("    --enable-upx\n")
+    
+    typer.echo("Analyze obfuscated binary:")
+    typer.echo("  python -m cli.obfuscate analyze ./output/hello\n")
+    
+    typer.echo("Compare original vs obfuscated:")
+    typer.echo("  python -m cli.obfuscate compare ./baseline/hello ./obfuscated/hello")
+
+# Add help sub-app to main app
+app.add_typer(help_app)
+
+
+@app.callback(invoke_without_command=True)
+def main(ctx: typer.Context):
+    """LLVM-based binary obfuscation toolkit."""
+    # Print banner once for all commands
+    print_banner()
+    if ctx.invoked_subcommand is None:
+        typer.echo(f"{Colors.CYAN}Use {Colors.GREEN}'help'{Colors.CYAN} command or {Colors.GREEN}--help{Colors.CYAN} to see available commands.{Colors.RESET}")
+
 
 def _build_config(
     input_path: Path,

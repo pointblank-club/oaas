@@ -41,6 +41,7 @@ class LLVMObfuscator:
         "-fomit-frame-pointer",
         "-mspeculative-load-hardening",
         "-Wl,-s",
+        "-lm",  # Link math library for cos, sin, sqrt, pow, etc.
     ]
 
     CUSTOM_PASSES = [
@@ -877,6 +878,32 @@ class LLVMObfuscator:
             ir_content = re.sub(r'"target-features"="[^"]*"', '', ir_content)
             ir_content = re.sub(r'"tune-cpu"="[^"]*"', '', ir_content)
 
+            # ============================================================
+            # FIX: Remove problematic LLVM 22+ intrinsic attributes that
+            # cause "unterminated attribute group" errors in opt.
+            # These attributes are generated for math intrinsics (sin, cos,
+            # sqrt, pow, etc.) and are incompatible with the opt parser.
+            # See: https://discourse.llvm.org/t/unterminated-attribute-group/75338
+            # ============================================================
+
+            # Remove 'nocreateundeforpoison' attribute (LLVM 22+ feature)
+            ir_content = re.sub(r'\bnocreateundeforpoison\b\s*', '', ir_content)
+
+            # Remove 'memory(...)' attribute syntax (LLVM 16+ feature)
+            # This includes: memory(none), memory(read), memory(write),
+            # memory(argmem: read), memory(argmem: write), memory(argmem: readwrite),
+            # memory(inaccessiblemem: write), etc.
+            ir_content = re.sub(r'\bmemory\([^)]*\)\s*', '', ir_content)
+
+            # Remove 'speculatable' attribute that often accompanies math intrinsics
+            ir_content = re.sub(r'\bspeculatable\b\s*', '', ir_content)
+
+            # Remove 'convergent' attribute (for math intrinsics)
+            ir_content = re.sub(r'\bconvergent\b\s*', '', ir_content)
+
+            # Clean up multiple spaces left by removed attributes
+            ir_content = re.sub(r'  +', ' ', ir_content)
+
             # Clean up empty attribute groups
             ir_content = re.sub(r'attributes #\d+ = \{\s*\}', '', ir_content)
 
@@ -966,6 +993,26 @@ class LLVMObfuscator:
                 ir_cmd.extend(cross_compile_flags)
                 run_command(ir_cmd, cwd=source_abs.parent)
                 current_input = ir_file
+
+                # ============================================================
+                # FIX: Strip problematic LLVM 22+ attributes from clang-generated IR
+                # Same fix as MLIR path - math intrinsics have incompatible attributes
+                # ============================================================
+                with open(str(ir_file), 'r') as f:
+                    ir_content = f.read()
+
+                # Remove problematic attributes
+                ir_content = re.sub(r'\bnocreateundeforpoison\b\s*', '', ir_content)
+                ir_content = re.sub(r'\bmemory\([^)]*\)\s*', '', ir_content)
+                ir_content = re.sub(r'\bspeculatable\b\s*', '', ir_content)
+                ir_content = re.sub(r'\bconvergent\b\s*', '', ir_content)
+                ir_content = re.sub(r'  +', ' ', ir_content)
+                ir_content = re.sub(r'attributes #\d+ = \{\s*\}', '', ir_content)
+
+                with open(str(ir_file), 'w') as f:
+                    f.write(ir_content)
+
+                self.logger.info("Stripped problematic LLVM 22+ intrinsic attributes from IR")
 
             # Check for C++ exception handling - Hikari approach
             # Flattening crashes on EH, but other passes work fine

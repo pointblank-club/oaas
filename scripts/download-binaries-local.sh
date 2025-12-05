@@ -71,17 +71,24 @@ gsutil cp "gs://${GCP_BUCKET}/${ARCHIVE_NAME}" "$TEMP_ARCHIVE" || {
 
 # Extract archive
 echo "Extracting binaries..."
-cd "$(dirname "$BINARIES_DIR")"
+# Save current directory
+CURRENT_DIR=$(pwd)
+# Go to parent directory of BINARIES_DIR and extract
+cd "$(dirname "$(dirname "$BINARIES_DIR")")"
 tar -xzf "$TEMP_ARCHIVE"
 rm "$TEMP_ARCHIVE"
+# Go back to original directory
+cd "$CURRENT_DIR"
 
 # Verify binaries
 echo ""
 echo "Verifying binaries..."
+echo "Checking: $BINARIES_DIR/clang"
 if [ -f "$BINARIES_DIR/clang" ] && file "$BINARIES_DIR/clang" | grep -q "ELF"; then
     echo -e "${GREEN}✅ clang binary verified${NC}"
 else
     echo -e "${RED}❌ clang binary invalid or missing${NC}"
+    ls -la "$BINARIES_DIR/" 2>/dev/null || echo "Directory not found"
     exit 1
 fi
 

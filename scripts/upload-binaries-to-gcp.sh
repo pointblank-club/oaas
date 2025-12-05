@@ -94,10 +94,13 @@ fi
 # List of known binaries
 BINARIES=(
     "clang"
+    "clang++"
+    "llvm-dis"
     "opt"
     "mlir-opt"
     "mlir-translate"
     "clangir"
+    "lld"
     "LLVMObfuscationPlugin.so"
     "MLIRObfuscation.so"
     "libLLVM.so.22.0git"
@@ -109,9 +112,10 @@ upload_binary() {
     local local_path="${BINARIES_DIR}/${binary}"
     local remote_path="gs://${GCP_BUCKET}/${REMOTE_PATH}/${binary}"
 
-    if [ -f "$local_path" ]; then
-        # Verify it's a valid binary
-        if file "$local_path" | grep -qE "ELF|shared object"; then
+    if [ -f "$local_path" ] || [ -L "$local_path" ]; then
+        # Verify it's a valid binary (ELF, shared object, or symlink to binary)
+        local file_type=$(file -L "$local_path")
+        if echo "$file_type" | grep -qE "ELF|shared object"; then
             local size=$(ls -lh "$local_path" | awk '{print $5}')
             echo -e "Uploading: ${GREEN}$binary${NC} ($size)"
             $GSUTIL cp "$local_path" "$remote_path"

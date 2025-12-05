@@ -1293,7 +1293,7 @@ async def api_obfuscate_sync(
                         # Generate and export reports
                         try:
                             report = reporter.generate_report(job_data)
-                            report_formats = payload.report_formats or ["json", "markdown"]
+                            report_formats = payload.report_formats or ["json", "markdown", "pdf"]
                             exported = reporter.export(report, job.job_id, report_formats)
                             report_paths_dict = {fmt: str(path) for fmt, path in exported.items()}
                             logger.info(f"Reports generated: {list(report_paths_dict.keys())}")
@@ -1622,6 +1622,7 @@ async def api_obfuscate_sync(
                 "download_urls": {
                     "linux": f"/api/download/{job.job_id}/linux" if platform_binaries.get("linux") else None,
                     "windows": f"/api/download/{job.job_id}/windows" if platform_binaries.get("windows") else None,
+                    "macos": f"/api/download/{job.job_id}/macos" if platform_binaries.get("macos") else None,
                 },
                 "report_url": f"/api/report/{job.job_id}",
             }

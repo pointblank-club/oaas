@@ -8,6 +8,7 @@ add_library(MLIRObfuscation SHARED
   CryptoHashPass.cpp
   ConstantObfuscationPass.cpp
   SCFPass.cpp
+  ImportObfuscationPass.cpp
 )
 
 # Set output name and properties

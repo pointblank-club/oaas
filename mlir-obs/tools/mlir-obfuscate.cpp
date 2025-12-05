@@ -51,6 +51,10 @@ int main(int argc, char **argv) {
     return std::make_unique<mlir::obs::SCFObfuscatePass>();
   });
 
+  mlir::registerPass([]() -> std::unique_ptr<mlir::Pass> {
+    return std::make_unique<mlir::obs::ImportObfuscationPass>();
+  });
+
   // Print banner
   llvm::outs() << "MLIR Obfuscator Tool\n";
   llvm::outs() << "MLIR/LLVM Version: " << MLIR_VERSION_STRING << "\n";

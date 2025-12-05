@@ -205,7 +205,7 @@ class ObfuscateRequest(BaseModel):
     architecture: Architecture = Architecture.X86_64
     entrypoint_command: Optional[str] = Field(default="./a.out")
     config: ConfigModel = ConfigModel()
-    report_formats: Optional[list[str]] = Field(default_factory=lambda: ["json", "markdown"])
+    report_formats: Optional[list[str]] = Field(default_factory=lambda: ["json", "markdown", "pdf"])
     custom_flags: Optional[list[str]] = None
     custom_pass_plugin: Optional[str] = None
     source_files: Optional[List[SourceFile]] = None  # For multi-file projects (GitHub repos)

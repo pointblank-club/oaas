@@ -2328,6 +2328,19 @@ function App() {
                     >
                       📊 JSON
                     </button>
+                    <button
+                      className="download-btn"
+                      onClick={() => {
+                        const link = document.createElement('a');
+                        link.href = `/api/report/${jobId}?fmt=pdf`;
+                        link.download = `report_${jobId}.pdf`;
+                        document.body.appendChild(link);
+                        link.click();
+                        document.body.removeChild(link);
+                      }}
+                    >
+                      📋 PDF
+                    </button>
                   </div>
                 </div>
               )}

@@ -777,11 +777,16 @@ class LLVMObfuscator:
         # The MLIR pipeline uses LLVM 22, so final compilation must also use LLVM 22
         # Otherwise, LLVM 22 IR features (like 'captures(none)') won't be understood
         # NOTE: clang++ binary doesn't exist in container, use clang with -x c++ for C++
-        bundled_clang = Path("/usr/local/llvm-obfuscator/bin/clang")
+        bundled_clang_candidates = [
+            Path("/usr/local/llvm-obfuscator/bin/clang"),  # Docker production
+            Path(__file__).parent.parent / "plugins" / "linux-x86_64" / "clang",  # CI/local relative
+            Path("/app/plugins/linux-x86_64/clang"),  # Docker app path
+        ]
+        bundled_clang = next((p for p in bundled_clang_candidates if p.exists()), None)
 
         is_cpp = source_abs.suffix in ['.cpp', '.cxx', '.cc', '.c++']
 
-        if bundled_clang.exists():
+        if bundled_clang:
             base_compiler = str(bundled_clang)
             if is_cpp:
                 # Use clang with -x c++ flag to compile C++ (clang++ doesn't exist)
@@ -1047,7 +1052,7 @@ class LLVMObfuscator:
         # Add lld linker for LTO support (required for Linux and Windows, macOS uses ld64.lld)
         # lld handles LTO natively without needing LLVMgold.so
         # Only use lld when: 1) using bundled clang (has lld), or 2) LTO flags are present
-        uses_bundled_clang = "/llvm-obfuscator/" in compiler or "/llvm-project/build/" in compiler
+        uses_bundled_clang = "/llvm-obfuscator/" in compiler or "/llvm-project/build/" in compiler or "plugins/linux-x86_64" in compiler
         has_lto_flags = any("-flto" in f for f in compiler_flags)
         if uses_bundled_clang or has_lto_flags:
             if config.platform == Platform.WINDOWS:
@@ -1252,7 +1257,7 @@ class LLVMObfuscator:
         # Add lld linker for LTO support (required for Linux and Windows, macOS uses ld64.lld)
         # lld handles LTO natively without needing LLVMgold.so
         # Only use lld when: 1) using bundled clang (has lld), or 2) LTO flags are present
-        uses_bundled_clang = "/llvm-obfuscator/" in compiler or "/llvm-project/build/" in compiler
+        uses_bundled_clang = "/llvm-obfuscator/" in compiler or "/llvm-project/build/" in compiler or "plugins/linux-x86_64" in compiler
         has_lto_flags = any("-flto" in f for f in compiler_flags)
         if uses_bundled_clang or has_lto_flags:
             if config.platform == Platform.WINDOWS:
@@ -1312,19 +1317,25 @@ class LLVMObfuscator:
 
             # Detect compiler - use LLVM 22 for consistent compilation
             # ✅ FIX: Use LLVM 22 clang/clang++ to match obfuscated compilation
+            # Check multiple paths: Docker production, CI plugins, Docker app
+            bundled_clang_candidates = [
+                Path("/usr/local/llvm-obfuscator/bin/clang"),  # Docker production
+                Path(__file__).parent.parent / "plugins" / "linux-x86_64" / "clang",  # CI/local relative
+                Path("/app/plugins/linux-x86_64/clang"),  # Docker app path
+            ]
+            bundled_clang = next((p for p in bundled_clang_candidates if p.exists()), None)
+
             if source_file.suffix in ['.cpp', '.cxx', '.cc', '.c++']:
-                # Try LLVM 22 clang++, fall back to system clang++
-                llvm_clangxx = Path("/usr/local/llvm-obfuscator/bin/clang++")
-                if llvm_clangxx.exists():
-                    compiler = str(llvm_clangxx)
+                # Try LLVM 22 clang with -x c++, fall back to system clang++
+                if bundled_clang:
+                    compiler = str(bundled_clang)
                 else:
                     compiler = "clang++"
                 compile_flags = ["-lstdc++"]
             else:
                 # Try LLVM 22 clang, fall back to system clang
-                llvm_clang = Path("/usr/local/llvm-obfuscator/bin/clang")
-                if llvm_clang.exists():
-                    compiler = str(llvm_clang)
+                if bundled_clang:
+                    compiler = str(bundled_clang)
                 else:
                     compiler = "clang"
                 compile_flags = []
@@ -1335,7 +1346,7 @@ class LLVMObfuscator:
 
             # Log which compiler is being used for transparency
             self.logger.info(f"Baseline compilation using: {compiler}")
-            if "llvm-obfuscator" in compiler:
+            if "llvm-obfuscator" in compiler or "plugins/linux-x86_64" in compiler:
                 self.logger.info("✓ Using LLVM 22 compiler for baseline (matches obfuscated compilation)")
             else:
                 self.logger.warning("⚠️  Using system compiler for baseline - this may cause baseline/obfuscated comparison issues")

@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect } from 'react';
 import './App.css';
 import { GitHubIntegration, FileTree, TestResults } from './components';
+import githubLogo from '../assets/github.png';
 
 type Platform = 'linux' | 'windows' | 'macos';
 type Architecture = 'x86_64' | 'arm64';
@@ -1403,7 +1404,9 @@ function App() {
               onClick={() => setShowGitHubModal(true)}
               title="Load from GitHub Repository"
             >
-              <span className="github-logo">GitHub Logo</span>
+              <span className="github-logo">
+                <img src={githubLogo} alt="GitHub Logo" className="github-logo" />
+                </span>
               GitHub
             </button>
           </div>

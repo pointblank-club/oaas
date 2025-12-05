@@ -1761,6 +1761,7 @@ function App() {
   const [flagO3, setFlagO3] = useState(false);
   const [flagStripSymbols, setFlagStripSymbols] = useState(false);
   const [flagNoBuiltin, setFlagNoBuiltin] = useState(false);
+  const [flagLTO, setFlagLTO] = useState(false);
 
   // Layer 5: UPX Packing sub-options
   const [upxCompression, setUpxCompression] = useState<'fast' | 'default' | 'best' | 'brute'>('best');
@@ -2202,10 +2203,10 @@ function App() {
     if (layer2) count++; // String encryption
     if (layer2_5) count++; // Indirect calls
     if (layer3 && (passFlattening || passSubstitution || passBogusControlFlow || passSplitBasicBlocks || passLinearMBA)) count++; // OLLVM passes
-    if (layer4 && (flagSymbolHiding || flagOmitFramePointer || flagSpeculativeLoadHardening || flagO3 || flagStripSymbols || flagNoBuiltin)) count++; // Compiler flags
+    if (layer4 && (flagSymbolHiding || flagOmitFramePointer || flagSpeculativeLoadHardening || flagO3 || flagStripSymbols || flagNoBuiltin || flagLTO)) count++; // Compiler flags
     if (layer5) count++; // UPX packing
     return count;
-  }, [layer1, layer2, layer2_5, layer3, layer4, layer5, passFlattening, passSubstitution, passBogusControlFlow, passSplitBasicBlocks, passLinearMBA, flagSymbolHiding, flagOmitFramePointer, flagSpeculativeLoadHardening, flagO3, flagStripSymbols, flagNoBuiltin]);
+  }, [layer1, layer2, layer2_5, layer3, layer4, layer5, passFlattening, passSubstitution, passBogusControlFlow, passSplitBasicBlocks, passLinearMBA, flagSymbolHiding, flagOmitFramePointer, flagSpeculativeLoadHardening, flagO3, flagStripSymbols, flagNoBuiltin, flagLTO]);
 
   // Validate source code syntax
   const validateCode = (code: string, _language: 'c' | 'cpp'): { valid: boolean; error?: string } => {
@@ -2579,6 +2580,8 @@ function App() {
         if (flagSymbolHiding) flags.push('-fvisibility=hidden');
         if (flagOmitFramePointer) flags.push('-fomit-frame-pointer');
         if (flagSpeculativeLoadHardening) flags.push('-mspeculative-load-hardening');
+        // LTO (Link-Time Optimization) - enables whole-program optimization
+        if (flagLTO) flags.push('-flto');
       }
 
       // Add OLLVM pass parameters (Layer 3) as -mllvm flags
@@ -2774,7 +2777,7 @@ function App() {
     passFlattening, passSubstitution, passBogusControlFlow, passSplitBasicBlocks, passLinearMBA,
     ollvmSplitNum, ollvmBogusLoop,
     flagSymbolHiding, flagOmitFramePointer, flagSpeculativeLoadHardening,
-    flagO3, flagStripSymbols, flagNoBuiltin,
+    flagO3, flagStripSymbols, flagNoBuiltin, flagLTO,
     upxCompression, upxLzma, upxPreserveOriginal,
     buildSystem, customBuildCommand, outputBinaryPath, cmakeOptions,
     detectLanguage, countLayers, selectedRepoFile, repoSessionId, repoFileCount, repoFiles,
@@ -3240,7 +3243,7 @@ function App() {
                 const allSelected = layer1 && layer2 && layer2_5 && layer3 && layer4 && layer5 &&
                   passFlattening && passSubstitution && passBogusControlFlow && passSplitBasicBlocks && passLinearMBA &&
                   flagSymbolHiding && flagOmitFramePointer && flagSpeculativeLoadHardening &&
-                  flagO3 && flagStripSymbols && flagNoBuiltin;
+                  flagO3 && flagStripSymbols && flagNoBuiltin && flagLTO;
 
                 const newValue = !allSelected;
                 setLayer1(newValue);
@@ -3260,12 +3263,13 @@ function App() {
                 setFlagO3(newValue);
                 setFlagStripSymbols(newValue);
                 setFlagNoBuiltin(newValue);
+                setFlagLTO(newValue);
               }}
             >
               {layer1 && layer2 && layer2_5 && layer3 && layer4 && layer5 &&
                 passFlattening && passSubstitution && passBogusControlFlow && passSplitBasicBlocks && passLinearMBA &&
                 flagSymbolHiding && flagOmitFramePointer && flagSpeculativeLoadHardening &&
-                flagO3 && flagStripSymbols && flagNoBuiltin
+                flagO3 && flagStripSymbols && flagNoBuiltin && flagLTO
                 ? 'Deselect All' : 'Select All'}
             </button>
           </div>
@@ -3549,7 +3553,7 @@ function App() {
                   onClick={() => {
                     const allFlagsSelected = flagSymbolHiding &&
                       flagOmitFramePointer && flagSpeculativeLoadHardening &&
-                      flagO3 && flagStripSymbols && flagNoBuiltin;
+                      flagO3 && flagStripSymbols && flagNoBuiltin && flagLTO;
                     const newValue = !allFlagsSelected;
                     setFlagSymbolHiding(newValue);
                     setFlagOmitFramePointer(newValue);
@@ -3557,10 +3561,11 @@ function App() {
                     setFlagO3(newValue);
                     setFlagStripSymbols(newValue);
                     setFlagNoBuiltin(newValue);
+                    setFlagLTO(newValue);
                   }}
                 >
                   {flagSymbolHiding && flagOmitFramePointer && flagSpeculativeLoadHardening &&
-                    flagO3 && flagStripSymbols && flagNoBuiltin
+                    flagO3 && flagStripSymbols && flagNoBuiltin && flagLTO
                     ? 'Deselect All' : 'Select All'}
                 </button>
                 <label className="sub-option">
@@ -3610,6 +3615,14 @@ function App() {
                     onChange={(e) => setFlagNoBuiltin(e.target.checked)}
                   />
                   Disable Built-in Functions (-fno-builtin)
+                </label>
+                <label className="sub-option">
+                  <input
+                    type="checkbox"
+                    checked={flagLTO}
+                    onChange={(e) => setFlagLTO(e.target.checked)}
+                  />
+                  Link-Time Optimization (-flto)
                 </label>
               </div>
             )}

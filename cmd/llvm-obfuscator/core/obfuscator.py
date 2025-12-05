@@ -1078,14 +1078,21 @@ class LLVMObfuscator:
 
         # Stage 3: Compile to binary
         self.logger.info("Compiling final IR to binary...")
-        # ✅ FIX: Remove LTO flags (-flto, -flto=thin, -flto=full) as they require LLVMgold.so plugin
-        # The plugin is not available in standard LLVM 22 installations
-        clean_flags = [f for f in compiler_flags if not f.startswith('-flto')]
-        final_cmd = [compiler, str(current_input), "-o", str(destination_abs)] + clean_flags
+        final_cmd = [compiler, str(current_input), "-o", str(destination_abs)] + compiler_flags
         # Add cross-compilation flags (target triple + sysroot for macOS)
         cross_compile_flags = self._get_cross_compile_flags(config.platform, config.architecture)
         final_cmd.extend(cross_compile_flags)
-        self.logger.info(f"Final compile command (LTO flags removed): {' '.join(final_cmd)}")
+        # Add lld linker for:
+        # 1. LTO support (lld handles LTO natively without needing LLVMgold.so plugin)
+        # 2. macOS cross-compilation (system ld doesn't understand Mach-O on Linux)
+        # - Linux/Windows: uses ld.lld (ELF/PE linker)
+        # - macOS: uses ld64.lld (Mach-O linker) via -fuse-ld=lld
+        has_lto_flags = any("-flto" in f for f in compiler_flags)
+        is_macos_cross_compile = config.platform in [Platform.MACOS, Platform.DARWIN]
+        if has_lto_flags or is_macos_cross_compile:
+            final_cmd.append("-fuse-ld=lld")
+            if is_macos_cross_compile:
+                self.logger.info("Using lld linker for macOS cross-compilation")
         run_command(final_cmd, cwd=source_abs.parent)
 
         # ✅ NEW: Analyze obfuscated IR before cleanup
@@ -1291,6 +1298,17 @@ class LLVMObfuscator:
         # Add cross-compilation flags (target triple + sysroot for macOS)
         cross_compile_flags = self._get_cross_compile_flags(config.platform, config.architecture)
         final_cmd.extend(cross_compile_flags)
+        # Add lld linker for:
+        # 1. LTO support (lld handles LTO natively without needing LLVMgold.so plugin)
+        # 2. macOS cross-compilation (system ld doesn't understand Mach-O on Linux)
+        # - Linux/Windows: uses ld.lld (ELF/PE linker)
+        # - macOS: uses ld64.lld (Mach-O linker) via -fuse-ld=lld
+        has_lto_flags = any("-flto" in f for f in compiler_flags)
+        is_macos_cross_compile = config.platform in [Platform.MACOS, Platform.DARWIN]
+        if has_lto_flags or is_macos_cross_compile:
+            final_cmd.append("-fuse-ld=lld")
+            if is_macos_cross_compile:
+                self.logger.info("Using lld linker for macOS cross-compilation")
         run_command(final_cmd, cwd=source_abs.parent)
 
         # Cleanup intermediate files

@@ -38,3 +38,4 @@ cmd/llvm-obfuscator/macos-sdk/
 
 # LLVM plugins directory - binaries downloaded from GCP (gs://llvmbins/)
 cmd/llvm-obfuscator/plugins/
+plugins/

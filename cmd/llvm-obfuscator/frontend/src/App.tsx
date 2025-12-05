@@ -3554,9 +3554,6 @@ function App() {
                     onChange={(e) => setPassLinearMBA(e.target.checked)}
                   />
                   Linear MBA (Mixed Boolean-Arithmetic)
-                  <small style={{ display: 'block', color: '#888', marginTop: '2px', marginLeft: '20px' }}>
-                    Replaces AND/OR/XOR with per-bit reconstruction
-                  </small>
                 </label>
                 <label>
                   Split Count (1-10):

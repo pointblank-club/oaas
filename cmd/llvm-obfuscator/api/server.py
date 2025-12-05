@@ -1421,7 +1421,7 @@ async def api_obfuscate_sync(
             test_results = run_obfuscation_tests(
                 baseline_binary=baseline_binary,
                 obfuscated_binary=obfuscated_binary,
-                program_name=payload.name or source_stem,
+                program_name=source_stem,
                 results_dir=Path(job.job_id)
             )
 
@@ -1430,7 +1430,7 @@ async def api_obfuscate_sync(
                 test_results = run_lightweight_tests(
                     baseline_binary=baseline_binary,
                     obfuscated_binary=obfuscated_binary,
-                    program_name=payload.name or source_stem
+                    program_name=source_stem
                 )
 
             if test_results:

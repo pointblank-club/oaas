@@ -883,9 +883,12 @@ class LLVMObfuscator:
             # Get target triple for cross-compilation
             target_triple = self._get_target_triple(config.platform, config.architecture)
             # Data layout depends on the target
+            # m:e = ELF mangling (Linux), m:w = Windows COFF, m:o = Mach-O (macOS)
             if config.platform == Platform.WINDOWS:
                 data_layout = "e-m:w-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128"
-            else:
+            elif config.platform in [Platform.MACOS, Platform.DARWIN]:
+                data_layout = "e-m:o-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128"
+            else:  # Linux
                 data_layout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128"
 
             # Read, fix, and write - remove ALL target-specific attributes
@@ -902,6 +905,10 @@ class LLVMObfuscator:
             ir_content = re.sub(r'"target-cpu"="[^"]*"', '', ir_content)
             ir_content = re.sub(r'"target-features"="[^"]*"', '', ir_content)
             ir_content = re.sub(r'"tune-cpu"="[^"]*"', '', ir_content)
+
+            # Convert LLVM 19+ captures syntax to older nocapture for LTO compatibility
+            # New: captures(none)  ->  Old: nocapture
+            ir_content = re.sub(r'\bcaptures\(none\)', 'nocapture', ir_content)
 
             # Clean up empty attribute groups
             ir_content = re.sub(r'attributes #\d+ = \{\s*\}', '', ir_content)
@@ -1037,6 +1044,12 @@ class LLVMObfuscator:
         macos_flags = self._get_macos_cross_compile_flags(config.platform)
         if macos_flags:
             final_cmd.extend(macos_flags)
+        # Add lld linker for LTO support (required for Linux and Windows, macOS uses ld64.lld)
+        # lld handles LTO natively without needing LLVMgold.so
+        if config.platform == Platform.WINDOWS:
+            final_cmd.append("-fuse-ld=lld")
+        elif config.platform == Platform.LINUX:
+            final_cmd.append("-fuse-ld=lld")
         run_command(final_cmd, cwd=source_abs.parent)
 
         # Cleanup any remaining intermediate files
@@ -1151,9 +1164,12 @@ class LLVMObfuscator:
         # Get target triple for cross-compilation
         target_triple = self._get_target_triple(config.platform, config.architecture)
         # Data layout depends on the target
+        # m:e = ELF mangling (Linux), m:w = Windows COFF, m:o = Mach-O (macOS)
         if config.platform == Platform.WINDOWS:
             data_layout = "e-m:w-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128"
-        else:
+        elif config.platform in [Platform.MACOS, Platform.DARWIN]:
+            data_layout = "e-m:o-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128"
+        else:  # Linux
             data_layout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128"
 
         with open(str(llvm_ir_file), 'r') as f:
@@ -1165,6 +1181,11 @@ class LLVMObfuscator:
         ir_content = re.sub(r'"target-cpu"="[^"]*"', '', ir_content)
         ir_content = re.sub(r'"target-features"="[^"]*"', '', ir_content)
         ir_content = re.sub(r'"tune-cpu"="[^"]*"', '', ir_content)
+
+        # Convert LLVM 19+ captures syntax to older nocapture for LTO compatibility
+        # New: captures(none)  ->  Old: nocapture
+        ir_content = re.sub(r'\bcaptures\(none\)', 'nocapture', ir_content)
+
         ir_content = re.sub(r'attributes #\d+ = \{\s*\}', '', ir_content)
 
         with open(str(llvm_ir_file), 'w') as f:
@@ -1224,6 +1245,12 @@ class LLVMObfuscator:
         macos_flags = self._get_macos_cross_compile_flags(config.platform)
         if macos_flags:
             final_cmd.extend(macos_flags)
+        # Add lld linker for LTO support (required for Linux and Windows, macOS uses ld64.lld)
+        # lld handles LTO natively without needing LLVMgold.so
+        if config.platform == Platform.WINDOWS:
+            final_cmd.append("-fuse-ld=lld")
+        elif config.platform == Platform.LINUX:
+            final_cmd.append("-fuse-ld=lld")
         run_command(final_cmd, cwd=source_abs.parent)
 
         # Cleanup intermediate files
@@ -1357,7 +1384,10 @@ class LLVMObfuscator:
             self.logger.info("Compiling baseline IR to binary")
             if ir_file.exists():
                 # Convert IR back to binary without any obfuscation passes
-                final_cmd = [compiler, str(ir_file), "-o", str(baseline_abs)]
+                # Include cross-compilation flags (target triple, macOS SDK, linker) for proper cross-platform builds
+                # Filter out IR-specific flags that shouldn't be used for binary compilation
+                binary_compile_flags = [f for f in compile_flags if f not in ["-S", "-emit-llvm"]]
+                final_cmd = [compiler, str(ir_file), "-o", str(baseline_abs)] + binary_compile_flags
                 self.logger.debug(f"Baseline binary compilation command: {' '.join(final_cmd)}")
                 run_command(final_cmd)
 

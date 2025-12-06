@@ -995,13 +995,20 @@ class LLVMObfuscator:
                 count = 0
                 i = 0
                 while i < len(s):
-                    if s[i] == '\\' and i + 2 < len(s):
-                        # Check for hex escape \xx
-                        hex_chars = s[i+1:i+3]
-                        if all(c in '0123456789abcdefABCDEF' for c in hex_chars):
+                    if s[i] == '\\' and i + 1 < len(s):
+                        next_char = s[i+1]
+                        # Handle escaped backslash: \\ = 1 byte
+                        if next_char == '\\':
                             count += 1
-                            i += 3
+                            i += 2
                             continue
+                        # Handle hex escape: \xx = 1 byte
+                        if i + 2 < len(s):
+                            hex_chars = s[i+1:i+3]
+                            if all(c in '0123456789abcdefABCDEF' for c in hex_chars):
+                                count += 1
+                                i += 3
+                                continue
                     # Regular character
                     count += 1
                     i += 1

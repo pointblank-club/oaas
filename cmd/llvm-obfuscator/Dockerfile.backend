@@ -7,9 +7,9 @@ ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
 # Install system dependencies including LLVM development tools
-# NOTE: autoconf, automake, libtool, cmake are REQUIRED for building projects
-# that use Autotools (like curl) or CMake build systems. Without these,
-# generated config headers (curl_config.h, config.h) cannot be created.
+# Split into two layers for better caching:
+# Layer 1: Base tools that rarely change
+# Layer 2: Dev libraries that might be added to
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
@@ -19,22 +19,23 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     lld \
     libc6-dev \
     upx-ucl \
-    # Build system tools (required for ./configure && make workflows)
     autoconf \
     automake \
     libtool \
     cmake \
     ninja-build \
     pkg-config \
-    # Cross-compilation toolchains
     mingw-w64 \
     gcc-aarch64-linux-gnu \
     g++-aarch64-linux-gnu \
     libc6-dev-arm64-cross \
-    # Common development libraries (for projects like curl, openssl, etc.)
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Layer 2: Dev libraries (change more often, but cached if Layer 1 unchanged)
+RUN apt-get update && apt-get install -y --no-install-recommends \
     libssl-dev \
     zlib1g-dev \
-    # Additional libraries commonly needed by C/C++ projects
     libpsl-dev \
     libbrotli-dev \
     libzstd-dev \
@@ -50,10 +51,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libsqlite3-dev \
     libreadline-dev \
     libncurses-dev \
-    # X11 development libraries (for projects like DOOM, games, GUI apps)
     libx11-dev \
     libxext-dev \
-    git \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

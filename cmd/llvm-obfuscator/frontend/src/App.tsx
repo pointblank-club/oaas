@@ -2683,18 +2683,10 @@ function App() {
         if (flagLTO) flags.push('-flto');
       }
 
-      // Add OLLVM pass parameters (Layer 3) as -mllvm flags
-      // Each -mllvm flag must be a separate array element so they become separate command arguments
-      if (layer3) {
-        const splitNum = typeof ollvmSplitNum === 'number' ? ollvmSplitNum : parseInt(String(ollvmSplitNum)) || 3;
-        const bogusLoop = typeof ollvmBogusLoop === 'number' ? ollvmBogusLoop : parseInt(String(ollvmBogusLoop)) || 1;
-        flags.push('-mllvm', `-split_num=${splitNum}`);
-        flags.push('-mllvm', `-bcf_loop=${bogusLoop}`);
-      }
-
       // NOTE: Layer 3 OLLVM passes are handled via config.passes object below
-      // The server uses wrapper scripts (clang-obfuscate) which apply passes via opt tool
-      // Pass parameters are passed via -mllvm flags above and config.passes object below
+      // The server uses the opt tool with OLLVM plugin - NOT clang -mllvm flags
+      // OLLVM parameters (split_num, bcf_loop) are passed via config.passes.ollvm_split_num/ollvm_bogus_loop
+      // DO NOT add -mllvm flags here - they are OLLVM-specific and clang doesn't understand them
 
       const payload = {
         source_code: source_b64,

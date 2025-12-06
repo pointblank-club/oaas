@@ -128,7 +128,6 @@ def merge_flags(base: Iterable[str], extra: Optional[Iterable[str]] = None) -> L
 
     Note: -mllvm is a prefix flag that must appear before each LLVM option,
     so we allow duplicates of -mllvm to preserve correct flag ordering.
-    Example: ['-mllvm', '-split_num=3', '-mllvm', '-bcf_loop=1']
     """
     merged = list(base)
     if extra:

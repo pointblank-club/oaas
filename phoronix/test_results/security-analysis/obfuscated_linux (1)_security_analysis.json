@@ -1,0 +1,12 @@
+{
+  "irreducible_cfg_detected": true,
+  "irreducible_cfg_percentage": 28.57,
+  "opaque_predicates_count": 15,
+  "opaque_predicates_percentage": 0.0,
+  "basic_blocks_recovered": 129,
+  "recovery_percentage": 100.0,
+  "string_obfuscation_ratio": 0.021,
+  "symbol_obfuscation_ratio": 0.0,
+  "decompilation_readability_score": 5.622,
+  "analysis_method": "heuristics"
+}

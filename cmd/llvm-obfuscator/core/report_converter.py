@@ -10,6 +10,60 @@ import base64
 
 logger = logging.getLogger(__name__)
 
+
+def _safe_float(value, default=0.0):
+    """Convert value to float, handling None gracefully."""
+    return default if value is None else float(value) if isinstance(value, (int, float, str)) else default
+
+
+def _safe_int(value, default=0):
+    """Convert value to int, handling None gracefully."""
+    return default if value is None else int(value) if isinstance(value, (int, float, str)) else default
+
+
+def _safe_str(value, default='N/A'):
+    """Convert value to string, handling None gracefully."""
+    return str(value) if value is not None else default
+
+
+def _safe_list_str(value, default='None', separator=', '):
+    """Convert list to comma-separated string, handling None and empty lists gracefully."""
+    if value is None:
+        return default
+    if isinstance(value, list):
+        return separator.join(value) if value else default
+    if isinstance(value, str):
+        return value if value else default
+    return default
+
+
+def format_percentage(value, decimals=1):
+    """Format percentage with consistent decimal places."""
+    try:
+        num = float(value) if value is not None else 0
+        return f"{num:.{decimals}f}%"
+    except (ValueError, TypeError):
+        return "N/A"
+
+
+def format_entropy(value, decimals=4):
+    """Format entropy value with consistent decimal places."""
+    try:
+        num = float(value) if value is not None else 0
+        return f"{num:.{decimals}f}"
+    except (ValueError, TypeError):
+        return "N/A"
+
+
+def format_time(value, decimals=2):
+    """Format time value in milliseconds with consistent decimal places."""
+    try:
+        num = float(value) if value is not None else 0
+        return f"{num:.{decimals}f} ms"
+    except (ValueError, TypeError):
+        return "N/A"
+
+
 # Matplotlib imports for chart generation
 try:
     import matplotlib
@@ -27,9 +81,10 @@ def json_to_markdown(report: Dict[str, Any]) -> str:
     md = "# LLVM Obfuscation Report\n\n"
 
     input_params = report.get("input_parameters", {})
+    source_file = input_params.get('source_file', 'N/A')
+    md += f"## 📄 Source File: `{source_file}`\n\n"
     md += f"**Job ID:** {report.get('job_id', 'N/A')}\n"
     md += f"**Timestamp:** {input_params.get('timestamp', 'N/A')}\n"
-    md += f"**Source File:** {input_params.get('source_file', 'N/A')}\n"
     md += f"**Platform:** {input_params.get('platform', 'N/A')}\n"
     md += f"**Obfuscation Level:** {input_params.get('obfuscation_level', 'N/A')}\n\n"
 
@@ -38,19 +93,19 @@ def json_to_markdown(report: Dict[str, Any]) -> str:
     baseline = report.get("baseline_metrics", {})
     md += f"- **File Size:** {baseline.get('file_size', 'N/A')} bytes\n"
     md += f"- **Functions:** {baseline.get('functions', 'N/A')}\n"
-    md += f"- **Entropy:** {baseline.get('entropy', 'N/A'):.4f}\n\n"
+    md += f"- **Entropy:** {format_entropy(baseline.get('entropy'))}\n\n"
 
     md += "## Obfuscated Metrics\n"
     obfuscated = report.get("output_attributes", {})
     md += f"- **File Size:** {obfuscated.get('file_size', 'N/A')} bytes\n"
     md += f"- **Functions:** {obfuscated.get('functions_count', 'N/A')}\n"
-    md += f"- **Entropy:** {obfuscated.get('entropy', 'N/A'):.4f}\n\n"
+    md += f"- **Entropy:** {_safe_float(obfuscated.get('entropy')):.4f}\n\n"
 
     # Comparison
     md += "## Comparison\n"
     comparison = report.get("comparison", {})
     md += f"- **Size Change:** {comparison.get('size_change', 'N/A')} bytes ({comparison.get('size_change_percent', 'N/A')}%)\n"
-    md += f"- **Entropy Increase:** {comparison.get('entropy_increase', 'N/A'):.4f}\n"
+    md += f"- **Entropy Increase:** {_safe_float(comparison.get('entropy_increase')):.4f}\n"
     md += f"- **RE Effort:** {report.get('estimated_re_effort', 'N/A')}\n\n"
 
     # Applied Passes
@@ -61,6 +116,27 @@ def json_to_markdown(report: Dict[str, Any]) -> str:
             md += f"- {pass_name}\n"
     else:
         md += "- None\n"
+
+    # Phoronix Benchmarking Metrics (if available)
+    phoronix_info = report.get('phoronix', {})
+    if phoronix_info and phoronix_info.get('key_metrics'):
+        key_metrics = phoronix_info.get('key_metrics', {})
+        md += "\n## 📊 Obfuscation Impact Metrics\n\n"
+
+        instr_delta = key_metrics.get('instruction_count_delta')
+        instr_percent = key_metrics.get('instruction_count_increase_percent')
+        perf_overhead = key_metrics.get('performance_overhead_percent')
+
+        if instr_delta is not None:
+            md += f"**Code Expansion:**\n"
+            md += f"- Instruction Count Increase: +{instr_delta} instructions (+{instr_percent}%)\n\n"
+
+        if perf_overhead is not None:
+            md += f"**Performance Overhead:**\n"
+            md += f"- Runtime Slowdown: +{perf_overhead:.1f}%\n\n"
+
+        md += "**Note:** Instruction count reflects code expansion from obfuscation passes. "
+        md += "Performance overhead is based on runtime measurements if available.\n"
 
     md += "\n---\n"
     return md
@@ -257,11 +333,11 @@ def create_comparison_progress_bars(report: Dict[str, Any]) -> bytes:
         metrics_data.append(('Symbol Reduction', symbol_reduction, '#8957e5'))
 
         # File size change (negative is good)
-        size_change = abs(comparison.get('size_change_percent', 0))
+        size_change = abs(_safe_float(comparison.get('size_change_percent'), 0))
         metrics_data.append(('File Size Change', min(100, size_change), '#d29922'))
 
         # Entropy increase
-        entropy_inc = comparison.get('entropy_increase', 0)
+        entropy_inc = _safe_float(comparison.get('entropy_increase'), 0)
         entropy_pct = min(100, (entropy_inc / 8.0 * 100))  # Entropy max ~8 bits
         metrics_data.append(('Entropy Increase', entropy_pct, '#2ea043'))
 
@@ -337,19 +413,32 @@ def json_to_pdf(report: Dict[str, Any]) -> bytes:
         fontName='Helvetica-Bold'
     )
     story.append(Paragraph("🛡️ LLVM Obfuscation Report", title_style))
-    story.append(Spacer(1, 0.15*inch))
+    story.append(Spacer(1, 0.08*inch))
 
     # Job ID and Timestamp in small text
     job_id = report.get('job_id', 'N/A')
     input_params = report.get('input_parameters', {})
     timestamp = input_params.get('timestamp', 'N/A')
+    source_file = input_params.get('source_file', 'Unknown')
     story.append(Paragraph(f"<b>Job ID:</b> {job_id} | <b>Generated:</b> {timestamp}", styles['Normal']))
-    story.append(Spacer(1, 0.1*inch))
+    story.append(Spacer(1, 0.05*inch))
+
+    # Source filename prominently displayed
+    source_style = ParagraphStyle(
+        'SourceFile',
+        parent=styles['Normal'],
+        fontSize=11,
+        textColor=colors.HexColor('#1f6feb'),
+        fontName='Helvetica-Bold',
+        spaceAfter=6
+    )
+    story.append(Paragraph(f"📄 <b>Source File:</b> <font color='#28a745'>{_safe_str(source_file)}</font>", source_style))
+    story.append(Spacer(1, 0.08*inch))
 
     # Horizontal line separator
     from reportlab.platypus import HRFlowable
     story.append(HRFlowable(width="100%", thickness=2, color=colors.HexColor('#e0e0e0')))
-    story.append(Spacer(1, 0.2*inch))
+    story.append(Spacer(1, 0.12*inch))
 
     # Warning banners (if applicable)
     baseline_status = report.get('baseline_status', 'success')
@@ -386,36 +475,36 @@ def json_to_pdf(report: Dict[str, Any]) -> bytes:
             story.append(warn_table)
         story.append(Spacer(1, 0.15*inch))
 
-    # Key Metrics Score Card (Large, prominent)
+    # Score Section - SIMPLE AND WORKING
     score = float(report.get('obfuscation_score', 0)) if report.get('obfuscation_score') else 0
-    score_emoji = get_score_emoji(score)
 
-    score_grade = "Excellent Protection" if score >= 80 else "Good Protection" if score >= 60 else "Moderate Protection"
+    # Determine grade and color
+    if score >= 80:
+        score_grade = "Excellent Protection"
+        grade_color_hex = '#28a745'  # Green
+    elif score >= 60:
+        score_grade = "Good Protection"
+        grade_color_hex = '#ffc107'  # Yellow/Amber
+    else:
+        score_grade = "Moderate Protection"
+        grade_color_hex = '#dc3545'  # Red
 
-    score_data = [
-        ['OBFUSCATION SCORE'],
-        [f'{score:.1f}/100'],
-        [f'{score_emoji}'],
-        [score_grade]
-    ]
-    score_table = Table(score_data, colWidths=[7*inch])
-    score_table.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1f6feb')),
-        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-        ('FONTSIZE', (0, 0), (-1, 0), 11),
-        ('FONTSIZE', (0, 1), (-1, 1), 36),
-        ('FONTSIZE', (0, 2), (-1, 2), 28),
-        ('FONTSIZE', (0, 3), (-1, 3), 13),
-        ('PADDING', (0, 0), (-1, -1), 16),
-        ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor('#f5f5f5')),
-        ('TEXTCOLOR', (0, 1), (-1, -1), colors.black),
-        ('BORDER', (0, 0), (-1, -1), 2, colors.HexColor('#1f6feb')),
-        ('ROWBACKGROUNDS', (0, 0), (-1, -1), [colors.white, colors.HexColor('#f5f5f5')]),
-    ]))
-    story.append(score_table)
-    story.append(Spacer(1, 0.2*inch))
+    # Simple score display - NO fancy tables
+    story.append(Paragraph(
+        '<para align="center"><font size="14" color="#1f6feb"><b>OBFUSCATION SCORE</b></font></para>',
+        styles['Normal']
+    ))
+    story.append(Spacer(1, 0.1*inch))
+    story.append(Paragraph(
+        f'<para align="center"><font size="48"><b>{score:.1f}/100</b></font></para>',
+        styles['Normal']
+    ))
+    story.append(Spacer(1, 0.05*inch))
+    story.append(Paragraph(
+        f'<para align="center"><font size="16" color="{grade_color_hex}"><b>{score_grade}</b></font></para>',
+        styles['Normal']
+    ))
+    story.append(Spacer(1, 0.15*inch))
 
     # Quick Metrics Row
     symbol_red = float(report.get('symbol_reduction', 0)) if report.get('symbol_reduction') else 0
@@ -439,7 +528,7 @@ def json_to_pdf(report: Dict[str, Any]) -> bytes:
         ('GRID', (0, 0), (-1, -1), 1, colors.HexColor('#e0e0e0')),
     ]))
     story.append(quick_table)
-    story.append(Spacer(1, 0.15*inch))
+    story.append(Spacer(1, 0.08*inch))
 
     # Add Comparison Progress Bars Chart
     comparison_chart = create_comparison_progress_bars(report)
@@ -447,11 +536,9 @@ def json_to_pdf(report: Dict[str, Any]) -> bytes:
         try:
             chart_img = Image(BytesIO(comparison_chart), width=5.5*inch, height=2.2*inch)
             story.append(chart_img)
-            story.append(Spacer(1, 0.15*inch))
+            story.append(Spacer(1, 0.08*inch))
         except Exception as e:
             logger.error(f"Error embedding comparison chart: {e}")
-
-    story.append(Spacer(1, 0.05*inch))
 
     # Input Parameters
     story.append(Paragraph("<b>Input Parameters</b>", styles['Heading2']))
@@ -461,8 +548,8 @@ def json_to_pdf(report: Dict[str, Any]) -> bytes:
         ['Source File', input_params.get('source_file', 'N/A')],
         ['Platform', input_params.get('platform', 'N/A')],
         ['Obfuscation Level', str(input_params.get('obfuscation_level', 'N/A'))],
-        ['Requested Passes', ', '.join(input_params.get('requested_passes', []))],
-        ['Applied Passes', ', '.join(input_params.get('applied_passes', []))],
+        ['Requested Passes', _safe_list_str(input_params.get('requested_passes'), 'None')],
+        ['Applied Passes', _safe_list_str(input_params.get('applied_passes'), 'None')],
     ]
     input_table = Table(input_data, colWidths=[2*inch, 5*inch])
     input_table.setStyle(TableStyle([
@@ -479,7 +566,7 @@ def json_to_pdf(report: Dict[str, Any]) -> bytes:
         ('GRID', (0, 0), (-1, -1), 1, colors.HexColor('#e0e0e0')),
     ]))
     story.append(input_table)
-    story.append(Spacer(1, 0.15*inch))
+    story.append(Spacer(1, 0.08*inch))
 
     # Baseline Compilation Details (if available)
     baseline_compiler = report.get('baseline_compiler', {})
@@ -515,7 +602,7 @@ def json_to_pdf(report: Dict[str, Any]) -> bytes:
     # ============= PAGE 2: Before/After Comparison & Attributes =============
 
     story.append(Paragraph("Metrics Comparison & Output Details", styles['Title']))
-    story.append(Spacer(1, 0.15*inch))
+    story.append(Spacer(1, 0.1*inch))
 
     # Before/After Comparison
     story.append(Paragraph("<b>Before/After Metrics</b>", styles['Heading2']))
@@ -534,15 +621,15 @@ def json_to_pdf(report: Dict[str, Any]) -> bytes:
         ['Symbols',
          str(baseline_metrics.get('symbols_count', 'N/A')),
          str(output_attrs.get('symbols_count', 'N/A')),
-         f"-{comparison.get('symbols_removed_percent', 0):.1f}%"],
+         f"-{_safe_float(comparison.get('symbols_removed_percent'), 0):.1f}%"],
         ['Functions',
          str(baseline_metrics.get('functions_count', 'N/A')),
          str(output_attrs.get('functions_count', 'N/A')),
-         f"-{comparison.get('functions_removed_percent', 0):.1f}%"],
+         f"-{_safe_float(comparison.get('functions_removed_percent'), 0):.1f}%"],
         ['Entropy',
-         f"{baseline_metrics.get('entropy', 0):.4f}",
-         f"{output_attrs.get('entropy', 0):.4f}",
-         f"+{comparison.get('entropy_increase', 0):.4f}"],
+         format_entropy(baseline_metrics.get('entropy')),
+         format_entropy(output_attrs.get('entropy')),
+         format_entropy(comparison.get('entropy_increase'))],
     ]
     comparison_table = Table(comparison_data, colWidths=[1.7*inch, 1.7*inch, 1.7*inch, 1.7*inch])
     comparison_table.setStyle(TableStyle([
@@ -557,7 +644,7 @@ def json_to_pdf(report: Dict[str, Any]) -> bytes:
         ('GRID', (0, 0), (-1, -1), 1, colors.HexColor('#e0e0e0')),
     ]))
     story.append(comparison_table)
-    story.append(Spacer(1, 0.15*inch))
+    story.append(Spacer(1, 0.08*inch))
 
     # Output Attributes
     story.append(Paragraph("<b>Output File Attributes</b>", styles['Heading2']))
@@ -568,8 +655,8 @@ def json_to_pdf(report: Dict[str, Any]) -> bytes:
         ['Binary Format', output_attrs.get('binary_format', 'N/A')],
         ['Symbol Count', str(output_attrs.get('symbols_count', 'N/A'))],
         ['Function Count', str(output_attrs.get('functions_count', 'N/A'))],
-        ['Binary Entropy', f"{output_attrs.get('entropy', 0):.4f}"],
-        ['Obfuscation Methods', ', '.join(output_attrs.get('obfuscation_methods', []))],
+        ['Binary Entropy', format_entropy(output_attrs.get('entropy', 0))],
+        ['Obfuscation Methods', _safe_list_str(output_attrs.get('obfuscation_methods'), 'Default pipeline')],
     ]
     output_table = Table(output_data, colWidths=[2*inch, 5*inch])
     output_table.setStyle(TableStyle([
@@ -585,7 +672,7 @@ def json_to_pdf(report: Dict[str, Any]) -> bytes:
         ('GRID', (0, 0), (-1, -1), 1, colors.HexColor('#e0e0e0')),
     ]))
     story.append(output_table)
-    story.append(Spacer(1, 0.15*inch))
+    story.append(Spacer(1, 0.08*inch))
 
     # Bogus Code Generation
     bogus_info = report.get('bogus_code_info', {})
@@ -599,12 +686,12 @@ def json_to_pdf(report: Dict[str, Any]) -> bytes:
                 ['Dead Code Blocks', str(bogus_info.get('dead_code_blocks', 0))],
                 ['Opaque Predicates', str(bogus_info.get('opaque_predicates', 0))],
                 ['Junk Instructions', str(bogus_info.get('junk_instructions', 0))],
-                ['Code Bloat %', f"{bogus_info.get('code_bloat_percentage', 0):.2f}%"],
+                ['Code Bloat %', f"{_safe_float(bogus_info.get('code_bloat_percentage'), 0):.2f}%"],
             ]
         else:
             # String format - just display it
             story.append(Paragraph(str(bogus_info), styles['Normal']))
-            story.append(Spacer(1, 0.15*inch))
+            story.append(Spacer(1, 0.08*inch))
             bogus_data = None
 
         if bogus_data:
@@ -622,7 +709,7 @@ def json_to_pdf(report: Dict[str, Any]) -> bytes:
                 ('GRID', (0, 0), (-1, -1), 1, colors.HexColor('#e0e0e0')),
             ]))
             story.append(bogus_table)
-            story.append(Spacer(1, 0.15*inch))
+            story.append(Spacer(1, 0.08*inch))
 
     # String Obfuscation - with real metrics
     string_obf = report.get('string_obfuscation', {})
@@ -658,7 +745,7 @@ def json_to_pdf(report: Dict[str, Any]) -> bytes:
                 ('GRID', (0, 0), (-1, -1), 1, colors.HexColor('#e0e0e0')),
             ]))
             story.append(string_table)
-            story.append(Spacer(1, 0.15*inch))
+            story.append(Spacer(1, 0.08*inch))
 
     # Symbol Obfuscation - with real metrics
     symbol_obf = report.get('symbol_obfuscation', {})
@@ -692,7 +779,7 @@ def json_to_pdf(report: Dict[str, Any]) -> bytes:
                 ('GRID', (0, 0), (-1, -1), 1, colors.HexColor('#e0e0e0')),
             ]))
             story.append(symbol_table)
-            story.append(Spacer(1, 0.15*inch))
+            story.append(Spacer(1, 0.08*inch))
 
     # Cycles Completed
     cycles = report.get('cycles_completed', {})
@@ -734,7 +821,7 @@ def json_to_pdf(report: Dict[str, Any]) -> bytes:
     if any([control_flow, instruction_metrics, binary_structure, pattern_resistance]):
         story.append(PageBreak())
         story.append(Paragraph("Advanced Analysis Dashboard", styles['Title']))
-        story.append(Spacer(1, 0.15*inch))
+        story.append(Spacer(1, 0.1*inch))
 
         # Control Flow Metrics
         if control_flow:
@@ -753,7 +840,7 @@ def json_to_pdf(report: Dict[str, Any]) -> bytes:
                  f"+{cf_comparison.get('cfg_edges_added', 0)}"],
                 ['Cyclomatic Complexity', str(cf_baseline.get('cyclomatic_complexity', 0)),
                  str(cf_obfuscated.get('cyclomatic_complexity', 0)),
-                 f"+{cf_comparison.get('complexity_increase_percent', 0):.1f}%"],
+                 f"+{_safe_float(cf_comparison.get('complexity_increase_percent'), 0):.1f}%"],
             ]
             cf_table = Table(cf_data, colWidths=[2*inch, 1.6*inch, 1.6*inch, 1.6*inch])
             cf_table.setStyle(TableStyle([
@@ -793,10 +880,10 @@ def json_to_pdf(report: Dict[str, Any]) -> bytes:
                 ['Metric', 'Baseline', 'Obfuscated', 'Change %'],
                 ['Total Instructions', str(instr_baseline.get('total_instructions', 0)),
                  str(instr_obfuscated.get('total_instructions', 0)),
-                 f"+{instr_comparison.get('instruction_growth_percent', 0):.1f}%"],
-                ['Arithmetic Complexity', f"{instr_baseline.get('arithmetic_complexity_score', 0):.2f}",
-                 f"{instr_obfuscated.get('arithmetic_complexity_score', 0):.2f}",
-                 f"+{instr_comparison.get('arithmetic_complexity_increase', 0):.1f}"],
+                 f"+{_safe_float(instr_comparison.get('instruction_growth_percent'), 0):.1f}%"],
+                ['Arithmetic Complexity', f"{_safe_float(instr_baseline.get('arithmetic_complexity_score'), 0):.2f}",
+                 f"{_safe_float(instr_obfuscated.get('arithmetic_complexity_score'), 0):.2f}",
+                 f"+{_safe_float(instr_comparison.get('arithmetic_complexity_increase'), 0):.1f}"],
                 ['MBA Expressions', str(instr_baseline.get('mba_expression_count', 0)),
                  str(instr_obfuscated.get('mba_expression_count', 0)),
                  f"+{instr_comparison.get('mba_expressions_added', 0)}"],
@@ -835,7 +922,7 @@ def json_to_pdf(report: Dict[str, Any]) -> bytes:
                 ['Section Count', str(binary_structure.get('section_count', 0))],
                 ['Import Table Entries', str(binary_structure.get('import_table', {}).get('imported_symbols', 0))],
                 ['Relocation Count', str(binary_structure.get('relocations', {}).get('relocation_count', 0))],
-                ['Code to Data Ratio', f"{binary_structure.get('code_to_data_ratio', 0):.2f}"],
+                ['Code to Data Ratio', f"{_safe_float(binary_structure.get('code_to_data_ratio'), 0):.2f}"],
             ]
             binary_table = Table(binary_data, colWidths=[3*inch, 4*inch])
             binary_table.setStyle(TableStyle([
@@ -860,9 +947,9 @@ def json_to_pdf(report: Dict[str, Any]) -> bytes:
 
             pattern_data = [
                 ['Visible String Count', str(pattern_resistance.get('string_analysis', {}).get('visible_string_count', 0))],
-                ['String Entropy', f"{pattern_resistance.get('string_analysis', {}).get('string_entropy', 0):.2f}"],
-                ['Opcode Distribution Entropy', f"{pattern_resistance.get('code_analysis', {}).get('opcode_distribution_entropy', 0):.2f}"],
-                ['Decompiler Confusion Score', f"{pattern_resistance.get('reverse_engineering_difficulty', {}).get('decompiler_confusion_score', 0):.1f}"],
+                ['String Entropy', f"{_safe_float(pattern_resistance.get('string_analysis', {}).get('string_entropy'), 0):.2f}"],
+                ['Opcode Distribution Entropy', f"{_safe_float(pattern_resistance.get('code_analysis', {}).get('opcode_distribution_entropy'), 0):.2f}"],
+                ['Decompiler Confusion Score', f"{_safe_float(pattern_resistance.get('reverse_engineering_difficulty', {}).get('decompiler_confusion_score'), 0):.1f}"],
             ]
             pattern_table = Table(pattern_data, colWidths=[3*inch, 4*inch])
             pattern_table.setStyle(TableStyle([
@@ -982,8 +1069,8 @@ def json_to_pdf(report: Dict[str, Any]) -> bytes:
                 ['Baseline Size', format_bytes(binary_props.get('baseline_size_bytes', 0))],
                 ['Obfuscated Size', format_bytes(binary_props.get('obf_size_bytes', 0))],
                 ['Size Change', format_percentage(binary_props.get('size_increase_percent', 0))],
-                ['Baseline Entropy', f"{binary_props.get('baseline_entropy', 0):.4f}"],
-                ['Obfuscated Entropy', f"{binary_props.get('obf_entropy', 0):.4f}"],
+                ['Baseline Entropy', format_entropy(binary_props.get('baseline_entropy', 0))],
+                ['Obfuscated Entropy', format_entropy(binary_props.get('obf_entropy', 0))],
             ]
             binary_props_table = Table(binary_props_data, colWidths=[3*inch, 4*inch])
             binary_props_table.setStyle(TableStyle([
@@ -1007,11 +1094,23 @@ def json_to_pdf(report: Dict[str, Any]) -> bytes:
             story.append(Paragraph("<b>Performance Analysis</b>", styles['Heading2']))
             story.append(Spacer(1, 0.08*inch))
 
+            # Determine acceptable status based on overhead
+            baseline_ms = _safe_float(performance.get('baseline_ms'), 0)
+            obf_ms = _safe_float(performance.get('obf_ms'), 0)
+            overhead_pct = _safe_float(performance.get('overhead_percent'), 0)
+
+            if baseline_ms == 0 and obf_ms == 0:
+                acceptable_str = 'N/A (not measured)'
+            elif overhead_pct < 50:
+                acceptable_str = 'YES ✓'
+            else:
+                acceptable_str = 'NO ✗'
+
             perf_data = [
-                ['Baseline Time', f"{performance.get('baseline_ms', 0):.2f} ms"],
-                ['Obfuscated Time', f"{performance.get('obf_ms', 0):.2f} ms"],
-                ['Overhead', format_percentage(performance.get('overhead_percent', 0))],
-                ['Acceptable', 'YES ✓' if performance.get('acceptable') else 'NO ✗'],
+                ['Baseline Time', format_time(baseline_ms)],
+                ['Obfuscated Time', format_time(obf_ms)],
+                ['Overhead', format_percentage(overhead_pct)],
+                ['Acceptable', acceptable_str],
             ]
             perf_table = Table(perf_data, colWidths=[3*inch, 4*inch])
             perf_table.setStyle(TableStyle([
@@ -1027,6 +1126,94 @@ def json_to_pdf(report: Dict[str, Any]) -> bytes:
                 ('GRID', (0, 0), (-1, -1), 1, colors.HexColor('#e0e0e0')),
             ]))
             story.append(perf_table)
+
+    # ============= PHORONIX BENCHMARKING SECTION (if available) =============
+    phoronix_info = report.get('phoronix', {})
+    if phoronix_info and phoronix_info.get('key_metrics'):
+        key_metrics = phoronix_info.get('key_metrics', {})
+        if key_metrics.get('available'):
+            story.append(PageBreak())
+            story.append(Spacer(1, 0.1*inch))
+
+            # Section heading
+            bench_heading = ParagraphStyle(
+                'BenchHeading',
+                parent=styles['Heading2'],
+                fontSize=16,
+                textColor=colors.HexColor('#1f6feb'),
+                spaceAfter=12,
+                fontName='Helvetica-Bold'
+            )
+            story.append(Paragraph("📊 Obfuscation Impact Analysis", bench_heading))
+            story.append(Spacer(1, 0.08*inch))
+
+            # Build metrics table with only reliable metrics
+            bench_data = [
+                ['Metric', 'Value', 'Interpretation'],
+            ]
+
+            # Instruction Count Increase (RELIABLE - directly measurable)
+            instr_delta = key_metrics.get('instruction_count_delta')
+            instr_percent = key_metrics.get('instruction_count_increase_percent')
+            if instr_delta is not None:
+                instr_interp = "Code expansion due to obfuscation passes"
+                bench_data.append([
+                    'Instruction Count Increase',
+                    f"+{instr_delta} ({instr_percent}%)",
+                    instr_interp
+                ])
+
+            # Performance Overhead (if available)
+            perf_overhead = key_metrics.get('performance_overhead_percent')
+            if perf_overhead is not None:
+                if perf_overhead < 5:
+                    perf_interp = "Minimal performance impact"
+                elif perf_overhead < 20:
+                    perf_interp = "Acceptable performance cost"
+                elif perf_overhead < 50:
+                    perf_interp = "Significant performance overhead"
+                else:
+                    perf_interp = "High performance cost"
+                bench_data.append([
+                    'Performance Overhead',
+                    f"+{perf_overhead}%",
+                    perf_interp
+                ])
+
+            bench_table = Table(bench_data, colWidths=[2*inch, 1.5*inch, 3.5*inch])
+            bench_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#17a2b8')),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTNAME', (0, 1), (0, -1), 'Helvetica-Bold'),
+                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+                ('FONTSIZE', (0, 0), (-1, -1), 9),
+                ('PADDING', (0, 0), (-1, -1), 10),
+                ('BACKGROUND', (0, 1), (-1, -1), colors.white),
+                ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#e7f7ff')]),
+                ('GRID', (0, 0), (-1, -1), 1, colors.HexColor('#e0e0e0')),
+            ]))
+            story.append(bench_table)
+            story.append(Spacer(1, 0.1*inch))
+
+            # Information note about metrics
+            note_style = ParagraphStyle(
+                'NoteStyle',
+                parent=styles['Normal'],
+                fontSize=8,
+                textColor=colors.HexColor('#666666'),
+                fontName='Helvetica-Oblique',
+                leftIndent=20
+            )
+            note_text = (
+                "<b>Note:</b> Displayed metrics are based on static code analysis and represent measurable "
+                "changes from obfuscation passes. Instruction count increase reflects code expansion from "
+                "obfuscation techniques. Performance overhead reflects runtime slowdown if measured. "
+                "For comprehensive reverse engineering difficulty assessment, manual analysis with "
+                "decompilation tools (Ghidra, IDA) is recommended."
+            )
+            story.append(Paragraph(note_text, note_style))
 
     # Build PDF
     doc.build(story)

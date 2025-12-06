@@ -1,0 +1,42 @@
+{
+  "timestamp": "2025-12-06T02:21:06.339873",
+  "config_name": "option1",
+  "baseline": {
+    "file_size_bytes": 83920,
+    "file_size_percent_increase": 0.0,
+    "text_section_size": 0,
+    "num_functions": 9,
+    "num_basic_blocks": 4,
+    "instruction_count": 314,
+    "text_entropy": 0.0,
+    "cyclomatic_complexity": 1.0,
+    "stripped": true,
+    "pie_enabled": true
+  },
+  "obfuscated": {
+    "obfuscated_linux (1)": {
+      "file_size_bytes": 14800,
+      "file_size_percent_increase": 0.0,
+      "text_section_size": 0,
+      "num_functions": 0,
+      "num_basic_blocks": 1,
+      "instruction_count": 836,
+      "text_entropy": 0.0,
+      "cyclomatic_complexity": 1.0,
+      "stripped": true,
+      "pie_enabled": true
+    }
+  },
+  "comparison": {
+    "obfuscated_linux (1)": {
+      "file_size_increase_bytes": -69120,
+      "file_size_increase_percent": -82.36,
+      "text_section_increase_bytes": 0,
+      "function_count_delta": -9,
+      "basic_block_count_delta": -3,
+      "instruction_count_delta": 522,
+      "entropy_increase": 0.0,
+      "complexity_increase": 0.0
+    }
+  }
+}

@@ -1,0 +1,68 @@
+{
+  "metadata": {
+    "config_name": "test_obfuscation",
+    "timestamp": "2025-12-06T01:51:25.180911",
+    "report_version": "1.0"
+  },
+  "performance_overhead_summary": {
+    "benchmark_suite": "unknown",
+    "performance_metrics": {
+      "baseline_throughput": null,
+      "obfuscated_throughput": null,
+      "overhead_percent": 0.0
+    },
+    "affected_benchmarks": [],
+    "acceptable": true
+  },
+  "binary_growth_complexity_summary": {
+    "baseline_size_bytes": 14528,
+    "obfuscated_size_bytes": 0,
+    "average_size_increase_percent": 1.87,
+    "text_section_growth_bytes": 0,
+    "function_count_baseline": 0,
+    "function_count_obfuscated": 0,
+    "avg_entropy_increase": 0.0,
+    "complexity_increased": false
+  },
+  "cfg_instruction_metrics": {
+    "baseline_basic_blocks": 4,
+    "obfuscated_basic_blocks": 0,
+    "avg_basic_block_increase": 3.0,
+    "baseline_instructions": 519,
+    "obfuscated_instructions": 0,
+    "avg_instruction_increase": 317.0,
+    "baseline_cyclomatic_complexity": 1.0,
+    "obfuscated_cyclomatic_complexity": 1.0,
+    "cfg_distorted": false
+  },
+  "decompilation_difficulty_report": {
+    "irreducible_cfg_detected": true,
+    "irreducible_cfg_percentage": 28.57,
+    "opaque_predicates_count": 15,
+    "opaque_predicates_percentage": 0.0,
+    "basic_blocks_recovered": 129,
+    "basic_block_recovery_percentage": 100.0,
+    "string_obfuscation_ratio": 0.021,
+    "symbol_obfuscation_ratio": 0.0,
+    "decompilation_readability_score": 5.62,
+    "analysis_method": "heuristics",
+    "recommendation": "Moderate - Some protection, but decompilable with effort"
+  },
+  "obfuscation_score": {
+    "component_scores": {
+      "performance_cost": 10.0,
+      "binary_complexity": 0.37,
+      "cfg_distortion": 0.15,
+      "decompilation_difficulty": 4.38
+    },
+    "weights": {
+      "performance_cost": 0.2,
+      "binary_complexity": 0.25,
+      "cfg_distortion": 0.25,
+      "decompilation_difficulty": 0.3
+    },
+    "final_score": 3.44,
+    "rating": "D",
+    "interpretation": "Limited obfuscation effectiveness"
+  }
+}

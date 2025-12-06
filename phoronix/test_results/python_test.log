@@ -1,0 +1,44 @@
+
+==================================================
+Phoronix Test Suite Verification
+==================================================
+
+ℹ️  System Information:
+  OS: Linux incharaj-IdeaPad-Gaming-3-15IHU6 6.8.0-87-generic #88~22.04.1-Ubuntu SMP PREEMPT_DYNAMIC Tue Oct 14 14:03:14 UTC 2 x86_64 x86_64 x86_64 GNU/Linux
+  PHP: (error: [Errno 2] No such file or directory: 'php')
+  CPU Cores: 8
+
+
+--- Installation Check ---
+ℹ️  Checking installation at: /opt/phoronix-test-suite
+❌ Phoronix Test Suite executable not found at /opt/phoronix-test-suite/phoronix-test-suite
+
+--- Executable Permission Check ---
+⚠️  Phoronix executable not marked as executable, attempting to fix...
+❌ Failed to set executable permission: [Errno 2] No such file or directory: '/opt/phoronix-test-suite/phoronix-test-suite'
+
+--- Version Check ---
+ℹ️  Checking version...
+❌ Version check failed with exception: [Errno 2] No such file or directory: '/opt/phoronix-test-suite/phoronix-test-suite'
+
+--- Results Directory Check ---
+ℹ️  Checking results directory: /home/incharaj/.phoronix-test-suite/results
+⚠️  Results directory doesn't exist: /home/incharaj/.phoronix-test-suite/results
+ℹ️  This is normal if no tests have been run yet
+
+--- Test Benchmark Run ---
+ℹ️  Running minimal test benchmark (compress-7zip, 1 iteration)...
+ℹ️  Installing test dependencies...
+❌ Test benchmark failed with exception: [Errno 2] No such file or directory: '/opt/phoronix-test-suite/phoronix-test-suite'
+
+==================================================
+Verification Summary
+==================================================
+ℹ️  Passed Checks: 0
+ℹ️  Failed Checks: 4
+  ❌ Phoronix Test Suite executable not found at /opt/phoronix-test-suite/phoronix-test-suite
+  ❌ Failed to set executable permission: [Errno 2] No such file or directory: '/opt/phoronix-test-suite/phoronix-test-suite'
+  ❌ Version check failed with exception: [Errno 2] No such file or directory: '/opt/phoronix-test-suite/phoronix-test-suite'
+  ❌ Test benchmark failed with exception: [Errno 2] No such file or directory: '/opt/phoronix-test-suite/phoronix-test-suite'
+
+❌ 4 check(s) failed

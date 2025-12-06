@@ -11,10 +11,10 @@ concurrency:
 
 env:
   DOCKERHUB_REGISTRY: docker.io
-  IMAGE_NAME: ${{ github.repository }}
 
 jobs:
-  build-and-push:
+  # Job 1: Download binaries (shared by both builds)
+  download-binaries:
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -34,64 +34,26 @@ jobs:
     - name: Set up Cloud SDK
       uses: google-github-actions/setup-gcloud@v2
 
-    - name: Download LLVM binaries from artifact
-      id: download-artifact
-      continue-on-error: true
-      uses: actions/download-artifact@v4
-      with:
-        name: llvm-binaries-linux-x86_64
-        path: cmd/llvm-obfuscator/plugins/linux-x86_64
-        github-token: ${{ secrets.GITHUB_TOKEN }}
-
-    - name: Download LLVM binaries from GCP (if artifact not found)
-      id: download-binaries
-      if: steps.download-artifact.outcome != 'success'
+    - name: Download LLVM binaries from GCP
       env:
         GCP_BUCKET: llvmbins
         TARBALL_NAME: llvm-obfuscator-binaries.tar.gz
       run: |
         echo "=========================================="
-        echo "Downloading LLVM binaries from GCP Cloud Storage"
+        echo "Downloading LLVM binaries from GCP"
         echo "=========================================="
-        echo "⚠️  Artifact not found, downloading from GCP"
 
-        # Create target directory
         mkdir -p cmd/llvm-obfuscator/plugins
 
-        # Try to download the single tarball first (FAST PATH - ~2 mins)
-        echo "Attempting to download pre-built tarball..."
+        # Download single tarball (FAST - ~2 mins)
+        echo "Downloading pre-built tarball..."
         if gsutil cp "gs://${GCP_BUCKET}/${TARBALL_NAME}" /tmp/${TARBALL_NAME} 2>/dev/null; then
           echo "✅ Tarball found! Extracting..."
           tar -xzf /tmp/${TARBALL_NAME} -C cmd/llvm-obfuscator/plugins/
           rm /tmp/${TARBALL_NAME}
-          echo "✅ Extracted tarball successfully"
         else
-          echo "⚠️  Tarball not found, falling back to individual file download (SLOW PATH - ~20 mins)"
-          echo "   To speed up future builds, run: ./scripts/gcp-binary-manager.sh init"
-          echo ""
-
-          # FALLBACK: Download individual files
-          mkdir -p cmd/llvm-obfuscator/plugins/linux-x86_64
-          gsutil -m cp -r "gs://${GCP_BUCKET}/linux-x86_64/*" cmd/llvm-obfuscator/plugins/linux-x86_64/ || {
-            echo "❌ ERROR: Failed to download binaries from GCP Cloud Storage"
-            exit 1
-          }
-
-          # Download macOS SDK
-          echo "Downloading macOS SDK from GCP..."
-          mkdir -p cmd/llvm-obfuscator/plugins/macos-sdk
-          gsutil cp "gs://${GCP_BUCKET}/macos-sdk-15.4-minimal.tar.gz" /tmp/macos-sdk.tar.gz
-          tar -xzf /tmp/macos-sdk.tar.gz -C /tmp/
-          mv /tmp/macos-sdk/MacOSX15.4.sdk cmd/llvm-obfuscator/plugins/macos-sdk/ 2>/dev/null || true
-          rm -rf /tmp/macos-sdk /tmp/macos-sdk.tar.gz
-
-          # Download llvm-mingw
-          echo "Downloading llvm-mingw from GCP..."
-          mkdir -p cmd/llvm-obfuscator/plugins/llvm-mingw
-          gsutil cp "gs://${GCP_BUCKET}/llvm-mingw-20251202-ucrt-ubuntu-22.04-x86_64.tar.xz" /tmp/llvm-mingw.tar.xz
-          tar -xf /tmp/llvm-mingw.tar.xz -C /tmp/
-          mv /tmp/llvm-mingw-20251202-ucrt-ubuntu-22.04-x86_64/* cmd/llvm-obfuscator/plugins/llvm-mingw/
-          rm -rf /tmp/llvm-mingw-20251202-ucrt-ubuntu-22.04-x86_64 /tmp/llvm-mingw.tar.xz
+          echo "❌ Tarball not found. Run: ./scripts/gcp-binary-manager.sh init"
+          exit 1
         fi
 
         # Make binaries executable
@@ -103,84 +65,47 @@ jobs:
         chmod +x cmd/llvm-obfuscator/plugins/linux-x86_64/lld || true
 
         echo "✅ Binaries ready"
-        ls -lh cmd/llvm-obfuscator/plugins/linux-x86_64/ | head -15
-        ls -la cmd/llvm-obfuscator/plugins/macos-sdk/ 2>/dev/null || echo "No macOS SDK"
-        ls -la cmd/llvm-obfuscator/plugins/llvm-mingw/ 2>/dev/null | head -5 || echo "No llvm-mingw"
+        ls -lh cmd/llvm-obfuscator/plugins/linux-x86_64/ | head -10
 
-    - name: Upload LLVM binaries as artifact
-      if: steps.download-artifact.outcome != 'success' && steps.download-binaries.outcome == 'success'
+    - name: Verify binaries
+      run: |
+        if [ ! -f "cmd/llvm-obfuscator/plugins/linux-x86_64/clang" ]; then
+          echo "❌ clang not found"; exit 1
+        fi
+        if [ ! -f "cmd/llvm-obfuscator/plugins/linux-x86_64/opt" ]; then
+          echo "❌ opt not found"; exit 1
+        fi
+        if [ ! -f "cmd/llvm-obfuscator/plugins/linux-x86_64/LLVMObfuscationPlugin.so" ]; then
+          echo "❌ plugin not found"; exit 1
+        fi
+        echo "✅ All binaries verified"
+
+    - name: Upload plugins as artifact
       uses: actions/upload-artifact@v4
       with:
-        name: llvm-binaries-linux-x86_64
-        path: cmd/llvm-obfuscator/plugins/linux-x86_64
-        retention-days: 30
-        if-no-files-found: error
-        overwrite: true
+        name: llvm-plugins
+        path: cmd/llvm-obfuscator/plugins
+        retention-days: 1
 
-    - name: Verify binaries are present (REQUIRED)
-      run: |
-        echo "=========================================="
-        echo "Verifying custom LLVM binaries (REQUIRED)"
-        echo "=========================================="
-        echo ""
-        
-        MISSING_BINARIES=0
-        
-        # Check clang
-        if [ ! -f "cmd/llvm-obfuscator/plugins/linux-x86_64/clang" ]; then
-          echo "❌ ERROR: clang binary not found"
-          echo "   Run the 'Store LLVM Binaries as Artifacts' workflow first"
-          MISSING_BINARIES=1
-        elif ! file cmd/llvm-obfuscator/plugins/linux-x86_64/clang | grep -q "ELF"; then
-          echo "❌ ERROR: clang file exists but is not a valid ELF binary"
-          MISSING_BINARIES=1
-        else
-          echo "✅ Custom clang binary verified"
-        fi
-        
-        # Check opt
-        if [ ! -f "cmd/llvm-obfuscator/plugins/linux-x86_64/opt" ]; then
-          echo "❌ ERROR: opt binary not found"
-          echo "   Run the 'Store LLVM Binaries as Artifacts' workflow first"
-          MISSING_BINARIES=1
-        elif ! file cmd/llvm-obfuscator/plugins/linux-x86_64/opt | grep -q "ELF"; then
-          echo "❌ ERROR: opt file exists but is not a valid ELF binary"
-          MISSING_BINARIES=1
-        else
-          echo "✅ Custom opt binary verified"
-        fi
-        
-        # Check plugin
-        if [ ! -f "cmd/llvm-obfuscator/plugins/linux-x86_64/LLVMObfuscationPlugin.so" ]; then
-          echo "❌ ERROR: LLVMObfuscationPlugin.so not found"
-          echo "   Run the 'Store LLVM Binaries as Artifacts' workflow first"
-          MISSING_BINARIES=1
-        elif ! file cmd/llvm-obfuscator/plugins/linux-x86_64/LLVMObfuscationPlugin.so | grep -q "shared object"; then
-          echo "❌ ERROR: plugin file exists but is not a valid shared object"
-          MISSING_BINARIES=1
-        else
-          echo "✅ Custom obfuscation plugin verified"
-        fi
-        
-        echo ""
-        if [ $MISSING_BINARIES -eq 1 ]; then
-          echo "=========================================="
-          echo "❌ BUILD FAILED: Required binaries missing"
-          echo "=========================================="
-          echo ""
-          echo "To fix:"
-          echo "  1. Go to Actions → 'Store LLVM Binaries in GCP Cloud Storage'"
-          echo "  2. Run the workflow manually with a version (e.g., v1.0.0)"
-          echo "  3. This will upload binaries to GCP Cloud Storage"
-          echo ""
-          exit 1
-        else
-          echo "✅ All required custom binaries verified successfully"
-          echo ""
-          ls -lh cmd/llvm-obfuscator/plugins/linux-x86_64/clang
-          ls -lh cmd/llvm-obfuscator/plugins/linux-x86_64/opt
-          ls -lh cmd/llvm-obfuscator/plugins/linux-x86_64/LLVMObfuscationPlugin.so
-        fi
+  # Job 2: Build and push backend (runs in parallel with frontend)
+  build-backend:
+    needs: download-binaries
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Download plugins artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: llvm-plugins
+        path: cmd/llvm-obfuscator/plugins
+
+    - name: Make binaries executable
+      run: chmod +x cmd/llvm-obfuscator/plugins/linux-x86_64/* 2>/dev/null || true
 
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
@@ -191,44 +116,26 @@ jobs:
         username: ${{ secrets.DOCKERHUB_USERNAME }}
         password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-    - name: Extract backend metadata
-      id: meta-backend
+    - name: Extract metadata
+      id: meta
       uses: docker/metadata-action@v5
       with:
-        images: |
-          ${{ env.DOCKERHUB_REGISTRY }}/${{ secrets.DOCKERHUB_USERNAME }}/llvm-obfuscator-backend
+        images: ${{ env.DOCKERHUB_REGISTRY }}/${{ secrets.DOCKERHUB_USERNAME }}/llvm-obfuscator-backend
         tags: |
           type=ref,event=branch
           type=ref,event=pr
           type=semver,pattern={{version}}
-          type=semver,pattern={{major}}.{{minor}}
-          type=semver,pattern={{major}}
           type=raw,value=latest,enable={{is_default_branch}}
           type=raw,value=patched,enable={{is_default_branch}}
 
-    - name: Extract frontend metadata
-      id: meta-frontend
-      uses: docker/metadata-action@v5
-      with:
-        images: |
-          ${{ env.DOCKERHUB_REGISTRY }}/${{ secrets.DOCKERHUB_USERNAME }}/llvm-obfuscator-frontend
-        tags: |
-          type=ref,event=branch
-          type=ref,event=pr
-          type=semver,pattern={{version}}
-          type=semver,pattern={{major}}.{{minor}}
-          type=semver,pattern={{major}}
-          type=raw,value=latest,enable={{is_default_branch}}
-          type=raw,value=patched,enable={{is_default_branch}}
-
-    - name: Build and push backend image
+    - name: Build and push
       uses: docker/build-push-action@v5
       with:
         context: ./cmd/llvm-obfuscator
         file: ./cmd/llvm-obfuscator/Dockerfile.backend
         push: true
-        tags: ${{ steps.meta-backend.outputs.tags }}
-        labels: ${{ steps.meta-backend.outputs.labels }}
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
         cache-from: |
           type=gha,scope=backend
           type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/llvm-obfuscator-backend:buildcache
@@ -236,17 +143,48 @@ jobs:
           type=gha,mode=max,scope=backend
           type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/llvm-obfuscator-backend:buildcache,mode=max
         platforms: linux/amd64
-        build-args: |
-          BUILDKIT_INLINE_CACHE=1
+        build-args: BUILDKIT_INLINE_CACHE=1
 
-    - name: Build and push frontend image
+  # Job 3: Build and push frontend (runs in parallel with backend)
+  build-frontend:
+    needs: download-binaries
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Log in to Docker Hub
+      uses: docker/login-action@v3
+      with:
+        username: ${{ secrets.DOCKERHUB_USERNAME }}
+        password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+    - name: Extract metadata
+      id: meta
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ env.DOCKERHUB_REGISTRY }}/${{ secrets.DOCKERHUB_USERNAME }}/llvm-obfuscator-frontend
+        tags: |
+          type=ref,event=branch
+          type=ref,event=pr
+          type=semver,pattern={{version}}
+          type=raw,value=latest,enable={{is_default_branch}}
+          type=raw,value=patched,enable={{is_default_branch}}
+
+    - name: Build and push
       uses: docker/build-push-action@v5
       with:
         context: ./cmd/llvm-obfuscator/frontend
         file: ./cmd/llvm-obfuscator/frontend/Dockerfile.frontend
         push: true
-        tags: ${{ steps.meta-frontend.outputs.tags }}
-        labels: ${{ steps.meta-frontend.outputs.labels }}
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
         cache-from: |
           type=gha,scope=frontend
           type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/llvm-obfuscator-frontend:buildcache
@@ -254,201 +192,19 @@ jobs:
           type=gha,mode=max,scope=frontend
           type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/llvm-obfuscator-frontend:buildcache,mode=max
         platforms: linux/amd64
-        build-args: |
-          BUILDKIT_INLINE_CACHE=1
+        build-args: BUILDKIT_INLINE_CACHE=1
 
-    - name: Generate Docker Hub deployment files
+  # Job 4: Notify completion
+  notify:
+    needs: [build-backend, build-frontend]
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    steps:
+    - name: Deployment summary
       run: |
-        # Create deployment directory
-        mkdir -p deployment/dockerhub
-        
-        # Generate docker-compose.yml for Docker Hub
-        cat > deployment/dockerhub/docker-compose.yml << 'EOF'
-        version: "3.9"
-        
-        services:
-          backend:
-            image: ${{ secrets.DOCKERHUB_USERNAME }}/llvm-obfuscator-backend:latest
-            container_name: llvm-obfuscator-backend
-            environment:
-              - OBFUSCATOR_DISABLE_AUTH=false
-              - PYTHONDONTWRITEBYTECODE=1
-              - PYTHONUNBUFFERED=1
-            volumes:
-              - ./reports:/app/reports
-              - ./logs:/app/logs
-            expose:
-              - "8000"
-            restart: unless-stopped
-            healthcheck:
-              test: ["CMD", "curl", "-fsS", "http://localhost:8000/api/health"]
-              interval: 30s
-              timeout: 10s
-              retries: 3
-              start_period: 40s
-            networks:
-              - obfuscator-network
-        
-          frontend:
-            image: ${{ secrets.DOCKERHUB_USERNAME }}/llvm-obfuscator-frontend:latest
-            container_name: llvm-obfuscator-frontend
-            ports:
-              - "80:80"
-            depends_on:
-              backend:
-                condition: service_healthy
-            restart: unless-stopped
-            healthcheck:
-              test: ["CMD", "curl", "-fsS", "http://localhost/"]
-              interval: 30s
-              timeout: 10s
-              retries: 3
-            networks:
-              - obfuscator-network
-        
-        networks:
-          obfuscator-network:
-            driver: bridge
-        
-        volumes:
-          reports:
-            driver: local
-          logs:
-            driver: local
-        EOF
-        
-        # Generate deployment script for Docker Hub
-        cat > deployment/dockerhub/deploy.sh << 'EOF'
-        #!/bin/bash
-        
-        # LLVM Obfuscator Docker Hub Deployment Script
-        set -e
-        
-        echo "🚀 Deploying LLVM Obfuscator from Docker Hub..."
-        
-        # Create necessary directories
-        mkdir -p reports logs
-        
-        # Pull latest images
-        echo "📦 Pulling latest images from Docker Hub..."
-        docker pull ${{ secrets.DOCKERHUB_USERNAME }}/llvm-obfuscator-backend:latest
-        docker pull ${{ secrets.DOCKERHUB_USERNAME }}/llvm-obfuscator-frontend:latest
-        
-        # Stop existing containers
-        echo "🛑 Stopping existing containers..."
-        docker-compose down || true
-        
-        # Start new containers
-        echo "🚀 Starting new containers..."
-        docker-compose up -d
-        
-        # Wait for services to be healthy
-        echo "⏳ Waiting for services to be healthy..."
-        sleep 30
-        
-        # Check health
-        echo "🔍 Checking service health..."
-        if curl -fsS http://localhost:8000/api/health > /dev/null 2>&1; then
-          echo "✅ Backend is healthy"
-        else
-          echo "❌ Backend health check failed"
-          exit 1
-        fi
-        
-        if curl -fsS http://localhost/ > /dev/null 2>&1; then
-          echo "✅ Frontend is healthy"
-        else
-          echo "❌ Frontend health check failed"
-          exit 1
-        fi
-        
-        # Clean up old images
-        echo "🧹 Cleaning up old images..."
-        docker image prune -f
-        
-        echo "🎉 Deployment completed successfully!"
-        echo "📊 Service Status:"
-        docker-compose ps
-        
-        echo "🌐 Application is available at:"
-        echo "   Frontend: http://localhost"
-        echo "   Backend API: http://localhost/api"
-        EOF
-        
-        chmod +x deployment/dockerhub/deploy.sh
-        
-        # Generate README for Docker Hub deployment
-        cat > deployment/dockerhub/README.md << 'EOF'
-        # LLVM Obfuscator Docker Hub Deployment
-        
-        This directory contains deployment files for running LLVM Obfuscator using Docker Hub images.
-        
-        ## Quick Start
-        
-        1. Clone or download this repository
-        2. Navigate to the deployment directory
-        3. Run the deployment script:
-           ```bash
-           ./deploy.sh
-           ```
-        
-        ## Manual Deployment
-        
-        ```bash
-        # Pull latest images
-        docker pull your-username/llvm-obfuscator-backend:latest
-        docker pull your-username/llvm-obfuscator-frontend:latest
-        
-        # Start services
-        docker-compose up -d
-        ```
-        
-        ## Docker Hub Images
-        
-        - **Backend**: `your-username/llvm-obfuscator-backend:latest`
-        - **Frontend**: `your-username/llvm-obfuscator-frontend:latest`
-        
-        ## Services
-        
-        - **Frontend**: Available at http://localhost
-        - **Backend API**: Available at http://localhost/api
-        - **Reports**: Stored in ./reports directory
-        
-        ## Management Commands
-        
-        ```bash
-        # View logs
-        docker-compose logs -f
-        
-        # Check status
-        docker-compose ps
-        
-        # Stop services
-        docker-compose down
-        
-        # Restart services
-        docker-compose restart
-        
-        # Update to latest images
-        docker-compose pull
-        docker-compose up -d
-        ```
-        EOF
-
-    - name: Upload Docker Hub deployment artifacts
-      uses: actions/upload-artifact@v4
-      with:
-        name: dockerhub-deployment-files
-        path: deployment/dockerhub/
-        retention-days: 30
-
-    - name: Notify Docker Hub deployment
-      if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-      run: |
-        echo "🚀 Docker images built and pushed to Docker Hub successfully!"
-        echo "📦 Images available at:"
-        echo "  - Backend: ${{ secrets.DOCKERHUB_USERNAME }}/llvm-obfuscator-backend:latest"
-        echo "  - Frontend: ${{ secrets.DOCKERHUB_USERNAME }}/llvm-obfuscator-frontend:latest"
-        echo "📋 Deployment artifacts uploaded as GitHub Actions artifact"
-
-
+        echo "🚀 Docker images built and pushed successfully!"
+        echo ""
+        echo "📦 Images:"
+        echo "  - ${{ secrets.DOCKERHUB_USERNAME }}/llvm-obfuscator-backend:latest"
+        echo "  - ${{ secrets.DOCKERHUB_USERNAME }}/llvm-obfuscator-frontend:latest"

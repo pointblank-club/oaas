@@ -820,12 +820,22 @@ async def api_obfuscate_sync(
     # Validate and sanitize entrypoint command
     entrypoint_cmd = _validate_entrypoint_command(payload.entrypoint_command or "./a.out")
 
-    # Build for Linux and Windows only
-    # NOTE: macOS disabled - requires Apple SDK via osxcross
-    target_platforms = [
-        (Platform.LINUX, payload.architecture),
-        (Platform.WINDOWS, payload.architecture),
-    ]
+    # Build for selected platform(s) only
+    # NOTE: macOS cross-compilation disabled - requires Apple SDK via osxcross
+    if payload.platform == Platform.ALL:
+        # Build for all supported platforms
+        target_platforms = [
+            (Platform.LINUX, payload.architecture),
+            (Platform.WINDOWS, payload.architecture),
+            # (Platform.MACOS, payload.architecture),  # Disabled - requires osxcross
+        ]
+        # Use Linux as the primary platform for "all"
+        payload.platform = Platform.LINUX
+    else:
+        # Build only for the selected platform
+        target_platforms = [
+            (payload.platform, payload.architecture),
+        ]
 
     job = job_manager.create_job({
         "filename": payload.filename,

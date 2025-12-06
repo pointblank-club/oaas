@@ -2756,11 +2756,19 @@ function App() {
       // Extract detailed error message
       let userFriendlyError = errorMsg;
 
-      // Try to parse JSON error from backend (FastAPI sends {detail: "..."})
+      // Try to parse JSON error from backend (FastAPI sends {detail: "..."} or {detail: [...]})
       try {
         const errorData = JSON.parse(errorMsg);
         if (errorData.detail) {
-          userFriendlyError = errorData.detail;
+          // Handle both string and array detail formats
+          if (typeof errorData.detail === 'string') {
+            userFriendlyError = errorData.detail;
+          } else if (Array.isArray(errorData.detail)) {
+            // FastAPI validation errors come as array of {msg, loc, type}
+            userFriendlyError = errorData.detail.map((e: { msg?: string }) => e.msg || JSON.stringify(e)).join('; ');
+          } else {
+            userFriendlyError = JSON.stringify(errorData.detail);
+          }
         }
       } catch {
         // Not JSON, use the raw error message (which already contains the backend error)

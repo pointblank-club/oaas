@@ -11,6 +11,7 @@ class Platform(str, Enum):
     WINDOWS = "windows"
     MACOS = "macos"
     DARWIN = "darwin"  # Alias for macOS
+    ALL = "all"  # Build for all supported platforms
 
     @classmethod
     def from_string(cls, value: str) -> "Platform":
@@ -134,7 +135,7 @@ class UPXConfiguration:
 
 @dataclass
 class RemarksConfiguration:
-    enabled: bool = False
+    enabled: bool = True  # Enabled by default to show optimization info
     format: str = "yaml"  # yaml or bitstream
     output_file: Optional[str] = None  # If None, auto-generate
     pass_filter: str = ".*"  # Regex filter for passes
@@ -216,7 +217,7 @@ class ObfuscationConfig:
 
         remarks_data = adv_data.get("remarks", {})
         remarks_config = RemarksConfiguration(
-            enabled=remarks_data.get("enabled", False),
+            enabled=remarks_data.get("enabled", True),  # Enabled by default
             format=remarks_data.get("format", "yaml"),
             output_file=remarks_data.get("output_file"),
             pass_filter=remarks_data.get("pass_filter", ".*"),

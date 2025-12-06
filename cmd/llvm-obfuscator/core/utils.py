@@ -124,10 +124,17 @@ def get_platform_triple(target_platform: str) -> str:
 
 
 def merge_flags(base: Iterable[str], extra: Optional[Iterable[str]] = None) -> List[str]:
+    """Merge base flags with extra flags.
+
+    Note: -mllvm is a prefix flag that must appear before each LLVM option,
+    so we allow duplicates of -mllvm to preserve correct flag ordering.
+    Example: ['-mllvm', '-split_num=3', '-mllvm', '-bcf_loop=1']
+    """
     merged = list(base)
     if extra:
         for flag in extra:
-            if flag not in merged:
+            # Allow duplicate -mllvm flags (they're prefixes for LLVM options)
+            if flag == "-mllvm" or flag not in merged:
                 merged.append(flag)
     return merged
 

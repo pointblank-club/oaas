@@ -10,7 +10,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Configuration
-PTS_VERSION="11.8.0"
+PTS_VERSION="10.8.4"
 PTS_DOWNLOAD_URL="https://www.phoronix-test-suite.com/releases/phoronix-test-suite-${PTS_VERSION}.tar.gz"
 PTS_INSTALL_DIR="/opt/phoronix-test-suite"
 TEMP_DIR="${TEMP_DIR:-/tmp}"

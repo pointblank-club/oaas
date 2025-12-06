@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import {
   ReactFlow,
   Node,
@@ -21,6 +21,7 @@ interface BasicBlock {
   code: string;
   lineStart: number;
   lineEnd: number;
+  type?: 'entry' | 'control' | 'return' | 'regular';
 }
 
 /**
@@ -57,6 +58,7 @@ function parseCFG(code: string): { nodes: Node[]; edges: Edge[] } {
         code: line,
         lineStart: originalLine,
         lineEnd: originalLine,
+        type: 'entry',
       };
       inFunction = true;
       functionEntries.set(funcName, blocks.length);
@@ -65,6 +67,7 @@ function parseCFG(code: string): { nodes: Node[]; edges: Edge[] } {
     
     // Detect control flow statements
     const isControlFlow = /^\s*(if|else|while|for|switch|case|default|return|goto|break|continue)\s*/.test(line);
+    const isReturn = /^\s*return\s*/.test(line);
     const isBraceOpen = line.includes('{');
     const isBraceClose = line.includes('}');
     
@@ -102,10 +105,15 @@ function parseCFG(code: string): { nodes: Node[]; edges: Edge[] } {
         code: line,
         lineStart: originalLine,
         lineEnd: originalLine,
+        type: isReturn ? 'return' : isControlFlow ? 'control' : 'regular',
       };
     } else if (currentBlock) {
       // Add line to current block
       currentBlock.code += '\n' + line;
+      // Check if this block contains a return statement
+      if (/return\s*/.test(line) && !currentBlock.type) {
+        currentBlock.type = 'return';
+      }
     } else if (line && !line.startsWith('//') && !line.startsWith('/*')) {
       // Start new block for non-comment code
       currentBlock = {
@@ -114,6 +122,7 @@ function parseCFG(code: string): { nodes: Node[]; edges: Edge[] } {
         code: line,
         lineStart: originalLine,
         lineEnd: originalLine,
+        type: 'regular',
       };
     }
   }
@@ -138,12 +147,28 @@ function parseCFG(code: string): { nodes: Node[]; edges: Edge[] } {
     }
   }
   
+  // Color scheme for different block types
+  const getBlockColor = (blockType?: string) => {
+    switch (blockType) {
+      case 'entry':
+        return { bg: '#4a90e2', border: '#357abd', text: '#ffffff' }; // Blue for entry
+      case 'control':
+        return { bg: '#f39c12', border: '#d68910', text: '#ffffff' }; // Orange for control flow
+      case 'return':
+        return { bg: '#e74c3c', border: '#c0392b', text: '#ffffff' }; // Red for return
+      default:
+        return { bg: '#2c3e50', border: '#34495e', text: '#ecf0f1' }; // Dark gray for regular
+    }
+  };
+
   // Convert to ReactFlow nodes
   const nodes: Node[] = blocks.map((block, index) => {
     const codePreview = block.code.split('\n').slice(0, 3).join('\n');
     const truncatedCode = codePreview.length > 100 
       ? codePreview.substring(0, 100) + '...' 
       : codePreview;
+    
+    const colors = getBlockColor(block.type);
     
     return {
       id: block.id,
@@ -155,13 +180,14 @@ function parseCFG(code: string): { nodes: Node[]; edges: Edge[] } {
       data: {
         label: (
           <div style={{ padding: '8px', fontSize: '0.85em' }}>
-            <div style={{ fontWeight: 'bold', marginBottom: '4px', color: 'var(--accent)' }}>
+            <div style={{ fontWeight: 'bold', marginBottom: '4px', color: colors.text }}>
               {block.label}
             </div>
             <div style={{ 
               fontFamily: 'monospace', 
               fontSize: '0.75em',
-              color: 'var(--text-secondary)',
+              color: colors.text,
+              opacity: 0.9,
               maxWidth: '250px',
               overflow: 'hidden',
               textOverflow: 'ellipsis',
@@ -169,17 +195,17 @@ function parseCFG(code: string): { nodes: Node[]; edges: Edge[] } {
             }}>
               {truncatedCode}
             </div>
-            <div style={{ fontSize: '0.7em', color: 'var(--text-secondary)', marginTop: '4px' }}>
+            <div style={{ fontSize: '0.7em', color: colors.text, opacity: 0.8, marginTop: '4px' }}>
               Lines {block.lineStart}-{block.lineEnd}
             </div>
           </div>
         ),
       },
       style: {
-        background: 'var(--bg-secondary)',
-        border: '1px solid var(--border-color)',
+        background: colors.bg,
+        border: `2px solid ${colors.border}`,
         borderRadius: '8px',
-        color: 'var(--text-primary)',
+        color: colors.text,
         width: 280,
         minHeight: 80,
       },
@@ -190,10 +216,63 @@ function parseCFG(code: string): { nodes: Node[]; edges: Edge[] } {
 }
 
 export const CFGVisualizer: React.FC<CFGVisualizerProps> = ({ code, decompilerName }) => {
+  const [isFullscreen, setIsFullscreen] = useState(false);
   const { nodes, edges } = useMemo(() => {
     if (!code) return { nodes: [], edges: [] };
     return parseCFG(code);
   }, [code]);
+
+  // Handle fullscreen toggle
+  const toggleFullscreen = () => {
+    if (!isFullscreen) {
+      const element = document.getElementById('cfg-fullscreen-container');
+      if (element) {
+        if (element.requestFullscreen) {
+          element.requestFullscreen();
+        } else if ((element as any).webkitRequestFullscreen) {
+          (element as any).webkitRequestFullscreen();
+        } else if ((element as any).mozRequestFullScreen) {
+          (element as any).mozRequestFullScreen();
+        } else if ((element as any).msRequestFullscreen) {
+          (element as any).msRequestFullscreen();
+        }
+      }
+    } else {
+      if (document.exitFullscreen) {
+        document.exitFullscreen();
+      } else if ((document as any).webkitExitFullscreen) {
+        (document as any).webkitExitFullscreen();
+      } else if ((document as any).mozCancelFullScreen) {
+        (document as any).mozCancelFullScreen();
+      } else if ((document as any).msExitFullscreen) {
+        (document as any).msExitFullscreen();
+      }
+    }
+  };
+
+  // Listen for fullscreen changes
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      setIsFullscreen(!!(
+        document.fullscreenElement ||
+        (document as any).webkitFullscreenElement ||
+        (document as any).mozFullScreenElement ||
+        (document as any).msFullscreenElement
+      ));
+    };
+
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
+    document.addEventListener('mozfullscreenchange', handleFullscreenChange);
+    document.addEventListener('MSFullscreenChange', handleFullscreenChange);
+
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFullscreenChange);
+      document.removeEventListener('webkitfullscreenchange', handleFullscreenChange);
+      document.removeEventListener('mozfullscreenchange', handleFullscreenChange);
+      document.removeEventListener('MSFullscreenChange', handleFullscreenChange);
+    };
+  }, []);
   
   if (!code || nodes.length === 0) {
     return (
@@ -210,13 +289,29 @@ export const CFGVisualizer: React.FC<CFGVisualizerProps> = ({ code, decompilerNa
     );
   }
   
+  const containerStyle: React.CSSProperties = isFullscreen
+    ? {
+        position: 'fixed',
+        top: 0,
+        left: 0,
+        width: '100vw',
+        height: '100vh',
+        zIndex: 9999,
+        background: 'var(--bg-primary)',
+      }
+    : {
+        width: '100%',
+        height: '600px',
+        position: 'relative',
+      };
+  
   return (
-    <div style={{ width: '100%', height: '600px', position: 'relative' }}>
+    <div id="cfg-fullscreen-container" style={containerStyle}>
       <ReactFlow
         nodes={nodes}
         edges={edges}
         fitView
-        style={{ background: 'var(--bg-primary)' }}
+        style={{ background: 'var(--bg-primary)', width: '100%', height: '100%' }}
       >
         <Background color="var(--border-color)" gap={16} />
         <Controls 
@@ -246,6 +341,80 @@ export const CFGVisualizer: React.FC<CFGVisualizerProps> = ({ code, decompilerNa
         zIndex: 10
       }}>
         <strong>CFG:</strong> {nodes.length} blocks, {edges.length} edges ({decompilerName})
+      </div>
+      <button
+        onClick={toggleFullscreen}
+        style={{
+          position: 'absolute',
+          top: '10px',
+          right: '10px',
+          padding: '8px 12px',
+          background: 'var(--bg-secondary)',
+          border: '1px solid var(--border-color)',
+          borderRadius: '4px',
+          fontSize: '0.85em',
+          color: 'var(--text-primary)',
+          cursor: 'pointer',
+          zIndex: 10,
+          display: 'flex',
+          alignItems: 'center',
+          gap: '6px',
+          transition: 'all 0.2s ease',
+        }}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.background = 'var(--accent)';
+          e.currentTarget.style.color = 'var(--bg-primary)';
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.background = 'var(--bg-secondary)';
+          e.currentTarget.style.color = 'var(--text-primary)';
+        }}
+        title={isFullscreen ? 'Exit Fullscreen' : 'Enter Fullscreen'}
+      >
+        {isFullscreen ? (
+          <>
+            <span>⤓</span>
+            <span>Exit Fullscreen</span>
+          </>
+        ) : (
+          <>
+            <span>⤢</span>
+            <span>Fullscreen</span>
+          </>
+        )}
+      </button>
+      {/* Legend */}
+      <div style={{
+        position: 'absolute',
+        bottom: '10px',
+        left: '10px',
+        padding: '10px 12px',
+        background: 'var(--bg-secondary)',
+        border: '1px solid var(--border-color)',
+        borderRadius: '4px',
+        fontSize: '0.75em',
+        color: 'var(--text-secondary)',
+        zIndex: 10,
+        display: 'flex',
+        gap: '16px',
+        flexWrap: 'wrap',
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+          <div style={{ width: '16px', height: '16px', background: '#4a90e2', border: '2px solid #357abd', borderRadius: '4px' }}></div>
+          <span>Entry</span>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+          <div style={{ width: '16px', height: '16px', background: '#f39c12', border: '2px solid #d68910', borderRadius: '4px' }}></div>
+          <span>Control Flow</span>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+          <div style={{ width: '16px', height: '16px', background: '#e74c3c', border: '2px solid #c0392b', borderRadius: '4px' }}></div>
+          <span>Return</span>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+          <div style={{ width: '16px', height: '16px', background: '#2c3e50', border: '2px solid #34495e', borderRadius: '4px' }}></div>
+          <span>Regular</span>
+        </div>
       </div>
     </div>
   );

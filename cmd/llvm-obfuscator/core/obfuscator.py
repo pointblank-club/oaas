@@ -149,6 +149,9 @@ class LLVMObfuscator:
                 Path("/app/mlir-obs/build/lib") / f"libMLIRObfuscation.{ext}",
                 Path("/usr/local/lib") / f"MLIRObfuscation.{ext}",
                 Path("/usr/local/lib") / f"libMLIRObfuscation.{ext}",
+                # Docker container paths (production deployment)
+                Path("/usr/local/llvm-obfuscator/lib") / f"MLIRObfuscation.{ext}",
+                Path("/usr/local/llvm-obfuscator/lib") / f"libMLIRObfuscation.{ext}",
             ]
 
             for path in search_paths:

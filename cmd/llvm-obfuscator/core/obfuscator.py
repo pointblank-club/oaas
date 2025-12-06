@@ -962,6 +962,29 @@ class LLVMObfuscator:
             ir_content = re.sub(r'attributes #\d+ = \{\s*\}', '', ir_content)
 
             # ============================================================
+            # FIX: Resolve ambiguous hex escape sequences in string constants
+            # When MLIR encrypts strings, some bytes become \xx escapes.
+            # If \xx is followed by a hex digit (0-9, a-f, A-F), it creates
+            # ambiguity like \223 which could be parsed as \22 + "3" or \223.
+            # Fix: escape the trailing hex digit too, e.g., \223 -> \22\33
+            # ============================================================
+            def fix_ambiguous_escapes(match):
+                string_content = match.group(1)
+                # Find \xx followed by a hex digit and escape the trailing digit
+                def escape_trailing_hex(m):
+                    escape_seq = m.group(1)  # e.g., \22
+                    trailing_char = m.group(2)  # e.g., 3
+                    # Convert trailing char to its hex escape
+                    hex_escape = '\\{:02x}'.format(ord(trailing_char))
+                    return escape_seq + hex_escape
+                # Pattern: \xx followed by a hex digit
+                fixed = re.sub(r'(\\[0-9a-fA-F]{2})([0-9a-fA-F])', escape_trailing_hex, string_content)
+                return 'c"' + fixed + '"'
+
+            # Apply fix to all string constants (c"...")
+            ir_content = re.sub(r'c"([^"]*)"', fix_ambiguous_escapes, ir_content)
+
+            # ============================================================
             # FIX: Bug #2 - MLIR string encryption size mismatch
             # The MLIR string-encrypt pass sometimes generates incorrect array
             # size declarations. For example: [23 x i8] but content is 22 bytes.

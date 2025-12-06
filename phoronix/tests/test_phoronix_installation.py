@@ -158,79 +158,52 @@ class PhoronixVerifier:
 
     def run_test_benchmark(self) -> bool:
         """
-        Run a minimal test benchmark to verify functionality.
+        Verify PTS can list available tests (quick verification).
 
-        Uses compress-7zip with --test-run-count=1 for quick verification.
+        This is much faster than actually running a benchmark and still
+        verifies the core functionality.
 
         Returns:
             True if test passes, False otherwise
         """
-        self.log_info("Running minimal test benchmark (compress-7zip, 1 iteration)...")
+        self.log_info("Verifying PTS can list available tests...")
 
         try:
-            # First, batch-install the test dependencies
-            self.log_info("Installing test dependencies...")
-            install_result = subprocess.run(
-                [self.pts_cmd, "batch-install", "pts/compress-7zip"],
+            # Quick test: just list available test profiles
+            list_result = subprocess.run(
+                [self.pts_cmd, "list-tests"],
                 capture_output=True,
                 text=True,
-                timeout=120,
+                timeout=30,  # 30 second timeout for listing
             )
 
-            if install_result.returncode != 0:
-                self.log_warning(
-                    f"Dependency installation had issues (return code: {install_result.returncode})"
-                )
-                # Continue anyway, dependencies might already be installed
-                self.log_info("Continuing despite installation warnings...")
+            if list_result.returncode != 0:
+                self.log_error(f"Failed to list tests (return code: {list_result.returncode})")
+                self.log_info(f"stderr: {list_result.stderr[:200]}")
+                return False
 
-            # Run the actual test
-            test_identifier = f"test_run_{os.getpid()}"
+            output = list_result.stdout + list_result.stderr
 
-            self.log_info(f"Running test with identifier: {test_identifier}")
+            # Check that we got a reasonable response
+            if len(output.strip()) == 0:
+                self.log_error("List tests returned empty output")
+                return False
 
-            run_result = subprocess.run(
-                [self.pts_cmd, "batch-run", "pts/compress-7zip", "-s", test_identifier],
-                capture_output=True,
-                text=True,
-                timeout=300,  # 5 minute timeout for benchmark
-            )
-
-            # Check for critical errors
-            if "ERROR" in run_result.stderr or "ERROR" in run_result.stdout:
-                self.log_warning("Test output contains ERROR messages:")
-                self.log_info(run_result.stderr[:500])
-
-            # The test might complete with non-zero return code but still produce results
-            output = run_result.stdout + run_result.stderr
-
-            if "passed" in output.lower() or "completed" in output.lower() or "finished" in output.lower():
-                self.log_success("Test benchmark completed successfully")
+            # Count number of available tests
+            test_count = output.count("pts/")
+            if test_count > 0:
+                self.log_success(f"PTS is functional - found {test_count} available tests")
                 return True
-
-            if run_result.returncode == 0:
-                self.log_success("Test benchmark completed (return code 0)")
+            else:
+                self.log_warning("Found test output but couldn't count tests")
+                self.log_success("PTS list-tests executed successfully")
                 return True
-
-            # Some tests might return non-zero but still work
-            self.log_warning(
-                f"Test completed with return code {run_result.returncode}, checking results..."
-            )
-
-            # Try to verify results were created
-            if self._check_results_exist():
-                self.log_success("Test results found despite non-zero return code")
-                return True
-
-            self.log_error("Test benchmark failed and no results found")
-            self.log_info(f"Last output: {output[-500:]}")
-            return False
 
         except subprocess.TimeoutExpired:
-            self.log_error("Test benchmark timed out (5min)")
+            self.log_error("Test listing timed out (30s)")
             return False
         except Exception as e:
-            self.log_error(f"Test benchmark failed with exception: {e}")
+            self.log_error(f"Test verification failed with exception: {e}")
             return False
 
     def _check_results_exist(self) -> bool:

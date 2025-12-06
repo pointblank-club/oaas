@@ -956,7 +956,38 @@ class LLVMObfuscator:
             ir_content = re.sub(r'\bconvergent\b[ \t]*', '', ir_content)
 
             # Clean up multiple spaces left by removed attributes
-            ir_content = re.sub(r'  +', ' ', ir_content)
+            # IMPORTANT: Only collapse spaces OUTSIDE of string constants (c"...")
+            # to avoid corrupting string literal content
+            def collapse_spaces_outside_strings(content):
+                result = []
+                i = 0
+                while i < len(content):
+                    # Check for string constant start: c"
+                    if content[i:i+2] == 'c"':
+                        # Find the end of the string constant
+                        result.append('c"')
+                        i += 2
+                        while i < len(content) and content[i] != '"':
+                            if content[i] == '\\' and i + 1 < len(content):
+                                # Escape sequence - copy both characters
+                                result.append(content[i:i+2])
+                                i += 2
+                            else:
+                                result.append(content[i])
+                                i += 1
+                        if i < len(content):
+                            result.append('"')
+                            i += 1
+                    # Check for multiple spaces outside strings
+                    elif content[i] == ' ' and i + 1 < len(content) and content[i+1] == ' ':
+                        result.append(' ')
+                        while i < len(content) and content[i] == ' ':
+                            i += 1
+                    else:
+                        result.append(content[i])
+                        i += 1
+                return ''.join(result)
+            ir_content = collapse_spaces_outside_strings(ir_content)
 
             # Clean up empty attribute groups
             ir_content = re.sub(r'attributes #\d+ = \{\s*\}', '', ir_content)
@@ -1159,7 +1190,41 @@ class LLVMObfuscator:
                 ir_content = re.sub(r'\bmemory\([^)]*\)\s*', '', ir_content)
                 ir_content = re.sub(r'\bspeculatable\b\s*', '', ir_content)
                 ir_content = re.sub(r'\bconvergent\b\s*', '', ir_content)
-                ir_content = re.sub(r'  +', ' ', ir_content)
+
+                # Clean up multiple spaces left by removed attributes
+                # IMPORTANT: Only collapse spaces OUTSIDE of string constants (c"...")
+                # to avoid corrupting string literal content
+                def collapse_spaces_outside_strings(content):
+                    result = []
+                    i = 0
+                    while i < len(content):
+                        # Check for string constant start: c"
+                        if content[i:i+2] == 'c"':
+                            # Find the end of the string constant
+                            result.append('c"')
+                            i += 2
+                            while i < len(content) and content[i] != '"':
+                                if content[i] == '\\' and i + 1 < len(content):
+                                    # Escape sequence - copy both characters
+                                    result.append(content[i:i+2])
+                                    i += 2
+                                else:
+                                    result.append(content[i])
+                                    i += 1
+                            if i < len(content):
+                                result.append('"')
+                                i += 1
+                        # Check for multiple spaces outside strings
+                        elif content[i] == ' ' and i + 1 < len(content) and content[i+1] == ' ':
+                            result.append(' ')
+                            while i < len(content) and content[i] == ' ':
+                                i += 1
+                        else:
+                            result.append(content[i])
+                            i += 1
+                    return ''.join(result)
+                ir_content = collapse_spaces_outside_strings(ir_content)
+
                 ir_content = re.sub(r'attributes #\d+ = \{\s*\}', '', ir_content)
 
                 with open(str(ir_file), 'w') as f:

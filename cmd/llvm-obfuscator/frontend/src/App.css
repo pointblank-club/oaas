@@ -460,6 +460,19 @@ body {
   border-color: var(--accent);
 }
 
+.layer-checkbox.disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.layer-checkbox.disabled:hover {
+  border-color: var(--border-color);
+}
+
+.layer-checkbox.disabled input[type="checkbox"] {
+  cursor: not-allowed;
+}
+
 .layer-checkbox input[type="checkbox"] {
   margin-top: 4px;
   width: 18px;

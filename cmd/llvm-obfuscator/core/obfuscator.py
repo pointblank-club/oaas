@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -214,6 +215,41 @@ class LLVMObfuscator:
             flags.append(f"--sysroot={macos_sdk_path}")
             self.logger.info(f"Using macOS SDK sysroot: {macos_sdk_path}")
 
+        # Windows ARM64 requires llvm-mingw sysroot (standard mingw-w64 doesn't support ARM64)
+        # llvm-mingw provides C++ headers (iostream, etc.) and runtime libs for aarch64-w64-mingw32
+        if platform == Platform.WINDOWS and arch == Architecture.ARM64:
+            llvm_mingw_path = os.environ.get("LLVM_MINGW_PATH", "/opt/llvm-mingw")
+            sysroot_path = f"{llvm_mingw_path}/aarch64-w64-mingw32"
+            if os.path.exists(sysroot_path):
+                flags.append(f"--sysroot={sysroot_path}")
+                # Add C++ include paths for libc++
+                flags.append(f"-I{llvm_mingw_path}/aarch64-w64-mingw32/include/c++/v1")
+                flags.append(f"-I{llvm_mingw_path}/aarch64-w64-mingw32/include")
+                # Add library path for linking
+                flags.append(f"-L{llvm_mingw_path}/aarch64-w64-mingw32/lib")
+                # Use libc++ instead of libstdc++ (llvm-mingw uses libc++)
+                flags.append("-stdlib=libc++")
+                # Use compiler-rt instead of gcc runtime
+                flags.append("-rtlib=compiler-rt")
+                # Use libunwind instead of gcc unwind
+                flags.append("-unwindlib=libunwind")
+                # Point to llvm-mingw's clang resource dir for compiler-rt builtins
+                # llvm-mingw version may vary, find the actual clang version
+                clang_resource_dir = f"{llvm_mingw_path}/lib/clang"
+                if os.path.exists(clang_resource_dir):
+                    # Find the version directory (e.g., 21)
+                    versions = [d for d in os.listdir(clang_resource_dir) if os.path.isdir(f"{clang_resource_dir}/{d}")]
+                    if versions:
+                        flags.append(f"-resource-dir={clang_resource_dir}/{versions[0]}")
+                # Use llvm-mingw's lld for consistent SEH handling
+                # Our custom LLVM 22 lld may have strict SEH validation that fails with obfuscated code
+                llvm_mingw_lld = f"{llvm_mingw_path}/bin/ld.lld"
+                if os.path.exists(llvm_mingw_lld):
+                    flags.append(f"-fuse-ld={llvm_mingw_lld}")
+                self.logger.info(f"Using llvm-mingw sysroot for Windows ARM64: {sysroot_path}")
+            else:
+                self.logger.warning(f"llvm-mingw sysroot not found at {sysroot_path} - Windows ARM64 C++ may fail")
+
         return flags
 
     def obfuscate(self, source_file: Path, config: ObfuscationConfig, job_id: Optional[str] = None) -> Dict:
@@ -318,10 +354,14 @@ class LLVMObfuscator:
         # Filter out platform-incompatible flags from BASE_FLAGS
         # -mspeculative-load-hardening uses retpolines which require COMDAT sections
         # Mach-O (macOS) doesn't support COMDAT, so we must skip this flag for Darwin targets
+        # Windows ARM64: SLH modifies prologues/epilogues which corrupts SEH metadata
         base_flags = self.BASE_FLAGS
         if config.platform in [Platform.MACOS, Platform.DARWIN]:
             base_flags = [f for f in base_flags if f != "-mspeculative-load-hardening"]
             self.logger.info("Disabled -mspeculative-load-hardening for macOS (COMDAT not supported in Mach-O)")
+        elif config.platform == Platform.WINDOWS and config.architecture == Architecture.ARM64:
+            base_flags = [f for f in base_flags if f != "-mspeculative-load-hardening"]
+            self.logger.info("Disabled -mspeculative-load-hardening for Windows ARM64 (corrupts SEH metadata)")
         
         compiler_flags = merge_flags(base_flags, config.compiler_flags)
 
@@ -920,6 +960,72 @@ class LLVMObfuscator:
 
             # Clean up empty attribute groups
             ir_content = re.sub(r'attributes #\d+ = \{\s*\}', '', ir_content)
+
+            # ============================================================
+            # FIX: Resolve ambiguous hex escape sequences in string constants
+            # When MLIR encrypts strings, some bytes become \xx escapes.
+            # If \xx is followed by a hex digit (0-9, a-f, A-F), it creates
+            # ambiguity like \223 which could be parsed as \22 + "3" or \223.
+            # Fix: escape the trailing hex digit too, e.g., \223 -> \22\33
+            # ============================================================
+            def fix_ambiguous_escapes(match):
+                string_content = match.group(1)
+                # Find \xx followed by a hex digit and escape the trailing digit
+                def escape_trailing_hex(m):
+                    escape_seq = m.group(1)  # e.g., \22
+                    trailing_char = m.group(2)  # e.g., 3
+                    # Convert trailing char to its hex escape
+                    hex_escape = '\\{:02x}'.format(ord(trailing_char))
+                    return escape_seq + hex_escape
+                # Pattern: \xx followed by a hex digit
+                fixed = re.sub(r'(\\[0-9a-fA-F]{2})([0-9a-fA-F])', escape_trailing_hex, string_content)
+                return 'c"' + fixed + '"'
+
+            # Apply fix to all string constants (c"...")
+            ir_content = re.sub(r'c"([^"]*)"', fix_ambiguous_escapes, ir_content)
+
+            # ============================================================
+            # FIX: Bug #2 - MLIR string encryption size mismatch
+            # The MLIR string-encrypt pass sometimes generates incorrect array
+            # size declarations. For example: [23 x i8] but content is 22 bytes.
+            # This fix recalculates the actual byte count and fixes the size.
+            # ============================================================
+            def count_string_bytes(s):
+                """Count actual bytes in an LLVM IR string literal (inside c"...")."""
+                count = 0
+                i = 0
+                while i < len(s):
+                    if s[i] == '\\' and i + 2 < len(s):
+                        # Check for hex escape \xx
+                        hex_chars = s[i+1:i+3]
+                        if all(c in '0123456789abcdefABCDEF' for c in hex_chars):
+                            count += 1
+                            i += 3
+                            continue
+                    # Regular character
+                    count += 1
+                    i += 1
+                return count
+
+            def fix_string_constant_size(match):
+                """Fix the array size in string constant declarations."""
+                prefix = match.group(1)  # Everything before [N x i8]
+                declared_size = int(match.group(2))  # The declared size N
+                string_content = match.group(3)  # The string inside c"..."
+                suffix = match.group(4)  # Everything after (e.g., ", align 1")
+
+                actual_size = count_string_bytes(string_content)
+
+                if actual_size != declared_size:
+                    self.logger.debug(f"Fixing string size: [{declared_size} x i8] -> [{actual_size} x i8]")
+
+                return f'{prefix}[{actual_size} x i8] c"{string_content}"{suffix}'
+
+            # Pattern to match string constant declarations:
+            # @.str.X = ... constant [N x i8] c"...", align X
+            # Capture groups: (prefix)(size)(string_content)(suffix)
+            string_const_pattern = r'((?:@[^\s]+\s*=\s*)?(?:private\s+)?(?:unnamed_addr\s+)?(?:constant\s+)?)\[(\d+)\s+x\s+i8\]\s+c"([^"]*)"((?:\s*,\s*align\s+\d+)?)'
+            ir_content = re.sub(string_const_pattern, fix_string_constant_size, ir_content)
 
             with open(str(llvm_ir_file), 'w') as f:
                 f.write(ir_content)

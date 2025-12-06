@@ -1317,9 +1317,10 @@ class LLVMObfuscator:
                 # Apply OLLVM passes
                 obfuscated_ir = destination_abs.parent / f"{destination_abs.stem}_obfuscated.bc"
                 passes_pipeline = ",".join(ollvm_passes)
+                # NOTE: Not loading plugin - passes are built into libLLVM.so.22.0git
+                # Loading plugin would cause "Option registered more than once" error
                 opt_cmd = [
                     str(opt_binary),
-                    "-load-pass-plugin=" + str(plugin_path),
                     f"-passes={passes_pipeline}",
                     str(current_input),
                     "-o", str(obfuscated_ir)
@@ -1548,9 +1549,10 @@ class LLVMObfuscator:
         if ollvm_passes:
 
             passes_pipeline = ",".join(ollvm_passes)
+            # NOTE: Not loading plugin - passes are built into libLLVM.so.22.0git
+            # Loading plugin would cause "Option registered more than once" error
             opt_cmd = [
                 str(opt_binary),
-                "-load-pass-plugin=" + str(plugin_path),
                 f"-passes={passes_pipeline}",
                 str(current_input),
                 "-o", str(obfuscated_ir)

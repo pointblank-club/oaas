@@ -85,42 +85,34 @@ extract_and_install() {
 
     log_info "Extracting Phoronix Test Suite..."
 
-    # Create installation directory
-    if [ ! -d "$PTS_INSTALL_DIR" ]; then
-        if ! mkdir -p "$PTS_INSTALL_DIR"; then
-            log_error "Failed to create installation directory $PTS_INSTALL_DIR"
-            log_info "Trying with sudo..."
-            sudo mkdir -p "$PTS_INSTALL_DIR" || {
-                log_error "Failed to create installation directory even with sudo"
+    # Create installation directory with sudo if needed
+    if ! sudo mkdir -p "$PTS_INSTALL_DIR" 2>/dev/null; then
+        log_error "Failed to create installation directory $PTS_INSTALL_DIR"
+        return 1
+    fi
+
+    # Extract directly to installation directory
+    # The tarball contains a top-level 'phoronix-test-suite' directory
+    if ! sudo tar -xzf "$pts_tarball" -C "$(dirname "$PTS_INSTALL_DIR")"; then
+        log_error "Failed to extract tarball"
+        return 1
+    fi
+
+    # The extraction will create a 'phoronix-test-suite' directory
+    # Move it to the final installation location if it's not already there
+    if [ "$(basename "$PTS_INSTALL_DIR")" != "phoronix-test-suite" ]; then
+        extracted_dir="$(dirname "$PTS_INSTALL_DIR")/phoronix-test-suite"
+        if [ -d "$extracted_dir" ] && [ "$extracted_dir" != "$PTS_INSTALL_DIR" ]; then
+            sudo mv "$extracted_dir" "$PTS_INSTALL_DIR" || {
+                log_error "Failed to move extracted directory"
                 return 1
             }
         fi
     fi
 
-    # Extract to temp location first
-    local extract_dir="${TEMP_DIR}/phoronix-extract-$$"
-    mkdir -p "$extract_dir"
-
-    if ! tar -xzf "$pts_tarball" -C "$extract_dir"; then
-        log_error "Failed to extract tarball"
-        rm -rf "$extract_dir"
-        return 1
-    fi
-
-    # Find the extracted directory (usually phoronix-test-suite-X.X.X)
-    local source_dir=$(find "$extract_dir" -maxdepth 1 -type d -name "phoronix*" | head -1)
-
-    if [ -z "$source_dir" ]; then
-        log_error "Could not find extracted phoronix directory"
-        rm -rf "$extract_dir"
-        return 1
-    fi
-
-    # Copy to installation directory
-    log_info "Installing to $PTS_INSTALL_DIR..."
-    if ! sudo cp -r "$source_dir"/* "$PTS_INSTALL_DIR/"; then
-        log_error "Failed to copy files to installation directory"
-        rm -rf "$extract_dir"
+    # Verify the executable exists
+    if [ ! -f "$PTS_INSTALL_DIR/phoronix-test-suite" ]; then
+        log_error "Phoronix Test Suite executable not found after extraction"
         return 1
     fi
 
@@ -131,9 +123,6 @@ extract_and_install() {
     if ! sudo ln -sf "$PTS_INSTALL_DIR/phoronix-test-suite" /usr/local/bin/phoronix-test-suite 2>/dev/null; then
         log_warning "Could not create symlink in /usr/local/bin (may need sudo)"
     fi
-
-    # Cleanup
-    rm -rf "$extract_dir"
 
     log_success "Phoronix Test Suite installed to $PTS_INSTALL_DIR"
     return 0

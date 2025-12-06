@@ -1719,6 +1719,98 @@ function App() {
   const [showRemarksModal, setShowRemarksModal] = useState(false);
   const [remarksContent, setRemarksContent] = useState<string | null>(null);
   const [remarksLoading, setRemarksLoading] = useState(false);
+  const [remarksView, setRemarksView] = useState<'summary' | 'raw'>('summary');
+
+  // Parse LLVM remarks into categorized sections
+  const parseRemarks = (content: string): {
+    passed: Array<{ pass: string; function: string; details: string }>;
+    missed: Array<{ pass: string; function: string; reason: string; isGood: boolean }>;
+    analysis: Array<{ type: string; function: string; value: string }>;
+    summary: { totalPassed: number; totalMissed: number; totalAnalysis: number; functionsAnalyzed: Set<string> };
+  } => {
+    const passed: Array<{ pass: string; function: string; details: string }> = [];
+    const missed: Array<{ pass: string; function: string; reason: string; isGood: boolean }> = [];
+    const analysis: Array<{ type: string; function: string; value: string }> = [];
+    const functionsAnalyzed = new Set<string>();
+
+    // Split by YAML document markers
+    const documents = content.split(/---\s*!/);
+
+    for (const doc of documents) {
+      if (!doc.trim()) continue;
+
+      // Extract Pass name
+      const passMatch = doc.match(/Pass:\s*(\S+)/);
+      const nameMatch = doc.match(/Name:\s*(\S+)/);
+      const functionMatch = doc.match(/Function:\s*(\S+)/);
+
+      const pass = passMatch?.[1] || 'unknown';
+      const name = nameMatch?.[1] || '';
+      const func = functionMatch?.[1] || 'unknown';
+
+      if (func !== 'unknown') {
+        functionsAnalyzed.add(func);
+      }
+
+      if (doc.startsWith('Passed') || doc.includes('!Passed')) {
+        passed.push({
+          pass: pass,
+          function: func,
+          details: name
+        });
+      } else if (doc.startsWith('Missed') || doc.includes('!Missed')) {
+        // Determine if this "missed" is good for obfuscation
+        const isGood = name === 'NeverInline' || name === 'FastISelFailure';
+        let reason = name;
+
+        if (name === 'NeverInline') {
+          reason = 'Inlining prevented (optnone) - keeps functions separate';
+        } else if (name === 'NoDefinition') {
+          reason = 'External function - definition unavailable';
+        } else if (name === 'FastISelFailure') {
+          reason = 'Code too complex for fast instruction selection';
+        }
+
+        missed.push({
+          pass: pass,
+          function: func,
+          reason: reason,
+          isGood: isGood
+        });
+      } else if (doc.startsWith('Analysis') || doc.includes('!Analysis')) {
+        let value = '';
+        if (name === 'StackSize') {
+          const stackMatch = doc.match(/NumStackBytes:\s*'?(\d+)'?/);
+          value = stackMatch ? `${stackMatch[1]} bytes stack` : '';
+        } else if (name === 'InstructionCount') {
+          const instrMatch = doc.match(/NumInstructions:\s*'?(\d+)'?/);
+          value = instrMatch ? `${instrMatch[1]} instructions` : '';
+        } else if (name === 'InstructionMix') {
+          value = 'Instruction distribution data';
+        }
+
+        if (value) {
+          analysis.push({
+            type: name,
+            function: func,
+            value: value
+          });
+        }
+      }
+    }
+
+    return {
+      passed,
+      missed,
+      analysis,
+      summary: {
+        totalPassed: passed.length,
+        totalMissed: missed.length,
+        totalAnalysis: analysis.length,
+        functionsAnalyzed
+      }
+    };
+  };
 
   // Preset state (changed when user modifies any layer setting)
   const [obfuscationPreset, setObfuscationPreset] = useState<'minimal' | 'balanced' | 'maximum' | 'custom'>('custom');
@@ -2899,11 +2991,11 @@ function App() {
 
       {/* Remarks Modal */}
       {showRemarksModal && (
-        <div className="modal-overlay" onClick={() => { setShowRemarksModal(false); setRemarksContent(null); }}>
-          <div className="modal" style={{ maxWidth: '90vw', maxHeight: '90vh', width: '800px' }} onClick={(e) => e.stopPropagation()}>
+        <div className="modal-overlay" onClick={() => { setShowRemarksModal(false); setRemarksContent(null); setRemarksView('summary'); }}>
+          <div className="modal" style={{ maxWidth: '95vw', maxHeight: '90vh', width: '900px' }} onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
-              <h3>LLVM Remarks Output</h3>
-              <button className="modal-close" onClick={() => { setShowRemarksModal(false); setRemarksContent(null); }}>×</button>
+              <h3>LLVM Optimization Remarks</h3>
+              <button className="modal-close" onClick={() => { setShowRemarksModal(false); setRemarksContent(null); setRemarksView('summary'); }}>×</button>
             </div>
             <div className="modal-body" style={{ maxHeight: '70vh', overflow: 'auto' }}>
               {remarksLoading ? (
@@ -2912,21 +3004,293 @@ function App() {
                 </div>
               ) : remarksContent ? (
                 <div>
-                  <p style={{ marginBottom: '10px', fontSize: '0.9em', color: 'var(--text-secondary)' }}>
-                    This YAML file contains optimization remarks showing which optimizations were applied or missed during compilation.
-                  </p>
-                  <pre style={{
-                    backgroundColor: 'var(--bg-secondary)',
-                    padding: '15px',
-                    borderRadius: '4px',
-                    overflow: 'auto',
-                    fontSize: '0.85em',
-                    maxHeight: '60vh',
-                    whiteSpace: 'pre-wrap',
-                    wordBreak: 'break-word'
-                  }}>
-                    {remarksContent}
-                  </pre>
+                  {/* View Toggle */}
+                  <div style={{ display: 'flex', gap: '10px', marginBottom: '15px' }}>
+                    <button
+                      onClick={() => setRemarksView('summary')}
+                      style={{
+                        padding: '8px 16px',
+                        backgroundColor: remarksView === 'summary' ? 'var(--accent-color)' : 'var(--bg-secondary)',
+                        color: remarksView === 'summary' ? 'white' : 'var(--text-primary)',
+                        border: 'none',
+                        borderRadius: '4px',
+                        cursor: 'pointer',
+                        fontWeight: remarksView === 'summary' ? 'bold' : 'normal'
+                      }}
+                    >
+                      Summary View
+                    </button>
+                    <button
+                      onClick={() => setRemarksView('raw')}
+                      style={{
+                        padding: '8px 16px',
+                        backgroundColor: remarksView === 'raw' ? 'var(--accent-color)' : 'var(--bg-secondary)',
+                        color: remarksView === 'raw' ? 'white' : 'var(--text-primary)',
+                        border: 'none',
+                        borderRadius: '4px',
+                        cursor: 'pointer',
+                        fontWeight: remarksView === 'raw' ? 'bold' : 'normal'
+                      }}
+                    >
+                      Raw YAML
+                    </button>
+                  </div>
+
+                  {remarksView === 'summary' ? (
+                    <div>
+                      {/* Explanation Banner */}
+                      <div style={{
+                        backgroundColor: 'var(--bg-tertiary, #1a1a2e)',
+                        border: '1px solid var(--border-color)',
+                        borderRadius: '8px',
+                        padding: '15px',
+                        marginBottom: '20px'
+                      }}>
+                        <h4 style={{ margin: '0 0 10px 0', color: 'var(--accent-color)' }}>What are LLVM Remarks?</h4>
+                        <p style={{ margin: '0', fontSize: '0.9em', color: 'var(--text-secondary)', lineHeight: '1.5' }}>
+                          Remarks are the compiler's "diary" - they log every optimization decision.
+                          <strong style={{ color: 'var(--success-color, #4caf50)' }}> "Missed" remarks are actually GOOD for obfuscation</strong> -
+                          they mean the compiler couldn't simplify your code, making it harder to reverse engineer.
+                        </p>
+                      </div>
+
+                      {(() => {
+                        const parsed = parseRemarks(remarksContent);
+                        const goodMissed = parsed.missed.filter(m => m.isGood).length;
+                        const neutralMissed = parsed.missed.length - goodMissed;
+
+                        return (
+                          <>
+                            {/* Summary Stats */}
+                            <div style={{
+                              display: 'grid',
+                              gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
+                              gap: '15px',
+                              marginBottom: '20px'
+                            }}>
+                              <div style={{
+                                backgroundColor: 'var(--bg-secondary)',
+                                padding: '15px',
+                                borderRadius: '8px',
+                                textAlign: 'center',
+                                borderLeft: '4px solid var(--success-color, #4caf50)'
+                              }}>
+                                <div style={{ fontSize: '2em', fontWeight: 'bold', color: 'var(--success-color, #4caf50)' }}>
+                                  {parsed.summary.totalPassed}
+                                </div>
+                                <div style={{ fontSize: '0.85em', color: 'var(--text-secondary)' }}>Passed (Applied)</div>
+                              </div>
+                              <div style={{
+                                backgroundColor: 'var(--bg-secondary)',
+                                padding: '15px',
+                                borderRadius: '8px',
+                                textAlign: 'center',
+                                borderLeft: '4px solid #2196f3'
+                              }}>
+                                <div style={{ fontSize: '2em', fontWeight: 'bold', color: '#2196f3' }}>
+                                  {goodMissed}
+                                </div>
+                                <div style={{ fontSize: '0.85em', color: 'var(--text-secondary)' }}>Missed (Good!)</div>
+                              </div>
+                              <div style={{
+                                backgroundColor: 'var(--bg-secondary)',
+                                padding: '15px',
+                                borderRadius: '8px',
+                                textAlign: 'center',
+                                borderLeft: '4px solid #9e9e9e'
+                              }}>
+                                <div style={{ fontSize: '2em', fontWeight: 'bold', color: '#9e9e9e' }}>
+                                  {neutralMissed}
+                                </div>
+                                <div style={{ fontSize: '0.85em', color: 'var(--text-secondary)' }}>Missed (Neutral)</div>
+                              </div>
+                              <div style={{
+                                backgroundColor: 'var(--bg-secondary)',
+                                padding: '15px',
+                                borderRadius: '8px',
+                                textAlign: 'center',
+                                borderLeft: '4px solid #ff9800'
+                              }}>
+                                <div style={{ fontSize: '2em', fontWeight: 'bold', color: '#ff9800' }}>
+                                  {parsed.summary.functionsAnalyzed.size}
+                                </div>
+                                <div style={{ fontSize: '0.85em', color: 'var(--text-secondary)' }}>Functions</div>
+                              </div>
+                            </div>
+
+                            {/* Passed Optimizations */}
+                            {parsed.passed.length > 0 && (
+                              <div style={{ marginBottom: '20px' }}>
+                                <h4 style={{ color: 'var(--success-color, #4caf50)', marginBottom: '10px' }}>
+                                  Passed Optimizations (Applied)
+                                </h4>
+                                <div style={{
+                                  backgroundColor: 'var(--bg-secondary)',
+                                  borderRadius: '8px',
+                                  padding: '10px',
+                                  maxHeight: '150px',
+                                  overflow: 'auto'
+                                }}>
+                                  {parsed.passed.map((p, i) => (
+                                    <div key={i} style={{
+                                      padding: '8px',
+                                      borderBottom: i < parsed.passed.length - 1 ? '1px solid var(--border-color)' : 'none',
+                                      display: 'flex',
+                                      justifyContent: 'space-between',
+                                      alignItems: 'center'
+                                    }}>
+                                      <span><code style={{ color: 'var(--accent-color)' }}>{p.function}</code></span>
+                                      <span style={{ color: 'var(--text-secondary)', fontSize: '0.9em' }}>{p.pass}: {p.details}</span>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Missed Optimizations - Good for Obfuscation */}
+                            {goodMissed > 0 && (
+                              <div style={{ marginBottom: '20px' }}>
+                                <h4 style={{ color: '#2196f3', marginBottom: '10px' }}>
+                                  Missed Optimizations (Good for Obfuscation!)
+                                </h4>
+                                <div style={{
+                                  backgroundColor: 'var(--bg-secondary)',
+                                  borderRadius: '8px',
+                                  padding: '10px',
+                                  maxHeight: '200px',
+                                  overflow: 'auto'
+                                }}>
+                                  {parsed.missed.filter(m => m.isGood).map((m, i) => (
+                                    <div key={i} style={{
+                                      padding: '8px',
+                                      borderBottom: '1px solid var(--border-color)',
+                                      display: 'flex',
+                                      justifyContent: 'space-between',
+                                      alignItems: 'center',
+                                      flexWrap: 'wrap',
+                                      gap: '5px'
+                                    }}>
+                                      <span>
+                                        <code style={{ color: 'var(--accent-color)' }}>{m.function}</code>
+                                      </span>
+                                      <span style={{
+                                        color: '#2196f3',
+                                        fontSize: '0.85em',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        gap: '5px'
+                                      }}>
+                                        <span style={{ color: 'var(--success-color, #4caf50)' }}>✓</span> {m.reason}
+                                      </span>
+                                    </div>
+                                  ))}
+                                </div>
+                                <p style={{ fontSize: '0.8em', color: 'var(--text-secondary)', marginTop: '8px', fontStyle: 'italic' }}>
+                                  These "missed" optimizations mean the compiler couldn't simplify your code - exactly what we want!
+                                </p>
+                              </div>
+                            )}
+
+                            {/* Neutral Missed */}
+                            {neutralMissed > 0 && (
+                              <div style={{ marginBottom: '20px' }}>
+                                <h4 style={{ color: '#9e9e9e', marginBottom: '10px' }}>
+                                  Missed Optimizations (Neutral)
+                                </h4>
+                                <div style={{
+                                  backgroundColor: 'var(--bg-secondary)',
+                                  borderRadius: '8px',
+                                  padding: '10px',
+                                  maxHeight: '150px',
+                                  overflow: 'auto'
+                                }}>
+                                  {parsed.missed.filter(m => !m.isGood).slice(0, 20).map((m, i) => (
+                                    <div key={i} style={{
+                                      padding: '6px 8px',
+                                      borderBottom: '1px solid var(--border-color)',
+                                      fontSize: '0.85em',
+                                      display: 'flex',
+                                      justifyContent: 'space-between'
+                                    }}>
+                                      <code style={{ color: 'var(--text-secondary)' }}>{m.function}</code>
+                                      <span style={{ color: 'var(--text-secondary)' }}>{m.reason}</span>
+                                    </div>
+                                  ))}
+                                  {neutralMissed > 20 && (
+                                    <div style={{ padding: '8px', color: 'var(--text-secondary)', fontStyle: 'italic' }}>
+                                      ... and {neutralMissed - 20} more
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Analysis Data */}
+                            {parsed.analysis.length > 0 && (
+                              <div style={{ marginBottom: '20px' }}>
+                                <h4 style={{ color: '#ff9800', marginBottom: '10px' }}>
+                                  Analysis Data
+                                </h4>
+                                <div style={{
+                                  display: 'grid',
+                                  gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))',
+                                  gap: '10px'
+                                }}>
+                                  {/* Group by function and show instruction counts */}
+                                  {Array.from(parsed.summary.functionsAnalyzed).slice(0, 8).map((func) => {
+                                    const funcAnalysis = parsed.analysis.filter(a => a.function === func);
+                                    const instrCount = funcAnalysis.find(a => a.type === 'InstructionCount');
+                                    const stackSize = funcAnalysis.find(a => a.type === 'StackSize');
+
+                                    return (
+                                      <div key={func} style={{
+                                        backgroundColor: 'var(--bg-secondary)',
+                                        padding: '10px',
+                                        borderRadius: '6px'
+                                      }}>
+                                        <div style={{ fontWeight: 'bold', marginBottom: '5px', color: 'var(--accent-color)' }}>
+                                          {func}()
+                                        </div>
+                                        {instrCount && (
+                                          <div style={{ fontSize: '0.85em', color: 'var(--text-secondary)' }}>
+                                            {instrCount.value}
+                                          </div>
+                                        )}
+                                        {stackSize && (
+                                          <div style={{ fontSize: '0.85em', color: 'var(--text-secondary)' }}>
+                                            {stackSize.value}
+                                          </div>
+                                        )}
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            )}
+                          </>
+                        );
+                      })()}
+                    </div>
+                  ) : (
+                    /* Raw YAML View */
+                    <div>
+                      <p style={{ marginBottom: '10px', fontSize: '0.9em', color: 'var(--text-secondary)' }}>
+                        Raw YAML output from LLVM optimization remarks.
+                      </p>
+                      <pre style={{
+                        backgroundColor: 'var(--bg-secondary)',
+                        padding: '15px',
+                        borderRadius: '4px',
+                        overflow: 'auto',
+                        fontSize: '0.8em',
+                        maxHeight: '55vh',
+                        whiteSpace: 'pre-wrap',
+                        wordBreak: 'break-word'
+                      }}>
+                        {remarksContent}
+                      </pre>
+                    </div>
+                  )}
                 </div>
               ) : (
                 <div style={{ padding: '20px', textAlign: 'center' }}>
@@ -2935,7 +3299,7 @@ function App() {
               )}
             </div>
             <div className="modal-footer">
-              <button className="modal-btn" onClick={() => { setShowRemarksModal(false); setRemarksContent(null); }}>
+              <button className="modal-btn" onClick={() => { setShowRemarksModal(false); setRemarksContent(null); setRemarksView('summary'); }}>
                 Close
               </button>
             </div>

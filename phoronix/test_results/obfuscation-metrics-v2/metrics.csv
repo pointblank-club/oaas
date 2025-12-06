@@ -1,3 +1,0 @@
-Binary,file_size_bytes,file_size_percent_increase,text_section_size,num_functions,num_basic_blocks,instruction_count,text_entropy,cyclomatic_complexity,stripped,pie_enabled
-baseline,17144,0.0,0,9,4,314,0.0,1.0,True,True
-obfuscated_linux (1),14800,0.0,0,0,1,836,0.0,1.0,True,True

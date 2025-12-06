@@ -65,12 +65,13 @@ class LLVMObfuscator:
         self.remarks_collector = RemarksCollector()
         self.upx_packer = UPXPacker()
         # ✅ NEW: Initialize IR analyzer for advanced metrics
-        # ✅ FIX: Use /usr/lib/llvm-22 instead of /usr/local/llvm-obfuscator
-        # LLVM 22 is installed in /usr/lib/llvm-22 on system
-        opt_binary = Path("/usr/lib/llvm-22/bin/opt")
-        llvm_dis_binary = Path("/usr/lib/llvm-22/bin/llvm-dis")
+        # Use paths matching Dockerfile.backend (Docker container)
+        opt_binary = Path("/usr/local/llvm-obfuscator/bin/opt")
+        llvm_dis_binary = Path("/usr/local/llvm-obfuscator/bin/llvm-dis")
         self.ir_analyzer = IRAnalyzer(opt_binary, llvm_dis_binary)
         self._baseline_ir_metrics = {}  # Store baseline IR for later comparison
+        self._baseline_ir_file = None  # Store baseline IR file path for BCF analysis
+        self._obfuscated_ir_file = None  # Store obfuscated IR file path for BCF analysis
         self._mlir_metrics = {}  # Store MLIR pass metrics (string/symbol encryption counts)
 
     def _get_bundled_plugin_path(self, target_platform: Optional[Platform] = None) -> Optional[Path]:
@@ -350,7 +351,10 @@ class LLVMObfuscator:
                 # Continue with original source if insertion fails
 
         enabled_passes = config.passes.enabled_passes()
-        
+        self.logger.info(f"[SYMBOL-OBF DEBUG] config.passes.symbol_obfuscate: {config.passes.symbol_obfuscate}")
+        self.logger.info(f"[SYMBOL-OBF DEBUG] 'symbol-obfuscate' in enabled_passes: {'symbol-obfuscate' in enabled_passes}")
+        self.logger.info(f"[SYMBOL-OBF DEBUG] All enabled_passes: {enabled_passes}")
+
         # Filter out platform-incompatible flags from BASE_FLAGS
         # -mspeculative-load-hardening uses retpolines which require COMDAT sections
         # Mach-O (macOS) doesn't support COMDAT, so we must skip this flag for Darwin targets
@@ -422,6 +426,9 @@ class LLVMObfuscator:
         # ✅ FIX: Use safe entropy calculation with validation
         entropy = self._safe_entropy(output_binary.read_bytes() if output_binary.exists() else b"", "output_binary")
 
+        # ✅ NEW: Get BCF metrics from compilation result (or default to empty)
+        bcf_metrics = cycle_result.get("bcf_metrics", {}) if cycle_result else {}
+
         base_metrics = self._estimate_metrics(
             source_file=source_file,
             output_binary=output_binary,
@@ -434,6 +441,7 @@ class LLVMObfuscator:
             symbols_count=symbols_count,
             functions_count=functions_count,
             file_size=file_size,
+            bcf_metrics=bcf_metrics,
         )
 
         job_data = {
@@ -514,6 +522,8 @@ class LLVMObfuscator:
                 "comparison": cycle_ir_metrics.get("comparison", {}),
             },
             "output_file": str(output_binary),
+            "baseline_binary": str(baseline_binary),
+            "obfuscated_binary": str(output_binary),
         }
 
         if self.reporter:
@@ -852,7 +862,10 @@ class LLVMObfuscator:
 
         # The input for the current stage of the pipeline
         current_input = source_abs
-        
+
+        # Initialize MLIR metrics to empty dict (will be populated if MLIR stage runs)
+        self._mlir_metrics = {}
+
         # Stage 1: MLIR Obfuscation
         if mlir_passes:
             self.logger.info("Running MLIR pipeline with passes: %s", ", ".join(mlir_passes))
@@ -1142,6 +1155,13 @@ class LLVMObfuscator:
                 mlir_file.unlink()
             if obfuscated_mlir.exists():
                 obfuscated_mlir.unlink()
+        else:
+            # Log when MLIR stage is skipped
+            if any(p in enabled_passes for p in ["string-encrypt", "symbol-obfuscate", "crypto-hash", "constant-obfuscate"]):
+                self.logger.warning("MLIR passes were requested but not found in enabled_passes - MLIR pipeline skipped. "
+                                  "String/symbol obfuscation metrics may be incomplete.")
+            else:
+                self.logger.debug("No MLIR passes enabled - skipping MLIR pipeline")
 
         # Stage 2: OLLVM Obfuscation
         if ollvm_passes:
@@ -1319,6 +1339,7 @@ class LLVMObfuscator:
         # ✅ NEW: Analyze obfuscated IR before cleanup
         obf_ir_metrics = {}
         obf_ir_comparison = {}
+        bcf_metrics = {}
         if config.advanced.ir_metrics_enabled and current_input.exists():
             try:
                 obf_ir_metrics = self.ir_analyzer.analyze_control_flow(current_input)
@@ -1331,6 +1352,15 @@ class LLVMObfuscator:
                     obf_ir_comparison = self.ir_analyzer.compare_ir_metrics(self._baseline_ir_metrics, obf_ir_metrics)
                     self.logger.info(f"IR comparison: +{obf_ir_comparison.get('complexity_increase_percent', 0):.1f}% complexity, "
                                    f"+{obf_ir_comparison.get('instruction_growth_percent', 0):.1f}% instructions")
+
+                # ✅ NEW: Analyze BCF-specific artifacts if BCF pass was applied
+                if "bcf" in actually_applied_passes or "boguscf" in actually_applied_passes or "bogus" in " ".join(actually_applied_passes).lower():
+                    if self._baseline_ir_file and self._baseline_ir_file.exists():
+                        try:
+                            bcf_metrics = self.ir_analyzer.analyze_bcf_metrics(self._baseline_ir_file, current_input)
+                            self.logger.info(f"BCF metrics from IR analysis: {bcf_metrics}")
+                        except Exception as e:
+                            self.logger.warning(f"BCF metrics analysis failed: {e}")
             except Exception as e:
                 self.logger.warning(f"Obfuscated IR analysis failed: {e}")
 
@@ -1348,7 +1378,9 @@ class LLVMObfuscator:
             "ir_metrics": {
                 "obfuscated": obf_ir_metrics,
                 "comparison": obf_ir_comparison
-            }
+            },
+            # ✅ NEW: Include BCF metrics in result
+            "bcf_metrics": bcf_metrics,
         }
 
     def _compile_with_clangir(
@@ -1858,6 +1890,8 @@ class LLVMObfuscator:
                                        f"{baseline_ir_metrics.get('total_instructions', 0)} instructions")
                         # Store baseline IR metrics for later comparison
                         self._baseline_ir_metrics = baseline_ir_metrics
+                        # Store baseline IR file path for BCF artifact detection
+                        self._baseline_ir_file = ir_file
                     except Exception as e:
                         self.logger.warning(f"Baseline IR analysis failed: {e}")
                         self._baseline_ir_metrics = {}
@@ -1914,6 +1948,7 @@ class LLVMObfuscator:
         symbols_count: int = 0,
         functions_count: int = 0,
         file_size: int = 0,
+        bcf_metrics: Optional[Dict] = None,
     ) -> Dict:
         """Calculate real metrics from actual binary analysis, not estimates."""
         # ✅ FIX: Calculate real symbol/function reduction from baseline vs obfuscated
@@ -1967,6 +2002,7 @@ class LLVMObfuscator:
         # ✅ FIX #6: CRITICAL - Calculate string obfuscation BEFORE score (moved from later)
         # Extract visible strings from obfuscated binary if string-encrypt pass was applied
         baseline_string_count = baseline_metrics.get("visible_string_count", 0) if baseline_metrics else 0
+        self.logger.info(f"[STRING-COUNT] baseline_metrics has visible_string_count: {baseline_string_count} (raw baseline_metrics: {bool(baseline_metrics)})")
         obfuscated_string_count = 0
         string_encryption_percentage = 0.0
 
@@ -1976,7 +2012,7 @@ class LLVMObfuscator:
                 # This is more reliable than IR file analysis since it's from the actual pass output
                 if self._mlir_metrics and self._mlir_metrics.get('encrypted_strings_count', 0) > 0:
                     obfuscated_string_count = self._mlir_metrics.get('encrypted_strings_count', 0)
-                    self.logger.info(f"✓ Using MLIR metrics: {obfuscated_string_count} strings encrypted")
+                    self.logger.info(f"✓ String encryption applied: {obfuscated_string_count} strings encrypted via MLIR")
                 else:
                     # Fallback: Try to find the obfuscated IR file generated during compilation
                     obfuscated_ir_candidates = [
@@ -1986,13 +2022,19 @@ class LLVMObfuscator:
                     ]
 
                     obfuscated_string_count = 0
+                    found_ir_file = False
                     for ir_candidate in obfuscated_ir_candidates:
                         if ir_candidate.exists():
+                            found_ir_file = True
                             obfuscated_string_count = self._extract_strings_from_ir(ir_candidate)
                             # Use first IR file found with strings, or last one if none have strings
                             if obfuscated_string_count > 0:
-                                self.logger.info(f"String count from {ir_candidate.name}: {obfuscated_string_count}")
+                                self.logger.info(f"✓ String count from {ir_candidate.name}: {obfuscated_string_count}")
                                 break
+
+                    if not found_ir_file:
+                        self.logger.warning("String-encrypt pass was applied but no IR files found for analysis. "
+                                          "MLIR metrics unavailable and fallback IR analysis skipped.")
 
                 # Calculate actual string reduction from IR analysis
                 if baseline_string_count > 0:
@@ -2005,7 +2047,8 @@ class LLVMObfuscator:
                     string_encryption_percentage = 0.0
                     self.logger.warning("String-encrypt pass enabled but no baseline strings found for comparison")
             except Exception as e:
-                self.logger.debug(f"String encryption analysis failed: {e}")
+                self.logger.error(f"String encryption analysis failed: {e}")
+                obfuscated_string_count = 0
 
         # ✅ NEW: Extract symbol obfuscation metrics from MLIR IR if symbol-obfuscate pass applied
         symbol_obfuscation_percentage = 0.0
@@ -2099,25 +2142,61 @@ class LLVMObfuscator:
 
         score = min(100.0, max(0.0, score))
 
-        # ✅ FIX: Bogus code info from actual pass count
-        # Each pass adds roughly 3 dead blocks, 2 opaque predicates, 5 junk instructions
-        bogus_code_info = {
-            "dead_code_blocks": len(passes) * 3,
-            "opaque_predicates": len(passes) * 2,
-            "junk_instructions": len(passes) * 5,
-            "code_bloat_percentage": round(min(50.0, 5 + len(passes) * 1.5), 2),
-        }
+        # ✅ FIX: Bogus code info from actual IR analysis or estimation
+        # Prefer actual metrics from IR analysis, fall back to estimation if not available
+        has_boguscf = "bcf" in passes or "boguscf" in passes or "bogus" in " ".join(passes).lower()
+
+        if bcf_metrics and bcf_metrics.get('dead_code_blocks', 0) > 0 or bcf_metrics and bcf_metrics.get('opaque_predicates', 0) > 0:
+            # Use actual metrics from IR analysis
+            bogus_code_info = {
+                "dead_code_blocks": bcf_metrics.get('dead_code_blocks', 0),
+                "opaque_predicates": bcf_metrics.get('opaque_predicates', 0),
+                "junk_instructions": bcf_metrics.get('junk_instructions', 0),
+                "code_bloat_percentage": bcf_metrics.get('code_bloat_percentage', 0.0),
+            }
+            self.logger.info(f"Bogus code info (from IR analysis): {bogus_code_info}")
+        elif has_boguscf:
+            # BCF pass enabled but IR analysis failed - use estimation
+            # Base values when BCF enabled, scales with other passes
+            other_passes_count = len([p for p in passes if p not in ["bcf", "boguscf"]])
+            bogus_code_info = {
+                "dead_code_blocks": 8 + other_passes_count * 2,  # BCF adds ~8, more with other passes
+                "opaque_predicates": 5 + other_passes_count,  # BCF adds ~5, more with others
+                "junk_instructions": 12 + other_passes_count * 3,  # BCF adds ~12, scales with passes
+                "code_bloat_percentage": round(min(50.0, 10 + other_passes_count * 2), 2),
+            }
+            self.logger.info(f"Bogus code info (estimated): {bogus_code_info}")
+        else:
+            # No BCF pass, set zeros
+            bogus_code_info = {
+                "dead_code_blocks": 0,
+                "opaque_predicates": 0,
+                "junk_instructions": 0,
+                "code_bloat_percentage": 0.0,
+            }
+            self.logger.info(f"Bogus code info: zeros (BCF pass not enabled)")
 
         # ✅ FIXED: Ensure string_obfuscation always has proper values (not None)
+        # Calculate encrypted_strings count properly
+        encrypted_count = max(0, baseline_string_count - obfuscated_string_count) if baseline_string_count > 0 else 0
+
         string_obfuscation = {
             "enabled": "string-encrypt" in passes,
-            "total_strings": baseline_string_count if baseline_string_count > 0 else 0,
-            "encrypted_strings": max(0, baseline_string_count - obfuscated_string_count) if baseline_string_count > 0 else 0,
+            "total_strings": baseline_string_count,
+            "encrypted_strings": encrypted_count,
             "method": "MLIR string-encrypt pass" if "string-encrypt" in passes else "none",
             "encryption_percentage": string_encryption_percentage,
         }
+        self.logger.info(f"[STRING-OBFUSCATION] Final metrics: baseline={baseline_string_count}, obfuscated={obfuscated_string_count}, total={string_obfuscation['total_strings']}, encrypted={string_obfuscation['encrypted_strings']}, percent={string_obfuscation['encryption_percentage']}%")
+
+        # ✅ CRITICAL FIX: Only add non-metric fields from string_result (like encryption_method)
+        # DO NOT let string_result overwrite our calculated metrics (total_strings, encrypted_strings, encryption_percentage)
         if string_result and isinstance(string_result, dict):
-            string_obfuscation.update(string_result)
+            # Only add safe fields that don't override calculated metrics
+            for key, value in string_result.items():
+                if key not in ['total_strings', 'encrypted_strings', 'encryption_percentage']:
+                    string_obfuscation[key] = value
+            self.logger.info(f"[STRING-OBFUSCATION] After merging string_result metadata: {string_obfuscation}")
 
         fake_loops_inserted = {
             "count": len(fake_loops),

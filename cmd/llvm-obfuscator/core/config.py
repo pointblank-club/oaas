@@ -194,6 +194,15 @@ class ObfuscationConfig:
                 hash_length=crypto_hash_data.get("hash_length", 12),
             )
 
+        # ✅ FIX: Check both legacy passes.symbol_obfuscate and new symbol_obfuscation.enabled from frontend
+        symbol_obfuscate_enabled = passes_data.get("symbol_obfuscate", False)
+        symbol_obf_config = data.get("symbol_obfuscation", {})
+        print(f"[CONFIG DEBUG] symbol_obf_config from payload: {symbol_obf_config}")
+        print(f"[CONFIG DEBUG] symbol_obf_config.get('enabled'): {symbol_obf_config.get('enabled') if isinstance(symbol_obf_config, dict) else 'NOT A DICT'}")
+        if isinstance(symbol_obf_config, dict) and symbol_obf_config.get("enabled"):
+            symbol_obfuscate_enabled = True
+        print(f"[CONFIG DEBUG] Final symbol_obfuscate_enabled: {symbol_obfuscate_enabled}")
+
         passes = PassConfiguration(
             flattening=passes_data.get("flattening", False),
             substitution=passes_data.get("substitution", False),
@@ -201,7 +210,7 @@ class ObfuscationConfig:
             split=passes_data.get("split", False),
             linear_mba=passes_data.get("linear_mba", False),
             string_encrypt=passes_data.get("string_encrypt", False),
-            symbol_obfuscate=passes_data.get("symbol_obfuscate", False),
+            symbol_obfuscate=symbol_obfuscate_enabled,
             constant_obfuscate=passes_data.get("constant_obfuscate", False),
             crypto_hash=crypto_hash,
         )

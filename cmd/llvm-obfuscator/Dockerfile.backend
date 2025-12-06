@@ -109,6 +109,15 @@ RUN cp -rn /usr/lib/llvm-*/lib/clang/*/include/* \
     cp -rn /usr/lib/llvm-*/lib/clang/*/include/* \
        /app/plugins/linux-x86_64/lib/clang/22/include/ 2>/dev/null || true
 
+# Install llvm-mingw for Windows ARM64 C++ cross-compilation
+# Standard mingw-w64 only supports x86/x86_64, llvm-mingw adds ARM64 support
+# This provides C++ headers (iostream, etc.) for aarch64-w64-mingw32 target
+# NOTE: Downloaded from GCP during CI and pre-extracted for faster builds
+COPY plugins/llvm-mingw /opt/llvm-mingw
+
+# Set llvm-mingw environment for Windows ARM64 cross-compilation
+ENV LLVM_MINGW_PATH="/opt/llvm-mingw"
+
 # Install macOS SDK for cross-compilation to macOS/Darwin targets
 # SDK is downloaded from GCP during CI and contains headers/libraries needed for --sysroot
 # NOTE: Skipped in local builds - will be copied if available during deployment

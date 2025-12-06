@@ -13,15 +13,14 @@ type Architecture = 'x86_64' | 'arm64' | 'i686';
 const PLATFORM_ARCHITECTURES: Record<Platform, { value: Architecture; label: string; disabled?: boolean }[]> = {
   linux: [
     { value: 'x86_64', label: 'x86_64 (64-bit Intel/AMD)' },
-    { value: 'arm64', label: 'ARM64 (coming soon)', disabled: true },
+    { value: 'arm64', label: 'ARM64 (aarch64)' },
   ],
   windows: [
     { value: 'x86_64', label: 'x86_64 (64-bit Intel/AMD)' },
-    { value: 'arm64', label: 'ARM64 (coming soon)', disabled: true },
+    { value: 'arm64', label: 'ARM64 (aarch64)' },
   ],
   macos: [
-    { value: 'x86_64', label: 'x86_64 (Intel + Apple Silicon via Rosetta 2)' },
-    { value: 'arm64', label: 'ARM64 Native (coming soon)', disabled: true },
+    { value: 'x86_64', label: 'x86_64 (Apple Silicon via Rosetta 2 + Intel native)' },
   ],
   all: [
     { value: 'x86_64', label: 'x86_64 (64-bit Intel/AMD)' },
@@ -2576,6 +2575,7 @@ function App() {
       // Build compiler flags based on Layer 4 (Compiler Flags) - only selected flags
       const flags: string[] = [];
       const isMacOSTarget = targetPlatform === 'macos';
+      const isWindowsArm64 = targetPlatform === 'windows' && targetArchitecture === 'arm64';
       if (layer4) {
         // Add non-LTO flags first
         if (flagO3) flags.push('-O3');
@@ -2583,8 +2583,10 @@ function App() {
         if (flagStripSymbols) flags.push('-Wl,-s');
         if (flagSymbolHiding) flags.push('-fvisibility=hidden');
         if (flagOmitFramePointer) flags.push('-fomit-frame-pointer');
-        // Skip -mspeculative-load-hardening for macOS - it uses COMDAT sections which Mach-O doesn't support
-        if (flagSpeculativeLoadHardening && !isMacOSTarget) flags.push('-mspeculative-load-hardening');
+        // Skip -mspeculative-load-hardening for:
+        // - macOS: uses COMDAT sections which Mach-O doesn't support
+        // - Windows ARM64: corrupts SEH (Structured Exception Handling) metadata
+        if (flagSpeculativeLoadHardening && !isMacOSTarget && !isWindowsArm64) flags.push('-mspeculative-load-hardening');
         // LTO (Link-Time Optimization) - enables whole-program optimization
         if (flagLTO) flags.push('-flto');
       }

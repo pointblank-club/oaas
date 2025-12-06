@@ -962,27 +962,47 @@ class LLVMObfuscator:
             ir_content = re.sub(r'attributes #\d+ = \{\s*\}', '', ir_content)
 
             # ============================================================
-            # FIX: Resolve ambiguous hex escape sequences in string constants
-            # When MLIR encrypts strings, some bytes become \xx escapes.
-            # If \xx is followed by a hex digit (0-9, a-f, A-F), it creates
-            # ambiguity like \223 which could be parsed as \22 + "3" or \223.
-            # Fix: escape the trailing hex digit too, e.g., \223 -> \22\33
+            # FIX: Bug #2 - MLIR string encryption size mismatch
+            # The MLIR string-encrypt pass sometimes generates incorrect array
+            # size declarations. For example: [23 x i8] but content is 22 bytes.
+            # This fix recalculates the actual byte count and fixes the size.
             # ============================================================
-            def fix_ambiguous_escapes(match):
-                string_content = match.group(1)
-                # Find \xx followed by a hex digit and escape the trailing digit
-                def escape_trailing_hex(m):
-                    escape_seq = m.group(1)  # e.g., \22
-                    trailing_char = m.group(2)  # e.g., 3
-                    # Convert trailing char to its hex escape
-                    hex_escape = '\\{:02x}'.format(ord(trailing_char))
-                    return escape_seq + hex_escape
-                # Pattern: \xx followed by a hex digit
-                fixed = re.sub(r'(\\[0-9a-fA-F]{2})([0-9a-fA-F])', escape_trailing_hex, string_content)
-                return 'c"' + fixed + '"'
+            def count_string_bytes(s):
+                """Count actual bytes in an LLVM IR string literal (inside c"...")."""
+                count = 0
+                i = 0
+                while i < len(s):
+                    if s[i] == '\\' and i + 2 < len(s):
+                        # Check for hex escape \xx
+                        hex_chars = s[i+1:i+3]
+                        if all(c in '0123456789abcdefABCDEF' for c in hex_chars):
+                            count += 1
+                            i += 3
+                            continue
+                    # Regular character
+                    count += 1
+                    i += 1
+                return count
 
-            # Apply fix to all string constants (c"...")
-            ir_content = re.sub(r'c"([^"]*)"', fix_ambiguous_escapes, ir_content)
+            def fix_string_constant_size(match):
+                """Fix the array size in string constant declarations."""
+                prefix = match.group(1)  # Everything before [N x i8]
+                declared_size = int(match.group(2))  # The declared size N
+                string_content = match.group(3)  # The string inside c"..."
+                suffix = match.group(4)  # Everything after (e.g., ", align 1")
+
+                actual_size = count_string_bytes(string_content)
+
+                if actual_size != declared_size:
+                    self.logger.debug(f"Fixing string size: [{declared_size} x i8] -> [{actual_size} x i8]")
+
+                return f'{prefix}[{actual_size} x i8] c"{string_content}"{suffix}'
+
+            # Pattern to match string constant declarations:
+            # @.str.X = ... constant [N x i8] c"...", align X
+            # Capture groups: (prefix)(size)(string_content)(suffix)
+            string_const_pattern = r'((?:@[^\s]+\s*=\s*)?(?:private\s+)?(?:unnamed_addr\s+)?(?:constant\s+)?)\[(\d+)\s+x\s+i8\]\s+c"([^"]*)"((?:\s*,\s*align\s+\d+)?)'
+            ir_content = re.sub(string_const_pattern, fix_string_constant_size, ir_content)
 
             with open(str(llvm_ir_file), 'w') as f:
                 f.write(ir_content)

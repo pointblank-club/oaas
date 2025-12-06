@@ -1368,11 +1368,13 @@ class LLVMObfuscator:
                 # Loading plugin would cause "Option registered more than once" error
                 opt_cmd = [
                     str(opt_binary),
+                    f"-load-pass-plugin={str(plugin_path)}",
                     f"-passes={passes_pipeline}",
                     str(current_input),
                     "-o", str(obfuscated_ir)
                 ]
-                self.logger.info("Applying OLLVM passes via opt")
+                self.logger.info(f"Applying OLLVM passes via opt with plugin: {plugin_path}")
+                self.logger.info(f"Command: {' '.join(opt_cmd)}")
                 run_command(opt_cmd, cwd=source_abs.parent)
                 current_input = obfuscated_ir
 
@@ -1600,10 +1602,13 @@ class LLVMObfuscator:
             # Loading plugin would cause "Option registered more than once" error
             opt_cmd = [
                 str(opt_binary),
+                f"-load-pass-plugin={str(plugin_path)}",
                 f"-passes={passes_pipeline}",
                 str(current_input),
                 "-o", str(obfuscated_ir)
             ]
+            self.logger.info(f"Applying OLLVM passes via opt with plugin: {plugin_path}")
+            self.logger.info(f"Command: {' '.join(opt_cmd)}")
             run_command(opt_cmd, cwd=source_abs.parent)
             current_input = obfuscated_ir
 

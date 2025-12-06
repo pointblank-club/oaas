@@ -3059,6 +3059,25 @@ function App() {
                     if (isOriginal) {
                       setOriginalDogboltResults(finalData);
                       setOriginalDogboltLoading(false);
+                      
+                      // Try to match the currently selected decompiler from obfuscated binary
+                      // by name (since versions might differ), or select first available
+                      if (results.length > 0 && selectedDecompiler) {
+                        // Extract decompiler name from selected decompiler key (format: "Name-version")
+                        const selectedName = selectedDecompiler.split('-').slice(0, -1).join('-');
+                        
+                        // Try to find matching decompiler by name
+                        const matchingDecompiler = results.find((d: any) => 
+                          d.has_code && d.decompiler_name === selectedName
+                        );
+                        
+                        if (matchingDecompiler) {
+                          // Found matching decompiler, but don't change selectedDecompiler
+                          // since it's shared between both views - the UI will handle matching
+                        } else {
+                          // No match found, but that's okay - UI will handle it
+                        }
+                      }
                     } else {
                       setDogboltResults(finalData);
                       
@@ -5497,13 +5516,47 @@ function App() {
                       maxHeight: '600px',
                       overflow: 'auto'
                     }}>
-                      {originalDogboltResults && selectedDecompiler ? (() => {
-                        const selected = originalDogboltResults.decompilers.find((d: any) => d.decompiler_key === selectedDecompiler);
-                        if (!selected) return (
-                          <div style={{ textAlign: 'center', color: 'var(--text-secondary)', padding: '40px' }}>
-                            <p>Original binary decompilation not available for this decompiler</p>
-                          </div>
-                        );
+                      {originalDogboltResults ? (() => {
+                        let selected: any = null;
+                        
+                        // If we have a selected decompiler, try to match it
+                        if (selectedDecompiler) {
+                          // First try exact key match
+                          selected = originalDogboltResults.decompilers.find((d: any) => d.decompiler_key === selectedDecompiler);
+                          
+                          // If no exact match, try to match by decompiler name (versions might differ)
+                          if (!selected) {
+                            const selectedName = selectedDecompiler.split('-').slice(0, -1).join('-');
+                            selected = originalDogboltResults.decompilers.find((d: any) => 
+                              d.decompiler_name === selectedName && d.has_code
+                            );
+                          }
+                        }
+                        
+                        // If still no match, try to get first available decompiler with code
+                        if (!selected) {
+                          selected = originalDogboltResults.decompilers.find((d: any) => d.has_code);
+                        }
+                        
+                        if (!selected) {
+                          // Check if there are any decompilers at all
+                          if (originalDogboltResults.decompilers.length === 0) {
+                            return (
+                              <div style={{ textAlign: 'center', color: 'var(--text-secondary)', padding: '40px' }}>
+                                <p>No decompilers available for original binary</p>
+                              </div>
+                            );
+                          }
+                          // All decompilers failed
+                          return (
+                            <div style={{ textAlign: 'center', color: 'var(--text-secondary)', padding: '40px' }}>
+                              <p>Original binary decompilation not available for this decompiler</p>
+                              <p style={{ fontSize: '0.9em', marginTop: '10px' }}>
+                                Available decompilers: {originalDogboltResults.decompilers.map((d: any) => d.decompiler_name).join(', ')}
+                              </p>
+                            </div>
+                          );
+                        }
                         if (selected.error) {
                           return (
                             <div>

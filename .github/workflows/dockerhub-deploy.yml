@@ -84,7 +84,19 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: llvm-plugins
-        path: cmd/llvm-obfuscator/plugins
+        path: |
+          cmd/llvm-obfuscator/plugins/linux-x86_64
+          cmd/llvm-obfuscator/plugins/llvm-mingw
+        retention-days: 1
+
+    - name: Upload macOS SDK as artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: macos-sdk
+        path: |
+          cmd/llvm-obfuscator/plugins/macos-sdk
+          !cmd/llvm-obfuscator/plugins/macos-sdk/**/man/**
+          !cmd/llvm-obfuscator/plugins/macos-sdk/**/*.3pm
         retention-days: 1
 
   # Job 2: Build and push backend (runs in parallel with frontend)
@@ -103,6 +115,12 @@ jobs:
       with:
         name: llvm-plugins
         path: cmd/llvm-obfuscator/plugins
+
+    - name: Download macOS SDK artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: macos-sdk
+        path: cmd/llvm-obfuscator/plugins/macos-sdk
 
     - name: Make binaries executable
       run: chmod +x cmd/llvm-obfuscator/plugins/linux-x86_64/* 2>/dev/null || true

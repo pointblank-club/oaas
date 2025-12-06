@@ -880,7 +880,7 @@ class LLVMObfuscator:
             with open(str(llvm_ir_raw), 'r') as f:
                 ir_content = f.read()
 
-            import re
+            
             # Fix target triple and datalayout
             # Use re.DOTALL to handle multi-line target triple values (MLIR sometimes outputs newlines inside quotes)
             ir_content = re.sub(r'target triple = "[^"]*"', f'target triple = "{target_triple}"', ir_content, flags=re.DOTALL)
@@ -930,7 +930,6 @@ class LLVMObfuscator:
                     # Extract string and symbol metrics from obfuscated MLIR
                     mlir_content = obfuscated_mlir.read_text(errors='ignore')
 
-                    import re
                     # Count globals in MLIR - more flexible pattern matching
                     # Can be: llvm.global, llvm.mlir.global, or just @name declarations
                     global_pattern = r'(@[\w\._]+)\s*='
@@ -1241,7 +1240,6 @@ class LLVMObfuscator:
         run_command(translate_cmd, cwd=source_abs.parent)
 
         # Fix target triple and data layout
-        import re
         # Get target triple for cross-compilation
         target_triple = self._get_target_triple(config.platform, config.architecture)
         # Data layout depends on the target
@@ -1469,7 +1467,6 @@ class LLVMObfuscator:
             ir_content = ir_file.read_text(errors='ignore')
             # Count string constants in LLVM IR: @.str = private constant [X x i8] c"..."
             # Pattern: c"..." string literals
-            import re
             string_pattern = r'c"([^"]*)"'
             strings = re.findall(string_pattern, ir_content)
             # Filter out empty/trivial strings
@@ -1494,7 +1491,6 @@ class LLVMObfuscator:
                 return {'global_symbols': 0, 'obfuscated_symbols': 0, 'functions': 0}
 
             ir_content = ir_file.read_text(errors='ignore')
-            import re
 
             # Count global symbols: @name = ... or @name( for functions
             # Pattern: @ followed by valid identifier characters

@@ -175,3 +175,122 @@ After deployment, test end-to-end:
 - Frontend exposed on port `4666` (mapped to container port 4666)
 - Backend internal on port `8000` (accessed via Docker network)
 - Both containers on `oaas_obfuscator-network` bridge network
+
+---
+
+## GCP Binary Management
+
+All LLVM binaries are stored in a **single tarball** (`llvm-obfuscator-binaries.tar.gz`) in GCP Cloud Storage.
+
+### Quick Reference
+
+```bash
+# List all binaries in the tarball
+./scripts/gcp-binary-manager.sh list
+
+# Add/update a binary
+./scripts/gcp-binary-manager.sh add /path/to/binary linux-x86_64/binary-name
+
+# Download binaries for local development
+./scripts/gcp-binary-manager.sh download
+```
+
+### Prerequisites
+
+1. **Google Cloud SDK** installed:
+   ```bash
+   brew install google-cloud-sdk  # macOS
+   ```
+
+2. **Authenticated with GCP**:
+   ```bash
+   gcloud auth login
+   ```
+
+### Tarball Structure
+
+```
+llvm-obfuscator-binaries.tar.gz
+├── linux-x86_64/                    # Linux binaries
+│   ├── clang                        # Clang compiler
+│   ├── opt                          # LLVM optimizer
+│   ├── mlir-opt                     # MLIR optimizer
+│   ├── clangir                      # ClangIR compiler
+│   ├── LLVMObfuscationPlugin.so     # Obfuscation plugin
+│   ├── MLIRObfuscation.so           # MLIR obfuscation plugin
+│   ├── libLLVM.so.22.0git           # LLVM shared library
+│   └── lib/clang/22/include/        # Clang headers
+├── macos-sdk/                       # macOS cross-compilation SDK
+│   └── MacOSX15.4.sdk/
+└── llvm-mingw/                      # Windows cross-compilation toolchain
+```
+
+### Adding/Updating a Binary
+
+```bash
+# Add a new clang binary
+./scripts/gcp-binary-manager.sh add /path/to/new/clang linux-x86_64/clang
+
+# Add a new plugin
+./scripts/gcp-binary-manager.sh add ./MyNewPlugin.so linux-x86_64/MyNewPlugin.so
+
+# Add a directory (e.g., clang headers)
+./scripts/gcp-binary-manager.sh add ./include linux-x86_64/lib/clang/22/include
+```
+
+**What happens internally:**
+1. Downloads existing tarball from GCP
+2. Extracts to temp directory
+3. Adds/overwrites your new binary at the specified path
+4. Creates new tarball
+5. Uploads back to GCP
+
+### Removing a Binary
+
+```bash
+./scripts/gcp-binary-manager.sh remove linux-x86_64/old-binary
+```
+
+### Example: Updating the Obfuscation Plugin
+
+```bash
+# 1. Build your new plugin locally
+cd ../llvm-project
+ninja LLVMObfuscationPlugin
+
+# 2. Add it to the tarball
+cd /path/to/oaas
+./scripts/gcp-binary-manager.sh add \
+    ../llvm-project/build/lib/LLVMObfuscationPlugin.so \
+    linux-x86_64/LLVMObfuscationPlugin.so
+
+# 3. Verify it was added
+./scripts/gcp-binary-manager.sh list | grep Plugin
+
+# 4. Push to trigger CI (uses updated tarball automatically)
+git push
+```
+
+### CI/CD Integration
+
+The CI workflow (`dockerhub-deploy.yml`) automatically:
+1. **Tries tarball first** (fast path, ~2 mins)
+2. **Falls back to individual files** if tarball doesn't exist (slow path, ~20 mins)
+
+### GCP Bucket
+
+```
+gs://llvmbins/
+├── llvm-obfuscator-binaries.tar.gz  # PRIMARY: Single tarball
+├── linux-x86_64/                     # LEGACY: Individual files (fallback)
+├── macos-sdk-15.4-minimal.tar.gz    # LEGACY: Separate SDK
+└── llvm-mingw-*.tar.xz              # LEGACY: Separate MinGW
+```
+
+### Troubleshooting
+
+**"gsutil not found"**: `brew install google-cloud-sdk`
+
+**"Not authenticated"**: `gcloud auth login`
+
+**"Permission denied"**: Contact project owner for `Storage Object Admin` role on `llvmbins` bucket

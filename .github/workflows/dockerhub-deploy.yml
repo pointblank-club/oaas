@@ -48,32 +48,51 @@ jobs:
       if: steps.download-artifact.outcome != 'success'
       env:
         GCP_BUCKET: llvmbins
+        TARBALL_NAME: llvm-obfuscator-binaries.tar.gz
       run: |
         echo "=========================================="
         echo "Downloading LLVM binaries from GCP Cloud Storage"
         echo "=========================================="
-        echo "⚠️  Artifact not found, downloading from GCP (this will take longer)"
+        echo "⚠️  Artifact not found, downloading from GCP"
 
         # Create target directory
-        mkdir -p cmd/llvm-obfuscator/plugins/linux-x86_64
+        mkdir -p cmd/llvm-obfuscator/plugins
 
-        # Download all individual files from GCP bucket
-        echo "Downloading individual binaries from gs://${GCP_BUCKET}/linux-x86_64/..."
-        echo "Using parallel download with optimized settings..."
+        # Try to download the single tarball first (FAST PATH - ~2 mins)
+        echo "Attempting to download pre-built tarball..."
+        if gsutil cp "gs://${GCP_BUCKET}/${TARBALL_NAME}" /tmp/${TARBALL_NAME} 2>/dev/null; then
+          echo "✅ Tarball found! Extracting..."
+          tar -xzf /tmp/${TARBALL_NAME} -C cmd/llvm-obfuscator/plugins/
+          rm /tmp/${TARBALL_NAME}
+          echo "✅ Extracted tarball successfully"
+        else
+          echo "⚠️  Tarball not found, falling back to individual file download (SLOW PATH - ~20 mins)"
+          echo "   To speed up future builds, run: ./scripts/gcp-binary-manager.sh init"
+          echo ""
 
-        gsutil -m cp -r "gs://${GCP_BUCKET}/linux-x86_64/*" cmd/llvm-obfuscator/plugins/linux-x86_64/ || {
-          echo "❌ ERROR: Failed to download binaries from GCP Cloud Storage"
-          echo ""
-          echo "Bucket: ${GCP_BUCKET}"
-          echo "Path: linux-x86_64/"
-          echo ""
-          echo "To fix:"
-          echo "  1. Ensure individual binaries are uploaded to gs://${GCP_BUCKET}/linux-x86_64/"
-          echo "  2. Required files: clang, opt, LLVMObfuscationPlugin.so, libLLVM.so.22.0git, mlir-opt, mlir-translate, clangir, MLIRObfuscation.so"
-          echo "  3. Also ensure lib/clang/22/include/ directory is uploaded"
-          echo ""
-          exit 1
-        }
+          # FALLBACK: Download individual files
+          mkdir -p cmd/llvm-obfuscator/plugins/linux-x86_64
+          gsutil -m cp -r "gs://${GCP_BUCKET}/linux-x86_64/*" cmd/llvm-obfuscator/plugins/linux-x86_64/ || {
+            echo "❌ ERROR: Failed to download binaries from GCP Cloud Storage"
+            exit 1
+          }
+
+          # Download macOS SDK
+          echo "Downloading macOS SDK from GCP..."
+          mkdir -p cmd/llvm-obfuscator/plugins/macos-sdk
+          gsutil cp "gs://${GCP_BUCKET}/macos-sdk-15.4-minimal.tar.gz" /tmp/macos-sdk.tar.gz
+          tar -xzf /tmp/macos-sdk.tar.gz -C /tmp/
+          mv /tmp/macos-sdk/MacOSX15.4.sdk cmd/llvm-obfuscator/plugins/macos-sdk/ 2>/dev/null || true
+          rm -rf /tmp/macos-sdk /tmp/macos-sdk.tar.gz
+
+          # Download llvm-mingw
+          echo "Downloading llvm-mingw from GCP..."
+          mkdir -p cmd/llvm-obfuscator/plugins/llvm-mingw
+          gsutil cp "gs://${GCP_BUCKET}/llvm-mingw-20251202-ucrt-ubuntu-22.04-x86_64.tar.xz" /tmp/llvm-mingw.tar.xz
+          tar -xf /tmp/llvm-mingw.tar.xz -C /tmp/
+          mv /tmp/llvm-mingw-20251202-ucrt-ubuntu-22.04-x86_64/* cmd/llvm-obfuscator/plugins/llvm-mingw/
+          rm -rf /tmp/llvm-mingw-20251202-ucrt-ubuntu-22.04-x86_64 /tmp/llvm-mingw.tar.xz
+        fi
 
         # Make binaries executable
         chmod +x cmd/llvm-obfuscator/plugins/linux-x86_64/clang || true
@@ -81,30 +100,12 @@ jobs:
         chmod +x cmd/llvm-obfuscator/plugins/linux-x86_64/mlir-opt || true
         chmod +x cmd/llvm-obfuscator/plugins/linux-x86_64/mlir-translate || true
         chmod +x cmd/llvm-obfuscator/plugins/linux-x86_64/clangir || true
+        chmod +x cmd/llvm-obfuscator/plugins/linux-x86_64/lld || true
 
-        echo "✅ Binaries downloaded successfully"
-        ls -lh cmd/llvm-obfuscator/plugins/linux-x86_64/
-
-        # Download macOS SDK for cross-compilation
-        echo "Downloading macOS SDK from GCP..."
-        mkdir -p cmd/llvm-obfuscator/plugins/macos-sdk
-        gsutil cp "gs://${GCP_BUCKET}/macos-sdk-15.4-minimal.tar.gz" /tmp/macos-sdk.tar.gz
-        tar -xzf /tmp/macos-sdk.tar.gz -C /tmp/
-        mv /tmp/macos-sdk/MacOSX15.4.sdk cmd/llvm-obfuscator/plugins/macos-sdk/
-        rm -rf /tmp/macos-sdk /tmp/macos-sdk.tar.gz
-        echo "✅ macOS SDK downloaded successfully"
-        ls -la cmd/llvm-obfuscator/plugins/macos-sdk/
-
-        # Download llvm-mingw for Windows ARM64 cross-compilation
-        echo "Downloading llvm-mingw from GCP..."
-        mkdir -p cmd/llvm-obfuscator/plugins/llvm-mingw
-        gsutil cp "gs://${GCP_BUCKET}/llvm-mingw-20251202-ucrt-ubuntu-22.04-x86_64.tar.xz" /tmp/llvm-mingw.tar.xz
-        tar -xf /tmp/llvm-mingw.tar.xz -C /tmp/
-        # Extract contents directly into plugins/llvm-mingw (not nested)
-        mv /tmp/llvm-mingw-20251202-ucrt-ubuntu-22.04-x86_64/* cmd/llvm-obfuscator/plugins/llvm-mingw/
-        rm -rf /tmp/llvm-mingw-20251202-ucrt-ubuntu-22.04-x86_64 /tmp/llvm-mingw.tar.xz
-        echo "✅ llvm-mingw downloaded successfully"
-        ls -la cmd/llvm-obfuscator/plugins/llvm-mingw/
+        echo "✅ Binaries ready"
+        ls -lh cmd/llvm-obfuscator/plugins/linux-x86_64/ | head -15
+        ls -la cmd/llvm-obfuscator/plugins/macos-sdk/ 2>/dev/null || echo "No macOS SDK"
+        ls -la cmd/llvm-obfuscator/plugins/llvm-mingw/ 2>/dev/null | head -5 || echo "No llvm-mingw"
 
     - name: Upload LLVM binaries as artifact
       if: steps.download-artifact.outcome != 'success' && steps.download-binaries.outcome == 'success'

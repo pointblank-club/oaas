@@ -900,19 +900,20 @@ class LLVMObfuscator:
             # ============================================================
 
             # Remove 'nocreateundeforpoison' attribute (LLVM 22+ feature)
-            ir_content = re.sub(r'\bnocreateundeforpoison\b\s*', '', ir_content)
+            # Use [ \t]* instead of \s* to avoid eating newlines (which breaks declare statements)
+            ir_content = re.sub(r'\bnocreateundeforpoison\b[ \t]*', '', ir_content)
 
             # Remove 'memory(...)' attribute syntax (LLVM 16+ feature)
             # This includes: memory(none), memory(read), memory(write),
             # memory(argmem: read), memory(argmem: write), memory(argmem: readwrite),
             # memory(inaccessiblemem: write), etc.
-            ir_content = re.sub(r'\bmemory\([^)]*\)\s*', '', ir_content)
+            ir_content = re.sub(r'\bmemory\([^)]*\)[ \t]*', '', ir_content)
 
             # Remove 'speculatable' attribute that often accompanies math intrinsics
-            ir_content = re.sub(r'\bspeculatable\b\s*', '', ir_content)
+            ir_content = re.sub(r'\bspeculatable\b[ \t]*', '', ir_content)
 
             # Remove 'convergent' attribute (for math intrinsics)
-            ir_content = re.sub(r'\bconvergent\b\s*', '', ir_content)
+            ir_content = re.sub(r'\bconvergent\b[ \t]*', '', ir_content)
 
             # Clean up multiple spaces left by removed attributes
             ir_content = re.sub(r'  +', ' ', ir_content)

@@ -27,17 +27,19 @@ WORKDIR /app
 # Install curl for healthchecks
 RUN apk add --no-cache curl
 
-# Copy built files and package.json
+# Copy built files, package.json, package-lock.json, and vite.config.ts
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/package.json ./package.json
-# Install only vite (needed for preview) - much smaller than full node_modules
-RUN npm ci --no-audit --no-fund --prefer-offline --only=production && \
+COPY --from=builder /app/package-lock.json ./package-lock.json
+COPY --from=builder /app/vite.config.ts ./vite.config.ts
+# Install only production dependencies + vite (needed for preview)
+RUN npm ci --omit=dev --no-audit --no-fund --prefer-offline && \
     npm install vite --no-save --no-audit --no-fund
 
 # Expose port
 EXPOSE 4666
 
 # Serve the built app
-CMD ["npx", "vite", "preview", "--host", "0.0.0.0", "--port", "4666"]
+CMD ["npm", "run", "preview"]
 
 

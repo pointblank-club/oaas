@@ -110,23 +110,6 @@ std::unique_ptr<Pass> createCryptoHashPass(
     unsigned hashLength = 12
 );
 
-// =================== POLYGEIST-AWARE CONTROL FLOW PASS =====================
-// New pass: Operates on SCF dialect from Polygeist for better obfuscation
-struct SCFObfuscatePass
-    : public PassWrapper<SCFObfuscatePass, OperationPass<ModuleOp>> {
-
-  SCFObfuscatePass() = default;
-
-  StringRef getArgument() const override { return "scf-obfuscate"; }
-  StringRef getDescription() const override {
-    return "Obfuscate structured control flow (Polygeist SCF dialect)";
-  }
-
-  void runOnOperation() override;
-};
-
-std::unique_ptr<Pass> createSCFObfuscatePass();
-
 
 // ======================== SCF OBFUSCATION PASS ==============================
 // Operates on SCF dialect operations (loops, conditionals)
@@ -145,6 +128,33 @@ struct SCFObfuscatePass
 };
 
 std::unique_ptr<Pass> createSCFObfuscatePass();
+
+
+// ====================== IMPORT OBFUSCATION PASS =============================
+// Transforms direct calls to external functions into dlopen/dlsym lookups
+// This hides the import table entries from static analysis
+struct ImportObfuscationPass
+    : public PassWrapper<ImportObfuscationPass, OperationPass<ModuleOp>> {
+
+  ImportObfuscationPass() = default;
+  ImportObfuscationPass(bool encryptStrings, const std::string &key)
+      : encryptStrings(encryptStrings), key(key) {}
+
+  StringRef getArgument() const override { return "import-obfuscate"; }
+  StringRef getDescription() const override {
+    return "Hide import table by replacing external calls with dlsym lookups";
+  }
+
+  void runOnOperation() override;
+
+  bool encryptStrings = true;
+  std::string key = "default_key";
+};
+
+std::unique_ptr<Pass> createImportObfuscationPass(
+    bool encryptStrings = true,
+    llvm::StringRef key = "default_key"
+);
 
 
 } // namespace obs

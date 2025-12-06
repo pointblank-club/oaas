@@ -22,6 +22,14 @@ inline void registerPasses() {
   });
 }
 
+void registerStringEncryptPass() {
+  PassRegistration<StringEncryptPass>();
+}
+
+void registerSymbolObfuscatePass() {
+  PassRegistration<SymbolObfuscatePass>();
+}
+
 void registerCryptoHashPass() {
   PassRegistration<CryptoHashPass>();
 }
@@ -32,6 +40,10 @@ void registerConstantObfuscationPass() {
 
 void registerSCFObfuscatePass() {
   PassRegistration<SCFObfuscatePass>();
+}
+
+void registerImportObfuscationPass() {
+  PassRegistration<ImportObfuscationPass>();
 }
 
 } // namespace obs
@@ -47,5 +59,6 @@ mlirGetPassPluginInfo() {
             mlir::obs::registerCryptoHashPass();
             mlir::obs::registerConstantObfuscationPass();
             mlir::obs::registerSCFObfuscatePass();
+            mlir::obs::registerImportObfuscationPass();
           }};
 }

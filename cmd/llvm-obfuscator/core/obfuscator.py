@@ -149,6 +149,9 @@ class LLVMObfuscator:
                 Path("/app/mlir-obs/build/lib") / f"libMLIRObfuscation.{ext}",
                 Path("/usr/local/lib") / f"MLIRObfuscation.{ext}",
                 Path("/usr/local/lib") / f"libMLIRObfuscation.{ext}",
+                # Docker container paths (production deployment)
+                Path("/usr/local/llvm-obfuscator/lib") / f"MLIRObfuscation.{ext}",
+                Path("/usr/local/llvm-obfuscator/lib") / f"libMLIRObfuscation.{ext}",
             ]
 
             for path in search_paths:
@@ -877,7 +880,7 @@ class LLVMObfuscator:
             with open(str(llvm_ir_raw), 'r') as f:
                 ir_content = f.read()
 
-            import re
+            
             # Fix target triple and datalayout
             # Use re.DOTALL to handle multi-line target triple values (MLIR sometimes outputs newlines inside quotes)
             ir_content = re.sub(r'target triple = "[^"]*"', f'target triple = "{target_triple}"', ir_content, flags=re.DOTALL)
@@ -897,19 +900,20 @@ class LLVMObfuscator:
             # ============================================================
 
             # Remove 'nocreateundeforpoison' attribute (LLVM 22+ feature)
-            ir_content = re.sub(r'\bnocreateundeforpoison\b\s*', '', ir_content)
+            # Use [ \t]* instead of \s* to avoid eating newlines (which breaks declare statements)
+            ir_content = re.sub(r'\bnocreateundeforpoison\b[ \t]*', '', ir_content)
 
             # Remove 'memory(...)' attribute syntax (LLVM 16+ feature)
             # This includes: memory(none), memory(read), memory(write),
             # memory(argmem: read), memory(argmem: write), memory(argmem: readwrite),
             # memory(inaccessiblemem: write), etc.
-            ir_content = re.sub(r'\bmemory\([^)]*\)\s*', '', ir_content)
+            ir_content = re.sub(r'\bmemory\([^)]*\)[ \t]*', '', ir_content)
 
             # Remove 'speculatable' attribute that often accompanies math intrinsics
-            ir_content = re.sub(r'\bspeculatable\b\s*', '', ir_content)
+            ir_content = re.sub(r'\bspeculatable\b[ \t]*', '', ir_content)
 
             # Remove 'convergent' attribute (for math intrinsics)
-            ir_content = re.sub(r'\bconvergent\b\s*', '', ir_content)
+            ir_content = re.sub(r'\bconvergent\b[ \t]*', '', ir_content)
 
             # Clean up multiple spaces left by removed attributes
             ir_content = re.sub(r'  +', ' ', ir_content)
@@ -927,7 +931,6 @@ class LLVMObfuscator:
                     # Extract string and symbol metrics from obfuscated MLIR
                     mlir_content = obfuscated_mlir.read_text(errors='ignore')
 
-                    import re
                     # Count globals in MLIR - more flexible pattern matching
                     # Can be: llvm.global, llvm.mlir.global, or just @name declarations
                     global_pattern = r'(@[\w\._]+)\s*='
@@ -1238,7 +1241,6 @@ class LLVMObfuscator:
         run_command(translate_cmd, cwd=source_abs.parent)
 
         # Fix target triple and data layout
-        import re
         # Get target triple for cross-compilation
         target_triple = self._get_target_triple(config.platform, config.architecture)
         # Data layout depends on the target
@@ -1466,7 +1468,6 @@ class LLVMObfuscator:
             ir_content = ir_file.read_text(errors='ignore')
             # Count string constants in LLVM IR: @.str = private constant [X x i8] c"..."
             # Pattern: c"..." string literals
-            import re
             string_pattern = r'c"([^"]*)"'
             strings = re.findall(string_pattern, ir_content)
             # Filter out empty/trivial strings
@@ -1491,7 +1492,6 @@ class LLVMObfuscator:
                 return {'global_symbols': 0, 'obfuscated_symbols': 0, 'functions': 0}
 
             ir_content = ir_file.read_text(errors='ignore')
-            import re
 
             # Count global symbols: @name = ... or @name( for functions
             # Pattern: @ followed by valid identifier characters

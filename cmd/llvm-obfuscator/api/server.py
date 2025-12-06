@@ -228,6 +228,15 @@ class ObfuscateRequest(BaseModel):
     build_command: Optional[str] = None  # Custom build command (for "custom" mode)
     output_binary_path: Optional[str] = None  # Hint for where to find output binary
     cmake_options: Optional[str] = None  # Extra cmake flags like "-DBUILD_TESTING=OFF"
+    # Phoronix benchmarking options
+    run_benchmarks: bool = Field(
+        default=False,
+        description="Enable Phoronix benchmarking after obfuscation"
+    )
+    benchmark_timeout_seconds: int = Field(
+        default=3600,
+        description="Maximum time to wait for benchmarking (seconds)"
+    )
 
 
 class GitHubCloneRequest(BaseModel):
@@ -784,11 +793,44 @@ def _run_custom_build(
         return False, f"Build error: {str(e)}"
 
 
-def _run_obfuscation(job_id: str, source_path: Path, config: ObfuscationConfig) -> None:
+def _run_obfuscation(job_id: str, source_path: Path, config: ObfuscationConfig,
+                     run_benchmarks: bool = False, benchmark_timeout: int = 3600) -> None:
     try:
         job_manager.update_job(job_id, status="running")
         progress_tracker.publish_sync(ProgressEvent(job_id=job_id, stage="running", progress=0.1, message="Compilation started"))
         result = obfuscator.obfuscate(source_path, config, job_id=job_id)
+
+        # Optional: Run Phoronix benchmarking
+        if run_benchmarks:
+            progress_tracker.publish_sync(ProgressEvent(job_id=job_id, stage="running", progress=0.7, message="Running Phoronix benchmarking..."))
+            try:
+                from core.phoronix_integration import PhoronixBenchmarkRunner
+
+                baseline_binary = result.get("baseline_binary")
+                obfuscated_binary = result.get("obfuscated_binary")
+
+                if baseline_binary and obfuscated_binary:
+                    runner = PhoronixBenchmarkRunner()
+                    phoronix_results = runner.run_benchmark(
+                        Path(baseline_binary),
+                        Path(obfuscated_binary),
+                        timeout=benchmark_timeout
+                    )
+
+                    key_metrics = runner.extract_key_metrics(phoronix_results)
+                    result['phoronix'] = {
+                        'results': phoronix_results,
+                        'key_metrics': key_metrics
+                    }
+
+                    logger.info(f"✅ Benchmarking completed: score={key_metrics.get('obfuscation_score')}")
+            except Exception as e:
+                logger.error(f"Benchmarking failed: {e}")
+                result['phoronix'] = {
+                    'results': None,
+                    'error': str(e)
+                }
+
         job_manager.update_job(job_id, status="completed", result=result)
         report_paths = result.get("report_paths", {})
         logger.info("[PDF DEBUG] Attaching reports at line 772 - report_paths keys: %s", list(report_paths.keys()))
@@ -938,8 +980,26 @@ async def api_obfuscate_sync(
 
                 # Initialize IR analyzer for advanced metrics
                 opt_path = "/usr/local/llvm-obfuscator/bin/opt"
-                llvm_dis_path = "/usr/local/llvm-obfuscator/bin/llvm-dis"
-                ir_analyzer = IRAnalyzer(Path(opt_path), Path(llvm_dis_path))
+
+                # Try to find llvm-dis in multiple locations
+                llvm_dis_candidates = [
+                    Path("/usr/local/llvm-obfuscator/bin/llvm-dis"),  # Primary: container
+                    Path("/usr/bin/llvm-dis"),  # Fallback 1: system
+                    Path("/usr/local/bin/llvm-dis"),  # Fallback 2: common location
+                ]
+                llvm_dis_path = None
+                for candidate in llvm_dis_candidates:
+                    if candidate.exists():
+                        llvm_dis_path = candidate
+                        logger.info(f"Found llvm-dis at: {llvm_dis_path}")
+                        break
+
+                if not llvm_dis_path:
+                    logger.warning("llvm-dis binary not found in any expected location - instruction metrics will be unavailable")
+                    # Use primary path anyway, will fail gracefully in IR analyzer
+                    llvm_dis_path = Path("/usr/local/llvm-obfuscator/bin/llvm-dis")
+
+                ir_analyzer = IRAnalyzer(Path(opt_path), llvm_dis_path)
                 baseline_ir_metrics = {}
                 obf_ir_metrics = {}
 
@@ -981,6 +1041,14 @@ async def api_obfuscate_sync(
                             if baseline_cf:
                                 baseline_ir_metrics.update(baseline_cf)
                             if baseline_instr:
+                                # Check if metrics are unavailable
+                                if baseline_instr.get('_metadata'):
+                                    metadata = baseline_instr.get('_metadata', {})
+                                    if metadata.get('status') == 'unavailable':
+                                        logger.warning(f"[IR Analysis] Baseline instruction metrics unavailable: {metadata.get('reason')}")
+                                    elif metadata.get('status') == 'error':
+                                        logger.error(f"[IR Analysis] Baseline instruction metrics error: {metadata.get('reason')}")
+                                # Still update metrics even if unavailable (will have zeros)
                                 baseline_ir_metrics.update(baseline_instr)
                             logger.info(f"[IR Analysis] Baseline metrics collected: {list(baseline_ir_metrics.keys())}")
                         except Exception as e:
@@ -1023,6 +1091,14 @@ async def api_obfuscate_sync(
                             if obf_cf:
                                 obf_ir_metrics.update(obf_cf)
                             if obf_instr:
+                                # Check if metrics are unavailable
+                                if obf_instr.get('_metadata'):
+                                    metadata = obf_instr.get('_metadata', {})
+                                    if metadata.get('status') == 'unavailable':
+                                        logger.warning(f"[IR Analysis] Instruction metrics unavailable: {metadata.get('reason')}")
+                                    elif metadata.get('status') == 'error':
+                                        logger.error(f"[IR Analysis] Instruction metrics error: {metadata.get('reason')}")
+                                # Still update metrics even if unavailable (will have zeros)
                                 obf_ir_metrics.update(obf_instr)
                             logger.info(f"[IR Analysis] Obfuscated metrics collected: {list(obf_ir_metrics.keys())}")
                         except Exception as e:
@@ -1683,6 +1759,107 @@ async def api_obfuscate_sync(
         logger.info("[PLATFORM DEBUG] platform_binaries.get('windows'): %s", platform_binaries.get("windows"))
         logger.info("[PLATFORM DEBUG] platform_binaries.get('macos'): %s", platform_binaries.get("macos"))
 
+        # Optional: Run Phoronix benchmarking (same as async endpoint)
+        logger.info(f"[PHORONIX DEBUG] run_benchmarks flag: {payload.run_benchmarks}")
+        logger.info(f"[PHORONIX DEBUG] result keys: {list(result.keys())}")
+
+        if payload.run_benchmarks:
+            logger.info("[PHORONIX] Starting benchmarking...")
+            try:
+                from core.phoronix_integration import PhoronixBenchmarkRunner
+
+                baseline_binary = result.get("baseline_binary")
+                obfuscated_binary = result.get("obfuscated_binary")
+
+                logger.info(f"[PHORONIX] Baseline binary: {baseline_binary}")
+                logger.info(f"[PHORONIX] Obfuscated binary: {obfuscated_binary}")
+
+                if baseline_binary and obfuscated_binary:
+                    baseline_path = Path(baseline_binary)
+                    obfuscated_path = Path(obfuscated_binary)
+
+                    if baseline_path.exists() and obfuscated_path.exists():
+                        runner = PhoronixBenchmarkRunner()
+                        phoronix_results = runner.run_benchmark(
+                            baseline_path,
+                            obfuscated_path,
+                            timeout=payload.benchmark_timeout_seconds
+                        )
+
+                        key_metrics = runner.extract_key_metrics(phoronix_results)
+                        result['phoronix'] = {
+                            'results': phoronix_results,
+                            'key_metrics': key_metrics
+                        }
+
+                        logger.info(f"✅ Benchmarking completed: available={key_metrics.get('available')}, instruction_delta={key_metrics.get('instruction_count_delta')}, overhead={key_metrics.get('performance_overhead_percent')}%")
+                        job_manager.update_job(job.job_id, result=result)
+                    else:
+                        logger.warning(f"Binary paths don't exist - baseline: {baseline_path.exists()}, obfuscated: {obfuscated_path.exists()}")
+                        result['phoronix'] = {
+                            'results': None,
+                            'error': 'Binary files not found'
+                        }
+                else:
+                    logger.warning("Missing baseline or obfuscated binary paths in result")
+                    result['phoronix'] = {
+                        'results': None,
+                        'error': 'Binaries not found'
+                    }
+            except Exception as e:
+                logger.error(f"Benchmarking failed: {e}")
+                result['phoronix'] = {
+                    'results': None,
+                    'error': str(e)
+                }
+
+        # IMPORTANT: Regenerate reports after adding phoronix data
+        # The original reports were generated BEFORE phoronix benchmarking
+        logger.info(f"[PHORONIX DEBUG] Checking if reports need regen: run_benchmarks={payload.run_benchmarks}, has_phoronix={bool(result.get('phoronix'))}")
+
+        if payload.run_benchmarks and result.get('phoronix'):
+            logger.info("[PHORONIX] Regenerating reports with Phoronix metrics...")
+            try:
+                # Get the JSON report that was generated
+                report_paths = result.get("report_paths", {})
+                json_report_path = report_paths.get("json")
+
+                logger.info(f"[PHORONIX] report_paths keys: {list(report_paths.keys())}")
+                logger.info(f"[PHORONIX] json_report_path: {json_report_path}")
+
+                if json_report_path and Path(json_report_path).exists():
+                    # Read the existing JSON report
+                    with open(json_report_path, 'r') as f:
+                        report_data = json.load(f)
+
+                    logger.info(f"[PHORONIX] Report loaded, keys before: {list(report_data.keys())}")
+
+                    # Add phoronix data to the report
+                    # IMPORTANT: Only include key_metrics, not full results (which may have non-serializable objects)
+                    phoronix_full_data = result.get('phoronix')
+                    if phoronix_full_data:
+                        report_data['phoronix'] = {
+                            'key_metrics': phoronix_full_data.get('key_metrics', {})
+                        }
+                        logger.info(f"[PHORONIX] Added phoronix key_metrics to report")
+                    else:
+                        logger.info(f"[PHORONIX] No phoronix data in result")
+
+                    # Regenerate all report formats with updated data
+                    report_formats = payload.report_formats or ["json", "markdown", "pdf"]
+                    logger.info(f"[PHORONIX] Exporting formats: {report_formats}")
+                    exported = reporter.export(report_data, job.job_id, report_formats)
+                    report_paths_dict = {fmt: str(path) for fmt, path in exported.items()}
+
+                    logger.info(f"[PHORONIX] Reports regenerated: {list(report_paths_dict.keys())}")
+
+                    # Update result with new report paths
+                    result["report_paths"] = report_paths_dict
+                else:
+                    logger.warning(f"[PHORONIX] Could not regenerate - json_report_path exists: {json_report_path is not None}, path exists: {Path(json_report_path).exists() if json_report_path else False}")
+            except Exception as e:
+                logger.error(f"[PHORONIX] Failed to regenerate reports: {e}", exc_info=True)
+
         download_urls_response = {
             "linux": f"/api/download/{job.job_id}/linux" if platform_binaries.get("linux") else None,
             "windows": f"/api/download/{job.job_id}/windows" if platform_binaries.get("windows") else None,
@@ -1748,7 +1925,8 @@ async def api_obfuscate(
     source_path = (working_dir / source_filename).resolve()
     _decode_source(payload.source_code, source_path)
     config = _build_config_from_request(payload, working_dir)
-    background.add_task(_run_obfuscation, job.job_id, source_path, config)
+    background.add_task(_run_obfuscation, job.job_id, source_path, config,
+                        payload.run_benchmarks, payload.benchmark_timeout_seconds)
     return {"job_id": job.job_id, "status": job.status}
 
 
@@ -1886,6 +2064,40 @@ async def websocket_progress(websocket: WebSocket, job_id: str):
         logger.info("WebSocket disconnected for job %s", job_id)
 
 
+@app.get("/api/download/{job_id}/baseline")
+async def api_download_baseline(job_id: str):
+    """Download the baseline (original, non-obfuscated) binary."""
+    try:
+        job = job_manager.get_job(job_id)
+    except JobNotFoundError:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    result = job.metadata.get("result")
+    if not result:
+        raise HTTPException(status_code=400, detail="Job not completed")
+
+    # Find baseline binary in the working directory
+    working_dir = report_base / job_id
+    if not working_dir.exists():
+        raise HTTPException(status_code=404, detail="Job directory not found")
+
+    # Look for baseline binary (typically named {source}_baseline or {source}_baseline.exe)
+    baseline_files = list(working_dir.glob("*_baseline*"))
+    if not baseline_files:
+        raise HTTPException(status_code=404, detail="Baseline binary not found")
+
+    # Use the first baseline file found
+    baseline_path = baseline_files[0]
+    if not baseline_path.exists():
+        raise HTTPException(status_code=404, detail="Baseline binary file not found")
+
+    return FileResponse(
+        baseline_path,
+        media_type="application/octet-stream",
+        filename=baseline_path.name
+    )
+
+
 @app.get("/api/download/{job_id}/{platform}")
 async def api_download_binary_platform(job_id: str, platform: str):
     """Download the obfuscated binary for a specific platform."""
@@ -1954,40 +2166,6 @@ async def api_download_binary(job_id: str):
         binary_path,
         media_type="application/octet-stream",
         filename=binary_path.name
-    )
-
-
-@app.get("/api/download/{job_id}/baseline")
-async def api_download_baseline(job_id: str):
-    """Download the baseline (original, non-obfuscated) binary."""
-    try:
-        job = job_manager.get_job(job_id)
-    except JobNotFoundError:
-        raise HTTPException(status_code=404, detail="Job not found")
-
-    result = job.metadata.get("result")
-    if not result:
-        raise HTTPException(status_code=400, detail="Job not completed")
-
-    # Find baseline binary in the working directory
-    working_dir = report_base / job_id
-    if not working_dir.exists():
-        raise HTTPException(status_code=404, detail="Job directory not found")
-    
-    # Look for baseline binary (typically named {source}_baseline or {source}_baseline.exe)
-    baseline_files = list(working_dir.glob("*_baseline*"))
-    if not baseline_files:
-        raise HTTPException(status_code=404, detail="Baseline binary not found")
-    
-    # Use the first baseline file found
-    baseline_path = baseline_files[0]
-    if not baseline_path.exists():
-        raise HTTPException(status_code=404, detail="Baseline binary file not found")
-
-    return FileResponse(
-        baseline_path,
-        media_type="application/octet-stream",
-        filename=baseline_path.name
     )
 
 

@@ -89,6 +89,8 @@ COPY api ./api
 COPY core ./core
 COPY cli ./cli
 COPY scripts ./scripts
+# Copy phoronix benchmarking suite (required for benchmark analysis)
+COPY phoronix ./phoronix
 # Copy root-level package files (setup.py may be needed for imports)
 COPY setup.py ./
 

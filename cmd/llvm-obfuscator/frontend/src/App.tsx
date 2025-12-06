@@ -1817,17 +1817,20 @@ function App() {
   const [dogboltLoading, setDogboltLoading] = useState(false);
   const [dogboltError, setDogboltError] = useState<string | null>(null);
   const [selectedDecompiler, setSelectedDecompiler] = useState<string | null>(null);
-  
+
   // Original binary decompilation results state
   const [originalDogboltResults, setOriginalDogboltResults] = useState<any>(null);
   const [originalDogboltLoading, setOriginalDogboltLoading] = useState(false);
   const [showOriginal, setShowOriginal] = useState(false);
-  
+
   // CFG view mode: 'code' or 'cfg'
   const [viewMode, setViewMode] = useState<'code' | 'cfg'>('code');
 
   // Preset state (changed when user modifies any layer setting)
   const [obfuscationPreset, setObfuscationPreset] = useState<'minimal' | 'balanced' | 'maximum' | 'custom'>('custom');
+
+  // Benchmarking options
+  const [runBenchmarks, setRunBenchmarks] = useState(false);
 
   // Layer states (execution order: 1→2→3→4→5)
   const [layer1, setLayer1] = useState(false); // Symbol obfuscation (PRE-COMPILE, FIRST)
@@ -2759,7 +2762,8 @@ function App() {
             pass_filter: '.*'  // Capture all optimization passes
           }
         },
-        report_formats: ['json', 'markdown'],
+        report_formats: ['json', 'markdown', 'pdf'],
+        run_benchmarks: runBenchmarks,
         custom_flags: flags.flatMap(f => f.split(' ')).map(t => t.trim()).filter(t => t.length > 0)
       };
 
@@ -3268,6 +3272,7 @@ function App() {
     upxCompression, upxLzma, upxPreserveOriginal,
     buildSystem, customBuildCommand, outputBinaryPath, cmakeOptions,
     detectLanguage, countLayers, selectedRepoFile, repoSessionId, repoFileCount, repoFiles,
+    runBenchmarks,
     showErrorModal
   ]);
 
@@ -3284,11 +3289,11 @@ function App() {
 
   const onShowRemarks = useCallback(async () => {
     if (!jobId) return;
-    
+
     setRemarksLoading(true);
     setShowRemarksModal(true);
     setRemarksContent(null);
-    
+
     try {
       const response = await fetch(`/api/remarks/${jobId}`);
       if (!response.ok) {
@@ -3300,7 +3305,7 @@ function App() {
         }
         return;
       }
-      
+
       const data = await response.json();
       setRemarksContent(data.content || 'No remarks content available.');
     } catch (error) {
@@ -4650,6 +4655,41 @@ function App() {
         {/* Submit */}
         <section className="section">
           <h2 className="section-title">[4] EXECUTE</h2>
+
+          {/* Benchmarking option */}
+          <div style={{
+            marginBottom: '16px',
+            padding: '12px',
+            background: 'rgba(63, 185, 80, 0.1)',
+            border: '1px solid rgba(63, 185, 80, 0.3)',
+            borderRadius: '8px',
+          }}>
+            <label style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              cursor: 'pointer',
+              color: 'var(--text-primary)',
+              fontSize: '14px',
+            }}>
+              <input
+                type="checkbox"
+                checked={runBenchmarks}
+                onChange={(e) => setRunBenchmarks(e.target.checked)}
+                style={{ cursor: 'pointer', width: '16px', height: '16px' }}
+              />
+              📊 Enable Phoronix Benchmarking
+            </label>
+            <div style={{
+              fontSize: '12px',
+              color: 'var(--text-secondary)',
+              marginTop: '6px',
+              marginLeft: '24px',
+            }}>
+              Measure code expansion (instruction count) and performance overhead after obfuscation
+            </div>
+          </div>
+
           <button
             className="submit-btn"
             onClick={onSubmit}
@@ -5602,21 +5642,37 @@ function App() {
         {report && (report.control_flow_metrics || report.instruction_metrics) && (
           <section className="section report-section">
             <h2 className="section-title">[7] ADVANCED METRICS DASHBOARD</h2>
-            <MetricsDashboard report={report} />
+            {(() => {
+              try {
+                return <MetricsDashboard report={report} />;
+              } catch (e) {
+                console.error('[METRICS] Failed to render MetricsDashboard:', e);
+                return <div style={{ color: 'var(--error-color)', padding: '16px' }}>Failed to render metrics: {String(e)}</div>;
+              }
+            })()}
           </section>
         )}
 
         {/* ✅ NEW: Test Suite Results Section */}
         {jobId && report && (
-          <TestResults
-            jobId={jobId}
-            onError={(error) => {
-              // Optionally show error for missing test results
-              if (error.includes('not available') || error.includes('not in report')) {
-                // Silently handle - test results may not be available for older jobs
-              }
-            }}
-          />
+          (() => {
+            try {
+              return (
+                <TestResults
+                  jobId={jobId}
+                  onError={(error) => {
+                    // Optionally show error for missing test results
+                    if (error.includes('not available') || error.includes('not in report')) {
+                      // Silently handle - test results may not be available for older jobs
+                    }
+                  }}
+                />
+              );
+            } catch (e) {
+              console.error('[TEST_RESULTS] Failed to render:', e);
+              return null;
+            }
+          })()
         )}
       </main>
 

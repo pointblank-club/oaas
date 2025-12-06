@@ -1957,6 +1957,40 @@ async def api_download_binary(job_id: str):
     )
 
 
+@app.get("/api/download/{job_id}/baseline")
+async def api_download_baseline(job_id: str):
+    """Download the baseline (original, non-obfuscated) binary."""
+    try:
+        job = job_manager.get_job(job_id)
+    except JobNotFoundError:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    result = job.metadata.get("result")
+    if not result:
+        raise HTTPException(status_code=400, detail="Job not completed")
+
+    # Find baseline binary in the working directory
+    working_dir = report_base / job_id
+    if not working_dir.exists():
+        raise HTTPException(status_code=404, detail="Job directory not found")
+    
+    # Look for baseline binary (typically named {source}_baseline or {source}_baseline.exe)
+    baseline_files = list(working_dir.glob("*_baseline*"))
+    if not baseline_files:
+        raise HTTPException(status_code=404, detail="Baseline binary not found")
+    
+    # Use the first baseline file found
+    baseline_path = baseline_files[0]
+    if not baseline_path.exists():
+        raise HTTPException(status_code=404, detail="Baseline binary file not found")
+
+    return FileResponse(
+        baseline_path,
+        media_type="application/octet-stream",
+        filename=baseline_path.name
+    )
+
+
 @app.get("/api/remarks/{job_id}")
 async def api_get_remarks(job_id: str):
     """Get LLVM remarks file for a completed obfuscation job."""

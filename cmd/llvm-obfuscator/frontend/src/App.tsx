@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect } from 'react';
 import './App.css';
-import { GitHubIntegration, FileTree, TestResults } from './components';
+import { GitHubIntegration, FileTree, TestResults, CFGVisualizer } from './components';
 import { MetricsDashboard } from './components/MetricsDashboard';
 import githubLogo from '../assets/github.png';
 import { DATABASE_ENGINE_C, GAME_ENGINE_CPP } from './largeDemos';
@@ -1817,6 +1817,14 @@ function App() {
   const [dogboltLoading, setDogboltLoading] = useState(false);
   const [dogboltError, setDogboltError] = useState<string | null>(null);
   const [selectedDecompiler, setSelectedDecompiler] = useState<string | null>(null);
+  
+  // Original binary decompilation results state
+  const [originalDogboltResults, setOriginalDogboltResults] = useState<any>(null);
+  const [originalDogboltLoading, setOriginalDogboltLoading] = useState(false);
+  const [showOriginal, setShowOriginal] = useState(false);
+  
+  // CFG view mode: 'code' or 'cfg'
+  const [viewMode, setViewMode] = useState<'code' | 'cfg'>('code');
 
   // Preset state (changed when user modifies any layer setting)
   const [obfuscationPreset, setObfuscationPreset] = useState<'minimal' | 'balanced' | 'maximum' | 'custom'>('custom');
@@ -2869,34 +2877,7 @@ function App() {
             setDogboltLoading(false);
             setDogboltError(`Binary too large (${(binaryBlob.size / 1024 / 1024).toFixed(2)} MB). Dogbolt.org limit is 2 MB.`);
           } else {
-            // Upload binary to dogbolt.org via backend proxy (avoids CORS)
-            const formData = new FormData();
-            formData.append('file', binaryBlob, binaryName || 'obfuscated.bin');
-            
-            const uploadResponse = await fetch('/api/dogbolt/upload', {
-              method: 'POST',
-              body: formData,
-            });
-            
-            if (!uploadResponse.ok) {
-              const errorData = await uploadResponse.json().catch(() => ({ detail: 'Upload failed' }));
-              throw new Error(errorData.detail || `Failed to upload binary: ${uploadResponse.status}`);
-            }
-            
-            const uploadData = await uploadResponse.json();
-            const binaryId = uploadData.id;
-            
-            // Get list of available decompilers via backend proxy
-            const decompilersResponse = await fetch('/api/dogbolt/decompilers');
-            if (!decompilersResponse.ok) {
-              throw new Error('Failed to fetch decompilers');
-            }
-            const decompilersData = await decompilersResponse.json();
-            const decompilersJson = decompilersData.decompilers || {};
-            const decompilerNames = Object.keys(decompilersJson);
-            const totalDecompilers = decompilersData.count || decompilerNames.length;
-            
-            // Helper function to fetch all pages (handle pagination)
+            // Helper functions (shared between obfuscated and original)
             const fetchArray = async (url: string): Promise<any[]> => {
               const allResults: any[] = [];
               let nextUrl: string | null = url;
@@ -2912,7 +2893,6 @@ function App() {
               return allResults;
             };
             
-            // Helper to compare versions (like decompiler-explorer)
             const compareVersions = (thisVersion: string, otherVersion: string): boolean => {
               const thisV = thisVersion.split('.').flatMap(v => v.split('-'));
               const otherV = otherVersion.split('.').flatMap(v => v.split('-'));
@@ -2930,155 +2910,298 @@ function App() {
               return thisV.length < otherV.length;
             };
             
-            const resultUrl = `/api/dogbolt/status/${binaryId}`;
-            const results: any[] = [];
-            const finishedDecompilers = new Set<string>();
-            const bestVersions: Record<string, any> = {};
-            const startTime = Date.now();
+            // Get list of available decompilers (shared)
+            const decompilersResponse = await fetch('/api/dogbolt/decompilers');
+            if (!decompilersResponse.ok) {
+              throw new Error('Failed to fetch decompilers');
+            }
+            const decompilersData = await decompilersResponse.json();
+            const decompilersJson = decompilersData.decompilers || {};
+            const totalDecompilers = decompilersData.count || Object.keys(decompilersJson).length;
             
-            // Polling function (like decompiler-explorer)
-            const pollResults = async (): Promise<void> => {
-              try {
-                const allResults = await fetchArray(resultUrl);
-                
-                // Find best version for each decompiler
-                for (const resultData of allResults) {
-                  if (!resultData.decompiler || !resultData.decompiler.name) continue;
-                  const decompilerName = resultData.decompiler.name;
+            // Function to decompile a binary
+            const decompileBinary = async (
+              binaryBlob: Blob,
+              binaryName: string,
+              isOriginal: boolean
+            ): Promise<void> => {
+              // Upload binary to dogbolt.org
+              const formData = new FormData();
+              formData.append('file', binaryBlob, binaryName);
+              
+              const uploadResponse = await fetch('/api/dogbolt/upload', {
+                method: 'POST',
+                body: formData,
+              });
+              
+              if (!uploadResponse.ok) {
+                const errorData = await uploadResponse.json().catch(() => ({ detail: 'Upload failed' }));
+                throw new Error(errorData.detail || `Failed to upload binary: ${uploadResponse.status}`);
+              }
+              
+              const uploadData = await uploadResponse.json();
+              const binaryId = uploadData.id;
+              
+              const resultUrl = `/api/dogbolt/status/${binaryId}`;
+              const results: any[] = [];
+              const finishedDecompilers = new Set<string>();
+              const bestVersions: Record<string, any> = {};
+              const startTime = Date.now();
+              
+              // Polling function
+              const pollResults = async (): Promise<void> => {
+                try {
+                  const allResults = await fetchArray(resultUrl);
                   
-                  if (!bestVersions[decompilerName]) {
-                    bestVersions[decompilerName] = resultData;
-                    continue;
+                  // Find best version for each decompiler
+                  for (const resultData of allResults) {
+                    if (!resultData.decompiler || !resultData.decompiler.name) continue;
+                    const decompilerName = resultData.decompiler.name;
+                    
+                    if (!bestVersions[decompilerName]) {
+                      bestVersions[decompilerName] = resultData;
+                      continue;
+                    }
+                    
+                    const oldVersion = bestVersions[decompilerName].decompiler.version;
+                    const newVersion = resultData.decompiler.version;
+                    
+                    if (compareVersions(oldVersion, newVersion)) {
+                      bestVersions[decompilerName] = resultData;
+                    }
                   }
                   
-                  const oldVersion = bestVersions[decompilerName].decompiler.version;
-                  const newVersion = resultData.decompiler.version;
-                  
-                  if (compareVersions(oldVersion, newVersion)) {
-                    bestVersions[decompilerName] = resultData;
-                  }
-                }
-                
-                // Process best versions
-                for (const resultData of Object.values(bestVersions)) {
-                  const decompilerName = resultData.decompiler.name;
-                  if (finishedDecompilers.has(decompilerName)) continue;
-                  
-                  const decompilerVersion = resultData.decompiler.version || 'unknown';
-                  const decompilerKey = `${decompilerName}-${decompilerVersion}`;
-                  
-                  // Check if we have a download URL
-                  if (resultData.download_url) {
-                    try {
-                      // Download via backend proxy (handles gzip decompression)
-                      const codeResponse = await fetch(`/api/dogbolt/download/${binaryId}/${resultData.id}`);
-                      if (!codeResponse.ok) {
-                        throw new Error(`Failed to download: ${codeResponse.status}`);
+                  // Process best versions
+                  for (const resultData of Object.values(bestVersions)) {
+                    const decompilerName = resultData.decompiler.name;
+                    if (finishedDecompilers.has(decompilerName)) continue;
+                    
+                    const decompilerVersion = resultData.decompiler.version || 'unknown';
+                    const decompilerKey = `${decompilerName}-${decompilerVersion}`;
+                    
+                    if (resultData.download_url) {
+                      try {
+                        const codeResponse = await fetch(`/api/dogbolt/download/${binaryId}/${resultData.id}`);
+                        if (!codeResponse.ok) {
+                          throw new Error(`Failed to download: ${codeResponse.status}`);
+                        }
+                        const codeData = await codeResponse.json();
+                        const code = codeData.code || '';
+                        
+                        results.push({
+                          decompiler_name: decompilerName,
+                          decompiler_version: decompilerVersion,
+                          decompiler_key: decompilerKey,
+                          code: code,
+                          has_code: true,
+                          language: decompilerName === 'Snowman' ? 'cpp' : 'c',
+                          analysis_time: resultData.analysis_time,
+                          created: resultData.created,
+                        });
+                        finishedDecompilers.add(decompilerName);
+                      } catch (downloadErr) {
+                        console.error(`[DOGBOLT] Failed to download from ${decompilerName}:`, downloadErr);
                       }
-                      const codeData = await codeResponse.json();
-                      const code = codeData.code || '';
-                      
+                    } else if (resultData.error) {
                       results.push({
                         decompiler_name: decompilerName,
                         decompiler_version: decompilerVersion,
                         decompiler_key: decompilerKey,
-                        code: code,
-                        has_code: true,
-                        language: decompilerName === 'Snowman' ? 'cpp' : 'c',
-                        analysis_time: resultData.analysis_time,
-                        created: resultData.created,
+                        error: resultData.error,
+                        has_code: false,
+                        language: 'c',
                       });
                       finishedDecompilers.add(decompilerName);
-                    } catch (downloadErr) {
-                      console.error(`[DOGBOLT] Failed to download from ${decompilerName}:`, downloadErr);
-                      // Continue polling, might not be ready yet
                     }
-                  } else if (resultData.error) {
-                    // Handle errors
-                    results.push({
-                      decompiler_name: decompilerName,
-                      decompiler_version: decompilerVersion,
-                      decompiler_key: decompilerKey,
-                      error: resultData.error,
-                      has_code: false,
-                      language: 'c',
-                    });
-                    finishedDecompilers.add(decompilerName);
                   }
-                  // If no download_url and no error, it's still processing
-                }
-                
-                // Update UI with current progress
-                const elapsedSecs = Math.floor((Date.now() - startTime) / 1000);
-                const pending = totalDecompilers - finishedDecompilers.size;
-                
-                if (pending > 0) {
-                  // Show progress
-                  setDogboltResults({
-                    binary_id: binaryId,
-                    decompilers: results,
-                    total_decompilers: totalDecompilers,
-                    completed: finishedDecompilers.size,
-                    failed: results.filter(r => r.error).length,
-                    pending: pending,
-                    elapsed_seconds: elapsedSecs,
-                  });
                   
-                  // Continue polling (5 second interval like decompiler-explorer)
+                  const elapsedSecs = Math.floor((Date.now() - startTime) / 1000);
+                  const pending = totalDecompilers - finishedDecompilers.size;
+                  
+                  if (pending > 0) {
+                    // Update progress
+                    const updateData = {
+                      binary_id: binaryId,
+                      decompilers: results,
+                      total_decompilers: totalDecompilers,
+                      completed: finishedDecompilers.size,
+                      failed: results.filter(r => r.error).length,
+                      pending: pending,
+                      elapsed_seconds: elapsedSecs,
+                    };
+                    
+                    if (isOriginal) {
+                      setOriginalDogboltResults(updateData);
+                    } else {
+                      setDogboltResults(updateData);
+                    }
+                    
+                    setTimeout(pollResults, 5000);
+                  } else {
+                    // All done
+                    const successful = results.filter(r => r.has_code).length;
+                    const failed = results.filter(r => r.error).length;
+                    
+                    const finalData = {
+                      binary_id: binaryId,
+                      decompilers: results,
+                      total_decompilers: totalDecompilers,
+                      completed: successful,
+                      failed: failed,
+                      pending: 0,
+                      elapsed_seconds: elapsedSecs,
+                    };
+                    
+                    if (isOriginal) {
+                      setOriginalDogboltResults(finalData);
+                      setOriginalDogboltLoading(false);
+                    } else {
+                      setDogboltResults(finalData);
+                      
+                      // Select Hex-Rays as default, otherwise first successful decompiler
+                      if (results.length > 0) {
+                        const hexRays = results.find((d: any) => d.has_code && d.decompiler_name === 'Hex-Rays');
+                        if (hexRays) {
+                          setSelectedDecompiler(hexRays.decompiler_key);
+                        } else {
+                          const firstSuccess = results.find((d: any) => d.has_code);
+                          if (firstSuccess) {
+                            setSelectedDecompiler(firstSuccess.decompiler_key);
+                          }
+                        }
+                      }
+                      
+                      setDogboltLoading(false);
+                    }
+                  }
+                } catch (pollErr) {
+                  console.error('[DOGBOLT] Polling error:', pollErr);
                   setTimeout(pollResults, 5000);
-                } else {
-                  // All done - set final results
-                  const successful = results.filter(r => r.has_code).length;
-                  const failed = results.filter(r => r.error).length;
-                  
-                  setDogboltResults({
-                    binary_id: binaryId,
-                    decompilers: results,
-                    total_decompilers: totalDecompilers,
-                    completed: successful,
-                    failed: failed,
-                    pending: 0,
-                    elapsed_seconds: elapsedSecs,
-                  });
-                  
-                  // Select first successful decompiler
-                  if (results.length > 0) {
-                    const firstSuccess = results.find((d: any) => d.has_code);
-                    if (firstSuccess) {
-                      setSelectedDecompiler(firstSuccess.decompiler_key);
-                    }
-                  }
-                  
-                  setDogboltLoading(false);
                 }
-              } catch (pollErr) {
-                console.error('[DOGBOLT] Polling error:', pollErr);
-                // Retry after delay
-                setTimeout(pollResults, 5000);
+              };
+              
+              // Set initial state
+              const initialData = {
+                binary_id: binaryId,
+                decompilers: [],
+                total_decompilers: totalDecompilers,
+                completed: 0,
+                failed: 0,
+                pending: totalDecompilers,
+                elapsed_seconds: 0,
+              };
+              
+              if (isOriginal) {
+                setOriginalDogboltResults(initialData);
+                setOriginalDogboltLoading(true);
+              } else {
+                // Compute SHA256 hash for obfuscated binary
+                const buffer = await binaryBlob.arrayBuffer();
+                const hashBuffer = await crypto.subtle.digest('SHA-256', buffer);
+                const hashArray = Array.from(new Uint8Array(hashBuffer));
+                const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+                
+                setDogboltResults({
+                  ...initialData,
+                  binary_hash: `sha256:${hashHex}`,
+                  binary_size: binaryBlob.size,
+                });
               }
+              
+              // Start polling
+              pollResults();
             };
             
-            // Compute SHA256 hash first
-            const buffer = await binaryBlob.arrayBuffer();
-            const hashBuffer = await crypto.subtle.digest('SHA-256', buffer);
-            const hashArray = Array.from(new Uint8Array(hashBuffer));
-            const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+            // Decompile both binaries in parallel
+            const obfuscatedPromise = decompileBinary(binaryBlob, binaryName || 'obfuscated.bin', false);
             
-            // Set initial state before starting polling
-            setDogboltResults({
-              binary_id: binaryId,
-              binary_hash: `sha256:${hashHex}`,
-              binary_size: binaryBlob.size,
-              decompilers: [],
-              total_decompilers: totalDecompilers,
-              completed: 0,
-              failed: 0,
-              pending: totalDecompilers,
-              elapsed_seconds: 0,
-            });
-            
-            // Start polling (async, fire-and-forget)
-            pollResults();
+            // Also decompile original binary in parallel (but don't show until button clicked)
+            // Use data.job_id directly since setJobId is async
+            const currentJobId = data.job_id || jobId;
+            if (currentJobId) {
+              // Start original binary decompilation immediately
+              (async () => {
+                try {
+                  console.log('[DOGBOLT] Starting original binary decompilation for job:', currentJobId);
+                  setOriginalDogboltLoading(true);
+                  
+                  const baselineUrl = `/api/download/${currentJobId}/baseline`;
+                  console.log('[DOGBOLT] Fetching baseline from:', baselineUrl);
+                  const binaryResponse = await fetch(baselineUrl);
+                  
+                  if (!binaryResponse.ok) {
+                    const errorText = await binaryResponse.text().catch(() => 'Unknown error');
+                    console.error('[DOGBOLT] Failed to fetch baseline binary:', binaryResponse.status, errorText);
+                    setOriginalDogboltLoading(false);
+                    // Set a result with error so UI knows it failed
+                    setOriginalDogboltResults({
+                      binary_id: null,
+                      decompilers: [],
+                      total_decompilers: 0,
+                      completed: 0,
+                      failed: 1,
+                      pending: 0,
+                      error: `Baseline binary not available (${binaryResponse.status})`
+                    });
+                    return;
+                  }
+                  
+                  const originalBlob = await binaryResponse.blob();
+                  console.log('[DOGBOLT] Baseline binary fetched, size:', originalBlob.size, 'bytes');
+                  
+                  if (originalBlob.size > 2 * 1024 * 1024) {
+                    console.error('[DOGBOLT] Baseline binary too large:', originalBlob.size);
+                    setOriginalDogboltLoading(false);
+                    setOriginalDogboltResults({
+                      binary_id: null,
+                      decompilers: [],
+                      total_decompilers: 0,
+                      completed: 0,
+                      failed: 1,
+                      pending: 0,
+                      error: 'Baseline binary too large for decompilation (>2MB)'
+                    });
+                    return;
+                  }
+                  
+                  if (originalBlob.size === 0) {
+                    console.error('[DOGBOLT] Baseline binary is empty');
+                    setOriginalDogboltLoading(false);
+                    setOriginalDogboltResults({
+                      binary_id: null,
+                      decompilers: [],
+                      total_decompilers: 0,
+                      completed: 0,
+                      failed: 1,
+                      pending: 0,
+                      error: 'Baseline binary is empty'
+                    });
+                    return;
+                  }
+                  
+                  console.log('[DOGBOLT] Starting decompilation of original binary...');
+                  await decompileBinary(originalBlob, 'baseline.bin', true);
+                } catch (err) {
+                  console.error('[DOGBOLT] Failed to decompile original binary:', err);
+                  setOriginalDogboltLoading(false);
+                  const errorMsg = err instanceof Error ? err.message : String(err);
+                  setOriginalDogboltResults({
+                    binary_id: null,
+                    decompilers: [],
+                    total_decompilers: 0,
+                    completed: 0,
+                    failed: 1,
+                    pending: 0,
+                    error: errorMsg
+                  });
+                }
+              })();
+              
+              // Don't wait for original, just start it
+              await obfuscatedPromise;
+            } else {
+              await obfuscatedPromise;
+            }
           }
         } catch (decompileErr) {
           console.error('[DOGBOLT] Failed to decompile binary:', decompileErr);
@@ -5088,7 +5211,20 @@ function App() {
         {/* ✅ NEW: Dogbolt Results Section - Shows after obfuscation completes */}
         {jobId && downloadUrls && (downloadUrls.linux || downloadUrls.windows || downloadUrls.macos) && (
           <section className="section report-section">
-            <h2 className="section-title">[6] DOGBOLT DECOMPILATION RESULTS</h2>
+            <h2 className="section-title" style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              [6] DOGBOLT DECOMPILATION RESULTS
+              {dogboltLoading && (
+                <div style={{
+                  width: '16px',
+                  height: '16px',
+                  border: '2px solid var(--border-color)',
+                  borderTop: '2px solid var(--accent)',
+                  borderRadius: '50%',
+                  animation: 'spin 1s linear infinite',
+                  flexShrink: 0
+                }} />
+              )}
+            </h2>
             
             {dogboltLoading && !dogboltResults && !dogboltError && (
               <div style={{ padding: '20px', textAlign: 'center', color: 'var(--text-secondary)' }}>
@@ -5136,12 +5272,33 @@ function App() {
                       {dogboltResults.completed} successful, {dogboltResults.failed} failed, {dogboltResults.pending} pending
                     </div>
                   </div>
-                  <div style={{ fontSize: '0.85em', color: 'var(--text-secondary)' }}>
-                    Binary ID: {dogboltResults.binary_id?.substring(0, 8)}...
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.85em', color: 'var(--text-secondary)' }}>
+                    <span>Binary ID: {dogboltResults.binary_id?.substring(0, 8)}...</span>
+                    <button
+                      onClick={() => {
+                        // Just toggle visibility - results are already loaded in parallel
+                        setShowOriginal(!showOriginal);
+                      }}
+                      disabled={!originalDogboltResults && originalDogboltLoading}
+                      style={{
+                        padding: '6px 12px',
+                        backgroundColor: showOriginal ? 'var(--accent)' : 'var(--bg-tertiary)',
+                        color: 'var(--text-primary)',
+                        border: '1px solid var(--border)',
+                        borderRadius: '4px',
+                        cursor: (!originalDogboltResults && originalDogboltLoading) ? 'wait' : 'pointer',
+                        fontSize: '0.9em',
+                        transition: 'all 0.2s ease',
+                        opacity: (!originalDogboltResults && originalDogboltLoading) ? 0.6 : 1
+                      }}
+                    >
+                      {showOriginal ? 'Hide Original' : 'Show Original'}
+                      {!originalDogboltResults && originalDogboltLoading && ' (Loading...)'}
+                    </button>
                   </div>
                 </div>
 
-                <div style={{ display: 'grid', gridTemplateColumns: '250px 1fr', gap: '15px' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: showOriginal ? '250px 1fr 1fr' : '250px 1fr', gap: '15px' }}>
                   {/* Decompiler List */}
                   <div style={{
                     backgroundColor: 'var(--bg-secondary)',
@@ -5197,7 +5354,7 @@ function App() {
                       if (selected.error) {
                         return (
                           <div>
-                            <h4 style={{ marginTop: 0 }}>{selected.decompiler_name} v{selected.decompiler_version}</h4>
+                            <h4 style={{ marginTop: 0 }}>Obfuscated Binary - {selected.decompiler_name} v{selected.decompiler_version}</h4>
                             <div style={{ padding: '15px', backgroundColor: 'var(--bg-tertiary)', borderRadius: '4px', color: 'var(--danger)' }}>
                               <strong>Error:</strong> {selected.error}
                             </div>
@@ -5208,23 +5365,78 @@ function App() {
                         return (
                           <div>
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
-                              <h4 style={{ margin: 0 }}>{selected.decompiler_name} v{selected.decompiler_version}</h4>
+                              <h4 style={{ margin: 0 }}>Obfuscated Binary - {selected.decompiler_name} v{selected.decompiler_version}</h4>
                               <span style={{ fontSize: '0.8em', color: 'var(--text-secondary)' }}>
                                 {selected.language.toUpperCase()}
                               </span>
                             </div>
-                            <pre style={{
-                              backgroundColor: 'var(--bg-tertiary)',
-                              padding: '15px',
-                              borderRadius: '4px',
-                              overflow: 'auto',
-                              fontSize: '0.85em',
-                              margin: 0,
-                              whiteSpace: 'pre-wrap',
-                              wordBreak: 'break-word'
+                            
+                            {/* Tabs for Code/CFG view */}
+                            <div style={{ 
+                              display: 'flex', 
+                              gap: '8px', 
+                              marginBottom: '10px',
+                              borderBottom: '1px solid var(--border-color)'
                             }}>
-                              {selected.code}
-                            </pre>
+                              <button
+                                onClick={() => setViewMode('code')}
+                                style={{
+                                  padding: '8px 16px',
+                                  background: viewMode === 'code' ? 'var(--accent)' : 'transparent',
+                                  color: viewMode === 'code' ? 'var(--bg-primary)' : 'var(--text-primary)',
+                                  border: 'none',
+                                  borderBottom: viewMode === 'code' ? '2px solid var(--accent)' : '2px solid transparent',
+                                  cursor: 'pointer',
+                                  fontSize: '0.9em',
+                                  fontWeight: viewMode === 'code' ? 'bold' : 'normal',
+                                  transition: 'all 0.2s ease'
+                                }}
+                              >
+                                Code
+                              </button>
+                              <button
+                                onClick={() => setViewMode('cfg')}
+                                style={{
+                                  padding: '8px 16px',
+                                  background: viewMode === 'cfg' ? 'var(--accent)' : 'transparent',
+                                  color: viewMode === 'cfg' ? 'var(--bg-primary)' : 'var(--text-primary)',
+                                  border: 'none',
+                                  borderBottom: viewMode === 'cfg' ? '2px solid var(--accent)' : '2px solid transparent',
+                                  cursor: 'pointer',
+                                  fontSize: '0.9em',
+                                  fontWeight: viewMode === 'cfg' ? 'bold' : 'normal',
+                                  transition: 'all 0.2s ease'
+                                }}
+                              >
+                                CFG
+                              </button>
+                            </div>
+                            
+                            {/* Content based on view mode */}
+                            {viewMode === 'code' ? (
+                              <pre style={{
+                                backgroundColor: 'var(--bg-tertiary)',
+                                padding: '15px',
+                                borderRadius: '4px',
+                                overflow: 'auto',
+                                fontSize: '0.85em',
+                                margin: 0,
+                                whiteSpace: 'pre-wrap',
+                                wordBreak: 'break-word',
+                                maxHeight: '500px'
+                              }}>
+                                {selected.code}
+                              </pre>
+                            ) : (
+                              <div style={{
+                                backgroundColor: 'var(--bg-tertiary)',
+                                borderRadius: '4px',
+                                overflow: 'hidden',
+                                height: '500px'
+                              }}>
+                                <CFGVisualizer code={selected.code} decompilerName={selected.decompiler_name} />
+                              </div>
+                            )}
                           </div>
                         );
                       }
@@ -5235,6 +5447,151 @@ function App() {
                       </div>
                     )}
                   </div>
+
+                  {/* Decompiled Code Display - Original (shown when showOriginal is true) */}
+                  {showOriginal && (
+                    <div style={{
+                      backgroundColor: 'var(--bg-secondary)',
+                      borderRadius: '8px',
+                      padding: '15px',
+                      maxHeight: '600px',
+                      overflow: 'auto'
+                    }}>
+                      {originalDogboltResults && selectedDecompiler ? (() => {
+                        const selected = originalDogboltResults.decompilers.find((d: any) => d.decompiler_key === selectedDecompiler);
+                        if (!selected) return (
+                          <div style={{ textAlign: 'center', color: 'var(--text-secondary)', padding: '40px' }}>
+                            <p>Original binary decompilation not available for this decompiler</p>
+                          </div>
+                        );
+                        if (selected.error) {
+                          return (
+                            <div>
+                              <h4 style={{ marginTop: 0 }}>Original Binary - {selected.decompiler_name} v{selected.decompiler_version}</h4>
+                              <div style={{ padding: '15px', backgroundColor: 'var(--bg-tertiary)', borderRadius: '4px', color: 'var(--danger)' }}>
+                                <strong>Error:</strong> {selected.error}
+                              </div>
+                            </div>
+                          );
+                        }
+                        if (selected.code) {
+                          return (
+                            <div>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                                <h4 style={{ margin: 0 }}>Original Binary - {selected.decompiler_name} v{selected.decompiler_version}</h4>
+                                <span style={{ fontSize: '0.8em', color: 'var(--text-secondary)' }}>
+                                  {selected.language.toUpperCase()}
+                                </span>
+                              </div>
+                              
+                              {/* Tabs for Code/CFG view */}
+                              <div style={{ 
+                                display: 'flex', 
+                                gap: '8px', 
+                                marginBottom: '10px',
+                                borderBottom: '1px solid var(--border-color)'
+                              }}>
+                                <button
+                                  onClick={() => setViewMode('code')}
+                                  style={{
+                                    padding: '8px 16px',
+                                    background: viewMode === 'code' ? 'var(--accent)' : 'transparent',
+                                    color: viewMode === 'code' ? 'var(--bg-primary)' : 'var(--text-primary)',
+                                    border: 'none',
+                                    borderBottom: viewMode === 'code' ? '2px solid var(--accent)' : '2px solid transparent',
+                                    cursor: 'pointer',
+                                    fontSize: '0.9em',
+                                    fontWeight: viewMode === 'code' ? 'bold' : 'normal',
+                                    transition: 'all 0.2s ease'
+                                  }}
+                                >
+                                  Code
+                                </button>
+                                <button
+                                  onClick={() => setViewMode('cfg')}
+                                  style={{
+                                    padding: '8px 16px',
+                                    background: viewMode === 'cfg' ? 'var(--accent)' : 'transparent',
+                                    color: viewMode === 'cfg' ? 'var(--bg-primary)' : 'var(--text-primary)',
+                                    border: 'none',
+                                    borderBottom: viewMode === 'cfg' ? '2px solid var(--accent)' : '2px solid transparent',
+                                    cursor: 'pointer',
+                                    fontSize: '0.9em',
+                                    fontWeight: viewMode === 'cfg' ? 'bold' : 'normal',
+                                    transition: 'all 0.2s ease'
+                                  }}
+                                >
+                                  CFG
+                                </button>
+                              </div>
+                              
+                              {/* Content based on view mode */}
+                              {viewMode === 'code' ? (
+                                <pre style={{
+                                  backgroundColor: 'var(--bg-tertiary)',
+                                  padding: '15px',
+                                  borderRadius: '4px',
+                                  overflow: 'auto',
+                                  fontSize: '0.85em',
+                                  margin: 0,
+                                  whiteSpace: 'pre-wrap',
+                                  fontFamily: 'monospace',
+                                  color: 'var(--text-primary)',
+                                  wordBreak: 'break-word',
+                                  maxHeight: '500px'
+                                }}>
+                                  {selected.code}
+                                </pre>
+                              ) : (
+                                <div style={{
+                                  backgroundColor: 'var(--bg-tertiary)',
+                                  borderRadius: '4px',
+                                  overflow: 'hidden',
+                                  height: '500px'
+                                }}>
+                                  <CFGVisualizer code={selected.code} decompilerName={selected.decompiler_name} />
+                                </div>
+                              )}
+                            </div>
+                          );
+                        }
+                        return <p>No code available</p>;
+                      })() : (
+                        <div style={{ textAlign: 'center', color: 'var(--text-secondary)', padding: '40px' }}>
+                          {originalDogboltLoading ? (
+                            <>
+                              <div style={{ fontSize: '2em', marginBottom: '10px' }}>⏳</div>
+                              <p>Decompiling original binary...</p>
+                              {originalDogboltResults && originalDogboltResults.total_decompilers > 0 && (
+                                <p style={{ fontSize: '0.9em', marginTop: '10px' }}>
+                                  {originalDogboltResults.completed} of {originalDogboltResults.total_decompilers} completed
+                                </p>
+                              )}
+                            </>
+                          ) : originalDogboltResults ? (
+                            originalDogboltResults.error ? (
+                              <div style={{ padding: '20px', textAlign: 'center' }}>
+                                <div style={{ fontSize: '2em', marginBottom: '10px' }}>⚠️</div>
+                                <p style={{ color: 'var(--danger)' }}>Original Binary Unavailable</p>
+                                <p style={{ fontSize: '0.9em', color: 'var(--text-secondary)', marginTop: '10px' }}>
+                                  {originalDogboltResults.error}
+                                </p>
+                              </div>
+                            ) : (
+                              'Select a decompiler from the list to view decompiled code'
+                            )
+                          ) : (
+                            <div>
+                              <p>Waiting for original binary decompilation to start...</p>
+                              <p style={{ fontSize: '0.85em', color: 'var(--text-secondary)', marginTop: '10px' }}>
+                                This happens automatically in the background.
+                              </p>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
             )}

@@ -95,6 +95,17 @@ jobs:
         echo "✅ macOS SDK downloaded successfully"
         ls -la cmd/llvm-obfuscator/plugins/macos-sdk/
 
+        # Download llvm-mingw for Windows ARM64 cross-compilation
+        echo "Downloading llvm-mingw from GCP..."
+        mkdir -p cmd/llvm-obfuscator/plugins/llvm-mingw
+        gsutil cp "gs://${GCP_BUCKET}/llvm-mingw-20251202-ucrt-ubuntu-22.04-x86_64.tar.xz" /tmp/llvm-mingw.tar.xz
+        tar -xf /tmp/llvm-mingw.tar.xz -C /tmp/
+        # Extract contents directly into plugins/llvm-mingw (not nested)
+        mv /tmp/llvm-mingw-20251202-ucrt-ubuntu-22.04-x86_64/* cmd/llvm-obfuscator/plugins/llvm-mingw/
+        rm -rf /tmp/llvm-mingw-20251202-ucrt-ubuntu-22.04-x86_64 /tmp/llvm-mingw.tar.xz
+        echo "✅ llvm-mingw downloaded successfully"
+        ls -la cmd/llvm-obfuscator/plugins/llvm-mingw/
+
     - name: Upload LLVM binaries as artifact
       if: steps.download-artifact.outcome != 'success' && steps.download-binaries.outcome == 'success'
       uses: actions/upload-artifact@v4

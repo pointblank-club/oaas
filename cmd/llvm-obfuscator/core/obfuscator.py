@@ -917,6 +917,13 @@ class LLVMObfuscator:
             ir_cmd.extend(cross_compile_flags)
             run_command(ir_cmd, cwd=source_abs.parent)
 
+            # Save external function declarations from original IR
+            # mlir-translate drops these, so we need to restore them later
+            with open(str(llvm_ir_temp), 'r') as f:
+                original_ir = f.read()
+            original_declarations = re.findall(r'^declare\s+.+$', original_ir, re.MULTILINE)
+            self.logger.debug(f"Saved {len(original_declarations)} external declarations from original IR")
+
             # 1b: Convert LLVM IR to MLIR
             mlir_file = destination_abs.parent / f"{destination_abs.stem}_temp.mlir"
             translate_to_mlir_cmd = ["mlir-translate", "--import-llvm", str(llvm_ir_temp), "-o", str(mlir_file)]
@@ -958,7 +965,36 @@ class LLVMObfuscator:
             with open(str(llvm_ir_raw), 'r') as f:
                 ir_content = f.read()
 
-            
+            # ============================================================
+            # FIX: Restore missing external function declarations
+            # mlir-translate drops declarations like @strcmp, @printf, etc.
+            # We saved them earlier and now inject any that are missing.
+            # ============================================================
+            existing_declarations = set(re.findall(r'^declare\s+.+$', ir_content, re.MULTILINE))
+            missing_declarations = []
+            for decl in original_declarations:
+                # Extract function name from declaration (e.g., @strcmp from "declare i32 @strcmp(...)")
+                func_match = re.search(r'@([\w\.]+)', decl)
+                if func_match:
+                    func_name = func_match.group(1)
+                    # Check if this function is missing in the output
+                    if not any(f'@{func_name}' in existing for existing in existing_declarations):
+                        missing_declarations.append(decl)
+
+            if missing_declarations:
+                decl_names = [re.search(r'@([\w\.]+)', d).group(1) for d in missing_declarations]
+                self.logger.debug(f"Restoring {len(missing_declarations)} missing declarations: {decl_names}")
+                # Insert declarations after the target triple/datalayout section
+                # Find position after last target line
+                insert_pos = 0
+                for match in re.finditer(r'^(target\s+(triple|datalayout)\s*=.*)$', ir_content, re.MULTILINE):
+                    insert_pos = match.end()
+                if insert_pos > 0:
+                    ir_content = ir_content[:insert_pos] + '\n\n' + '\n'.join(missing_declarations) + '\n' + ir_content[insert_pos:]
+                else:
+                    # No target lines found, insert at beginning
+                    ir_content = '\n'.join(missing_declarations) + '\n\n' + ir_content
+
             # Fix target triple and datalayout
             # Use re.DOTALL to handle multi-line target triple values (MLIR sometimes outputs newlines inside quotes)
             ir_content = re.sub(r'target triple = "[^"]*"', f'target triple = "{target_triple}"', ir_content, flags=re.DOTALL)

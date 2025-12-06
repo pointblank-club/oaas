@@ -229,9 +229,15 @@ jobs:
         push: true
         tags: ${{ steps.meta-backend.outputs.tags }}
         labels: ${{ steps.meta-backend.outputs.labels }}
-        cache-from: type=gha,scope=backend
-        cache-to: type=gha,mode=max,scope=backend
+        cache-from: |
+          type=gha,scope=backend
+          type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/llvm-obfuscator-backend:buildcache
+        cache-to: |
+          type=gha,mode=max,scope=backend
+          type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/llvm-obfuscator-backend:buildcache,mode=max
         platforms: linux/amd64
+        build-args: |
+          BUILDKIT_INLINE_CACHE=1
 
     - name: Build and push frontend image
       uses: docker/build-push-action@v5
@@ -241,9 +247,15 @@ jobs:
         push: true
         tags: ${{ steps.meta-frontend.outputs.tags }}
         labels: ${{ steps.meta-frontend.outputs.labels }}
-        cache-from: type=gha,scope=frontend
-        cache-to: type=gha,mode=max,scope=frontend
+        cache-from: |
+          type=gha,scope=frontend
+          type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/llvm-obfuscator-frontend:buildcache
+        cache-to: |
+          type=gha,mode=max,scope=frontend
+          type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/llvm-obfuscator-frontend:buildcache,mode=max
         platforms: linux/amd64
+        build-args: |
+          BUILDKIT_INLINE_CACHE=1
 
     - name: Generate Docker Hub deployment files
       run: |

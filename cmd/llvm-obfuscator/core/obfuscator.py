@@ -982,7 +982,8 @@ class LLVMObfuscator:
                         missing_declarations.append(decl)
 
             if missing_declarations:
-                self.logger.debug(f"Restoring {len(missing_declarations)} missing declarations: {[re.search(r'@([\w\.]+)', d).group(1) for d in missing_declarations]}")
+                decl_names = [re.search(r'@([\w\.]+)', d).group(1) for d in missing_declarations]
+                self.logger.debug(f"Restoring {len(missing_declarations)} missing declarations: {decl_names}")
                 # Insert declarations after the target triple/datalayout section
                 # Find position after last target line
                 insert_pos = 0

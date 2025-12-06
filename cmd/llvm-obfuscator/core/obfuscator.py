@@ -544,13 +544,27 @@ class LLVMObfuscator:
             return f"{stem}.exe"
         return stem
 
-    def _add_remarks_flags(self, command: List[str], config: ObfuscationConfig, output_binary: Path) -> None:
+    def _add_remarks_flags(self, command: List[str], config: ObfuscationConfig, output_binary: Path,
+                           compiler_flags: List[str] = None) -> None:
         """
         Add LLVM remarks flags to compilation command if enabled.
-        
+
         Based on https://llvm.org/docs/Remarks.html
         """
         if not config.advanced.remarks.enabled:
+            return
+
+        # Skip remarks for Windows + LTO: LLD doesn't support -plugin-opt=opt-remarks-* for MinGW targets
+        # Note: ARM64 + LTO crash was fixed in LLVM 22 with updated binaries (Dec 2025)
+        all_flags = command + (compiler_flags or [])
+        has_lto = any("-flto" in flag for flag in all_flags)
+        is_windows_cross = config.platform == Platform.WINDOWS
+
+        if has_lto and is_windows_cross:
+            self.logger.warning(
+                "LLVM remarks disabled for Windows cross-compilation with LTO "
+                "(LLD doesn't support opt-remarks plugin options for MinGW)"
+            )
             return
         
         remarks_file = output_binary.parent / (

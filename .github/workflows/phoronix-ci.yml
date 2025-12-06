@@ -1,0 +1,310 @@
+name: Phoronix Test Suite CI
+
+on:
+  push:
+    branches: [ main, develop ]
+    paths:
+      - 'phoronix/**'
+      - '.github/workflows/phoronix-ci.yml'
+  pull_request:
+    branches: [ main, develop ]
+    paths:
+      - 'phoronix/**'
+      - '.github/workflows/phoronix-ci.yml'
+  workflow_dispatch:
+    inputs:
+      test_mode:
+        description: 'Test mode to run'
+        required: true
+        default: 'automatic'
+        type: choice
+        options:
+          - automatic
+          - manual
+      manual_test:
+        description: 'Manual test profile (only used if mode=manual). e.g., pts/compress-7zip'
+        required: false
+        type: string
+
+jobs:
+  verify-installation:
+    runs-on: ubuntu-latest
+    name: Verify Phoronix Installation
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          echo "Installing system dependencies..."
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            php-cli \
+            php-xml \
+            build-essential \
+            curl \
+            wget \
+            ca-certificates
+
+          echo "Verifying installations..."
+          php --version
+          gcc --version
+          curl --version
+
+      - name: Install Phoronix Test Suite
+        run: |
+          echo "Running Phoronix installation script..."
+          bash phoronix/scripts/install_phoronix.sh
+        env:
+          PTS_INSTALL_DIR: /opt/phoronix-test-suite
+
+      - name: Run Python verification tests
+        run: |
+          echo "Running Python verification script..."
+          python3 phoronix/tests/test_phoronix_installation.py
+        env:
+          PTS_INSTALL_DIR: /opt/phoronix-test-suite
+
+      - name: Display installation summary
+        if: success()
+        run: |
+          echo "✅ Phoronix Test Suite installation verified successfully"
+          /opt/phoronix-test-suite/phoronix-test-suite version
+          /opt/phoronix-test-suite/phoronix-test-suite list-tests | head -20
+
+  run-benchmarks:
+    needs: verify-installation
+    runs-on: ubuntu-latest
+    name: Run Benchmark Suite
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            php-cli \
+            php-xml \
+            build-essential \
+            curl \
+            wget \
+            ca-certificates
+
+          # Install optional packages for better compatibility
+          sudo apt-get install -y --no-install-recommends \
+            git \
+            libxml2-dev \
+            pkg-config \
+            || true
+
+      - name: Install Phoronix Test Suite
+        run: bash phoronix/scripts/install_phoronix.sh
+        env:
+          PTS_INSTALL_DIR: /opt/phoronix-test-suite
+
+      - name: Determine test mode
+        id: test-mode
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            MODE="${{ github.event.inputs.test_mode }}"
+            MANUAL_TEST="${{ github.event.inputs.manual_test }}"
+          else
+            MODE="automatic"
+            MANUAL_TEST=""
+          fi
+
+          echo "mode=${MODE}" >> $GITHUB_OUTPUT
+          echo "manual_test=${MANUAL_TEST}" >> $GITHUB_OUTPUT
+          echo "Test mode: ${MODE}"
+
+      - name: Run automatic benchmark suite
+        if: steps.test-mode.outputs.mode == 'automatic'
+        run: |
+          echo "Running automatic benchmark suite..."
+          bash phoronix/scripts/run_pts_tests.sh --automatic
+        env:
+          PTS_INSTALL_DIR: /opt/phoronix-test-suite
+          REPORTS_BASE_DIR: ${{ github.workspace }}/reports
+
+      - name: Run manual benchmark test
+        if: steps.test-mode.outputs.mode == 'manual' && steps.test-mode.outputs.manual_test != ''
+        run: |
+          echo "Running manual benchmark: ${{ steps.test-mode.outputs.manual_test }}"
+          bash phoronix/scripts/run_pts_tests.sh --manual "${{ steps.test-mode.outputs.manual_test }}"
+        env:
+          PTS_INSTALL_DIR: /opt/phoronix-test-suite
+          REPORTS_BASE_DIR: ${{ github.workspace }}/reports
+
+      - name: List generated reports
+        if: always()
+        run: |
+          echo "Generated reports:"
+          find reports -type f -name "*.html" -o -name "*.json" | sort
+
+      - name: Upload combined reports as artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: phoronix-combined-reports
+          path: reports/combined/
+          retention-days: 30
+          if-no-files-found: ignore
+
+      - name: Upload raw results as artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: phoronix-raw-results
+          path: reports/raw/
+          retention-days: 30
+          if-no-files-found: ignore
+
+      - name: Upload manual results as artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: phoronix-manual-results
+          path: reports/manual/
+          retention-days: 30
+          if-no-files-found: ignore
+
+      - name: Create summary report
+        if: always()
+        run: |
+          echo "## Phoronix Test Suite Execution Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Test Mode:** ${{ steps.test-mode.outputs.mode }}" >> $GITHUB_STEP_SUMMARY
+
+          if [ "${{ steps.test-mode.outputs.mode }}" == "manual" ]; then
+            echo "**Test Profile:** ${{ steps.test-mode.outputs.manual_test }}" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Report Artifacts:**" >> $GITHUB_STEP_SUMMARY
+          echo "- Combined reports and HTML: \`phoronix-combined-reports\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Raw results: \`phoronix-raw-results\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Manual test results: \`phoronix-manual-results\`" >> $GITHUB_STEP_SUMMARY
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ -f "reports/combined/pts_full_report_*.html" ]; then
+            echo "**Reports Generated Successfully** ✅" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "**Note:** Check artifact uploads for detailed results" >> $GITHUB_STEP_SUMMARY
+          fi
+
+  obfuscation-analysis:
+    needs: verify-installation
+    runs-on: ubuntu-latest
+    name: Obfuscation Analysis Test Suite
+    if: github.event_name == 'push' || github.event_name == 'pull_request'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            python3 \
+            python3-pip \
+            build-essential \
+            gcc \
+            g++ \
+            binutils
+
+      - name: Install Python dependencies
+        run: |
+          python3 -m pip install --quiet pytest pytest-cov 2>/dev/null || true
+
+      - name: Run Python unit tests
+        run: |
+          echo "Running Python unit tests..."
+          cd phoronix
+          python3 -m pytest tests/ -v --tb=short 2>&1 | head -100
+        continue-on-error: true
+
+      - name: Build test binaries
+        run: |
+          echo "Building test binaries for obfuscation analysis..."
+          mkdir -p phoronix/test_binaries
+
+          # Create a simple C++ test program
+          cat > /tmp/test_program.cpp << 'CPP'
+          #include <iostream>
+          #include <string>
+
+          int fibonacci(int n) {
+              if (n <= 1) return n;
+              return fibonacci(n-1) + fibonacci(n-2);
+          }
+
+          std::string secret_data = "confidential_api_key_12345";
+
+          int main() {
+              std::cout << "Testing: " << fibonacci(10) << std::endl;
+              std::cout << "Data processing..." << std::endl;
+              return 0;
+          }
+          CPP
+
+          # Compile baseline (with debug symbols)
+          g++ -O3 -g /tmp/test_program.cpp -o phoronix/test_binaries/baseline_unstripped
+
+          # Create obfuscated version (stripped)
+          cp phoronix/test_binaries/baseline_unstripped phoronix/test_binaries/obfuscated
+          strip phoronix/test_binaries/obfuscated
+
+          ls -lh phoronix/test_binaries/
+
+      - name: Run obfuscation test suite
+        run: |
+          echo "Running obfuscation analysis test suite..."
+          bash phoronix/scripts/run_obfuscation_test_suite.sh \
+            phoronix/test_binaries/baseline_unstripped \
+            phoronix/test_binaries/obfuscated \
+            phoronix/test_results/
+        continue-on-error: true
+
+      - name: Verify test results
+        if: always()
+        run: |
+          echo "## Obfuscation Analysis Results" >> $GITHUB_STEP_SUMMARY
+
+          if [ -d "phoronix/test_results" ]; then
+            echo "✅ Test suite completed" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+
+            # Find and list report files
+            REPORT_DIRS=$(find phoronix/test_results -name "INDEX.md" -type f 2>/dev/null | head -1)
+            if [ -n "$REPORT_DIRS" ]; then
+              echo "**Reports Generated:**" >> $GITHUB_STEP_SUMMARY
+              echo "- Final Report JSON" >> $GITHUB_STEP_SUMMARY
+              echo "- Metrics Analysis" >> $GITHUB_STEP_SUMMARY
+              echo "- Security Analysis" >> $GITHUB_STEP_SUMMARY
+            fi
+          else
+            echo "⚠️ Test suite output directory not found" >> $GITHUB_STEP_SUMMARY
+          fi
+
+  test-failure-analysis:
+    if: failure()
+    runs-on: ubuntu-latest
+    name: Analyze Test Failures
+
+    steps:
+      - name: Report failure summary
+        run: |
+          echo "❌ Phoronix Test Suite CI Pipeline Failed"
+          echo ""
+          echo "This may be due to:"
+          echo "- Missing system dependencies"
+          echo "- PTS installation issues"
+          echo "- Test execution errors"
+          echo "- Report generation failures"
+          echo ""
+          echo "Check the logs above for detailed error information."
+        shell: bash

@@ -1,0 +1,30 @@
+# Test Results & Runtime Data
+test_results/
+__pycache__/
+*.pyc
+*.pyo
+
+# Generated Reports
+*.html
+*.csv
+*.log
+
+# Binaries & Metrics
+examples/option*_binaries/
+examples/option*_metrics/
+
+# IDE & System
+.DS_Store
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Python
+.pytest_cache/
+.coverage
+htmlcov/
+dist/
+build/
+*.egg-info/

@@ -1,0 +1,55 @@
+2025-12-06 02:36:20,838 - __main__ - WARNING - Binary is STRIPPED: phoronix/option1_binaries/hello_world_full_symbols
+2025-12-06 02:36:20,838 - __main__ - WARNING -   ⚠️ Symbol-based metrics will be unavailable (function count, etc.)
+2025-12-06 02:36:20,838 - __main__ - WARNING -   📝 Recommendation: Use non-stripped binary for accurate analysis
+2025-12-06 02:36:20,866 - __main__ - WARNING -   ⚠️ Could not compute .text entropy for: phoronix/option1_binaries/hello_world_full_symbols
+2025-12-06 02:36:20,866 - __main__ - WARNING -   📝 This may indicate issues with ELF section reading
+2025-12-06 02:36:20,873 - __main__ - WARNING - Binary is STRIPPED: /home/incharaj/Downloads/obfuscated_linux (1)
+2025-12-06 02:36:20,873 - __main__ - WARNING -   ⚠️ Symbol-based metrics will be unavailable (function count, etc.)
+2025-12-06 02:36:20,873 - __main__ - WARNING -   📝 Recommendation: Use non-stripped binary for accurate analysis
+2025-12-06 02:36:20,900 - __main__ - WARNING -   ⚠️ Could not compute .text entropy for: /home/incharaj/Downloads/obfuscated_linux (1)
+2025-12-06 02:36:20,900 - __main__ - WARNING -   📝 This may indicate issues with ELF section reading
+2025-12-06 02:36:20,907 - __main__ - INFO - Saved JSON metrics to phoronix/test_runs/obfuscation_analysis_hello_world_full_symbols_vs_obfuscated_linux (1)_20251206_023620/metrics/metrics.json
+2025-12-06 02:36:20,908 - __main__ - INFO - Saved Markdown report to phoronix/test_runs/obfuscation_analysis_hello_world_full_symbols_vs_obfuscated_linux (1)_20251206_023620/metrics/metrics.md
+2025-12-06 02:36:20,909 - __main__ - INFO - Saved CSV report to phoronix/test_runs/obfuscation_analysis_hello_world_full_symbols_vs_obfuscated_linux (1)_20251206_023620/metrics/metrics.csv
+{
+  "timestamp": "2025-12-06T02:36:20.836918",
+  "config_name": "test_hello_world_full_symbols_vs_obfuscated_linux (1)",
+  "baseline": {
+    "file_size_bytes": 83920,
+    "file_size_percent_increase": 0.0,
+    "text_section_size": 0,
+    "num_functions": 9,
+    "num_basic_blocks": 4,
+    "instruction_count": 314,
+    "text_entropy": 0.0,
+    "cyclomatic_complexity": 1.0,
+    "stripped": true,
+    "pie_enabled": true
+  },
+  "obfuscated": {
+    "obfuscated_linux (1)": {
+      "file_size_bytes": 14800,
+      "file_size_percent_increase": 0.0,
+      "text_section_size": 0,
+      "num_functions": 0,
+      "num_basic_blocks": 1,
+      "instruction_count": 836,
+      "text_entropy": 0.0,
+      "cyclomatic_complexity": 1.0,
+      "stripped": true,
+      "pie_enabled": true
+    }
+  },
+  "comparison": {
+    "obfuscated_linux (1)": {
+      "file_size_increase_bytes": -69120,
+      "file_size_increase_percent": -82.36,
+      "text_section_increase_bytes": 0,
+      "function_count_delta": -9,
+      "basic_block_count_delta": -3,
+      "instruction_count_delta": 522,
+      "entropy_increase": 0.0,
+      "complexity_increase": 0.0
+    }
+  }
+}

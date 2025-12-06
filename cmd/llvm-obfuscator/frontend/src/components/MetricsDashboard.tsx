@@ -68,8 +68,14 @@ interface ReportData {
   instruction_metrics?: InstructionMetricsData;
 }
 
+interface PhoronixMetrics {
+  instruction_count_delta?: number;
+  instruction_count_increase_percent?: number;
+  performance_overhead_percent?: number;
+}
+
 interface Props {
-  report: ReportData;
+  report: ReportData & { phoronix?: { key_metrics?: PhoronixMetrics } };
 }
 
 // Color constants for consistent theming
@@ -449,11 +455,135 @@ const MetricCard: React.FC<MetricCardProps> = ({
 /**
  * Main MetricsDashboard Component
  */
+/**
+ * Phoronix Benchmarking Metrics Card
+ */
+const PhoronixMetricsCard: React.FC<{ metrics?: PhoronixMetrics }> = ({ metrics }) => {
+  if (!metrics) return null;
+
+  const instrDelta = metrics.instruction_count_delta;
+  const instrPercent = metrics.instruction_count_increase_percent;
+  const perfOverhead = metrics.performance_overhead_percent;
+
+  if (instrDelta === undefined && perfOverhead === undefined) return null;
+
+  return (
+    <div
+      style={{
+        background: 'linear-gradient(135deg, #1a1f26 0%, #202833 100%)',
+        border: '2px solid #3fb950',
+        borderRadius: '12px',
+        padding: '24px',
+        marginTop: '24px',
+        boxShadow: '0 0 20px rgba(63, 185, 80, 0.1)',
+      }}
+    >
+      <h3
+        style={{
+          margin: '0 0 16px 0',
+          color: '#3fb950',
+          fontSize: '16px',
+          fontWeight: 600,
+          display: 'flex',
+          alignItems: 'center',
+          gap: '8px',
+        }}
+      >
+        📊 Obfuscation Impact Metrics
+      </h3>
+
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
+          gap: '16px',
+        }}
+      >
+        {instrDelta !== undefined && (
+          <div
+            style={{
+              background: 'rgba(63, 185, 80, 0.1)',
+              border: '1px solid #3fb950',
+              borderRadius: '8px',
+              padding: '16px',
+              textAlign: 'center',
+            }}
+          >
+            <div style={{ color: '#8b949e', fontSize: '12px', marginBottom: '8px' }}>
+              Code Expansion
+            </div>
+            <div
+              style={{
+                color: '#3fb950',
+                fontSize: '24px',
+                fontWeight: 'bold',
+                fontFamily: "'JetBrains Mono', monospace",
+                marginBottom: '4px',
+              }}
+            >
+              +{instrDelta}
+            </div>
+            <div style={{ color: '#8b949e', fontSize: '11px' }}>
+              (+{instrPercent}% instructions)
+            </div>
+          </div>
+        )}
+
+        {perfOverhead !== undefined && perfOverhead !== null && (
+          <div
+            style={{
+              background: 'rgba(88, 166, 255, 0.1)',
+              border: '1px solid #58a6ff',
+              borderRadius: '8px',
+              padding: '16px',
+              textAlign: 'center',
+            }}
+          >
+            <div style={{ color: '#8b949e', fontSize: '12px', marginBottom: '8px' }}>
+              Performance Overhead
+            </div>
+            <div
+              style={{
+                color: '#58a6ff',
+                fontSize: '24px',
+                fontWeight: 'bold',
+                fontFamily: "'JetBrains Mono', monospace",
+                marginBottom: '4px',
+              }}
+            >
+              +{perfOverhead.toFixed(1)}%
+            </div>
+            <div style={{ color: '#8b949e', fontSize: '11px' }}>
+              Runtime slowdown
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div
+        style={{
+          marginTop: '16px',
+          padding: '12px',
+          background: 'rgba(139, 148, 158, 0.1)',
+          borderRadius: '6px',
+          fontSize: '12px',
+          color: '#8b949e',
+          lineHeight: '1.6',
+        }}
+      >
+        <strong>Note:</strong> Instruction count reflects code expansion from obfuscation passes.
+        Performance overhead is based on runtime measurements if available.
+      </div>
+    </div>
+  );
+};
+
 export const MetricsDashboard: React.FC<Props> = ({ report }) => {
   const hasControlFlow = report.control_flow_metrics &&
     Object.keys(report.control_flow_metrics).length > 0;
   const hasInstructions = report.instruction_metrics &&
     Object.keys(report.instruction_metrics).length > 0;
+  const hasPhoronix = report.phoronix?.key_metrics;
 
   return (
     <div
@@ -474,8 +604,13 @@ export const MetricsDashboard: React.FC<Props> = ({ report }) => {
         <InstructionChart metrics={report.instruction_metrics!} />
       )}
 
+      {/* Phoronix Benchmarking Metrics */}
+      {hasPhoronix && report.phoronix && (
+        <PhoronixMetricsCard metrics={report.phoronix.key_metrics} />
+      )}
+
       {/* Empty state */}
-      {!hasControlFlow && !hasInstructions && (
+      {!hasControlFlow && !hasInstructions && !hasPhoronix && (
         <div
           style={{
             textAlign: 'center',

@@ -1,0 +1,7 @@
+[0;34m[INFO][0m ==========================================
+[0;34m[INFO][0m Phoronix Test Suite Installation Script
+[0;34m[INFO][0m ==========================================
+[0;34m[INFO][0m Checking system dependencies...
+[0;31m[ERROR][0m Missing dependencies: php
+[0;34m[INFO][0m Install with: sudo apt-get install -y php php-xml php-cli curl wget tar build-essential
+[0;31m[ERROR][0m Dependency check failed

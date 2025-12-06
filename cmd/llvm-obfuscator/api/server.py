@@ -1957,6 +1957,40 @@ async def api_download_binary(job_id: str):
     )
 
 
+@app.get("/api/download/{job_id}/baseline")
+async def api_download_baseline(job_id: str):
+    """Download the baseline (original, non-obfuscated) binary."""
+    try:
+        job = job_manager.get_job(job_id)
+    except JobNotFoundError:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    result = job.metadata.get("result")
+    if not result:
+        raise HTTPException(status_code=400, detail="Job not completed")
+
+    # Find baseline binary in the working directory
+    working_dir = report_base / job_id
+    if not working_dir.exists():
+        raise HTTPException(status_code=404, detail="Job directory not found")
+    
+    # Look for baseline binary (typically named {source}_baseline or {source}_baseline.exe)
+    baseline_files = list(working_dir.glob("*_baseline*"))
+    if not baseline_files:
+        raise HTTPException(status_code=404, detail="Baseline binary not found")
+    
+    # Use the first baseline file found
+    baseline_path = baseline_files[0]
+    if not baseline_path.exists():
+        raise HTTPException(status_code=404, detail="Baseline binary file not found")
+
+    return FileResponse(
+        baseline_path,
+        media_type="application/octet-stream",
+        filename=baseline_path.name
+    )
+
+
 @app.get("/api/remarks/{job_id}")
 async def api_get_remarks(job_id: str):
     """Get LLVM remarks file for a completed obfuscation job."""
@@ -2284,6 +2318,157 @@ async def github_repo_clone(request: Request, payload: GitHubCloneRequest):
     except Exception as e:
         logger.error(f"Failed to clone repository: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to clone repository: {str(e)}")
+
+
+@app.post("/api/dogbolt/upload")
+async def dogbolt_upload(file: UploadFile = File(...)):
+    """Proxy endpoint to upload binary to dogbolt.org"""
+    try:
+        # Check file size (dogbolt.org limit is 2 MB)
+        contents = await file.read()
+        if len(contents) > 2 * 1024 * 1024:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Binary too large ({len(contents) / 1024 / 1024:.2f} MB). Dogbolt.org limit is 2 MB."
+            )
+        
+        # Upload to dogbolt.org
+        files_data = {'file': (file.filename or 'binary', contents, file.content_type or 'application/octet-stream')}
+        response = requests.post('https://dogbolt.org/api/binaries/', files=files_data, timeout=30)
+        
+        if response.status_code not in [200, 201]:
+            raise HTTPException(
+                status_code=response.status_code,
+                detail=f"Dogbolt API error: {response.text}"
+            )
+        
+        return response.json()
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Dogbolt upload error: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to upload to dogbolt.org: {str(e)}")
+    except Exception as e:
+        logger.error(f"Dogbolt upload error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/dogbolt/decompilers")
+async def dogbolt_decompilers():
+    """Get list of available decompilers from dogbolt.org"""
+    try:
+        response = requests.get('https://dogbolt.org/', timeout=10)
+        if response.status_code != 200:
+            raise HTTPException(status_code=response.status_code, detail="Failed to fetch decompilers")
+        
+        # Extract decompilers JSON from HTML
+        html = response.text
+        match = re.search(r'<script id="decompilers_json" type="application/json">([\s\S]*?)</script>', html)
+        if match:
+            decompilers_json = json.loads(match.group(1))
+            return {"decompilers": decompilers_json, "count": len(decompilers_json)}
+        else:
+            # Fallback: return common decompilers
+            return {
+                "decompilers": {
+                    "BinaryNinja": {},
+                    "Boomerang": {},
+                    "Ghidra": {},
+                    "Hex-Rays": {},
+                    "RecStudio": {},
+                    "Reko": {},
+                    "Relyze": {},
+                    "RetDec": {},
+                    "Snowman": {}
+                },
+                "count": 9
+            }
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Dogbolt decompilers error: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to fetch decompilers: {str(e)}")
+
+
+@app.get("/api/dogbolt/status/{binary_id}")
+async def dogbolt_status(binary_id: str):
+    """Get decompilation status for a binary (handles pagination like decompiler-explorer)"""
+    try:
+        url = f"https://dogbolt.org/api/binaries/{binary_id}/decompilations/"
+        all_results = []
+        next_url = url
+        
+        # Fetch all pages (handle pagination)
+        while next_url:
+            response = requests.get(next_url, timeout=10)
+            if response.status_code != 200:
+                raise HTTPException(status_code=response.status_code, detail="Failed to fetch decompilation status")
+            
+            data = response.json()
+            all_results.extend(data.get('results', []))
+            next_url = data.get('next')  # Follow pagination
+        
+        return {"results": all_results, "next": None}
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Dogbolt status error: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to fetch status: {str(e)}")
+
+
+@app.get("/api/dogbolt/download/{binary_id}/{decompilation_id}")
+async def dogbolt_download(binary_id: str, decompilation_id: str):
+    """Download decompiled code from dogbolt.org"""
+    try:
+        # First get the decompilation info to get the download URL
+        status_response = requests.get(
+            f"https://dogbolt.org/api/binaries/{binary_id}/decompilations/",
+            timeout=10
+        )
+        if status_response.status_code != 200:
+            raise HTTPException(status_code=status_response.status_code, detail="Failed to fetch decompilation info")
+        
+        decompilations = status_response.json().get('results', [])
+        decompilation = next((d for d in decompilations if str(d.get('id')) == decompilation_id), None)
+        
+        if not decompilation:
+            raise HTTPException(status_code=404, detail="Decompilation not found")
+        
+        download_url = decompilation.get('download_url')
+        if not download_url:
+            raise HTTPException(status_code=404, detail="Download URL not available")
+        
+        # Download the decompiled code (may be gzip compressed)
+        code_response = requests.get(download_url, timeout=30)
+        if code_response.status_code != 200:
+            raise HTTPException(status_code=code_response.status_code, detail="Failed to download decompiled code")
+        
+        # Handle gzip decompression (like decompiler-explorer)
+        import gzip
+        content = code_response.content
+        try:
+            # Try to decompress as gzip
+            decompressed = gzip.decompress(content)
+            code = decompressed.decode('utf-8', errors='replace')
+        except (gzip.BadGzipFile, OSError):
+            # Not gzip, use as-is
+            code = content.decode('utf-8', errors='replace')
+        
+        return {"code": code, "decompiler": decompilation.get('decompiler', {})}
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Dogbolt download error: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to download decompiled code: {str(e)}")
+
+
+@app.post("/api/dogbolt/rerun/{binary_id}/{decompilation_id}")
+async def dogbolt_rerun(binary_id: str, decompilation_id: str):
+    """Rerun a decompilation that timed out"""
+    try:
+        response = requests.post(
+            f"https://dogbolt.org/api/binaries/{binary_id}/decompilations/{decompilation_id}/rerun/",
+            timeout=10
+        )
+        if response.status_code not in [200, 201, 202]:
+            raise HTTPException(status_code=response.status_code, detail="Failed to rerun decompilation")
+        
+        return response.json() if response.content else {"status": "queued"}
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Dogbolt rerun error: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to rerun decompilation: {str(e)}")
 
 
 @app.post("/api/local/folder/upload")

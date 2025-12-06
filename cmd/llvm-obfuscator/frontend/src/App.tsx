@@ -2455,7 +2455,13 @@ function App() {
   // Track layer changes to auto-switch to 'custom' preset
   const handleLayerChange = (layer: number, value: boolean) => {
     if (layer === 1) setLayer1(value);
-    if (layer === 2) setLayer2(value);
+    if (layer === 2) {
+      // Layer 2 (MLIR) is not supported for macOS due to ld64.lld linker bug
+      if (value && (targetPlatform === 'macos' || targetPlatform === 'all')) {
+        return; // Don't enable Layer 2 for macOS
+      }
+      setLayer2(value);
+    }
     if (layer === 2.5) setLayer2_5(value);
     if (layer === 3) {
       setLayer3(value);
@@ -4176,15 +4182,21 @@ function App() {
             )}
 
             {/* Layer 2: String Encryption */}
-            <label className="layer-checkbox">
+            <label className={`layer-checkbox ${(targetPlatform === 'macos' || targetPlatform === 'all') ? 'disabled' : ''}`}>
               <input
                 type="checkbox"
                 checked={layer2}
                 onChange={(e) => handleLayerChange(2, e.target.checked)}
+                disabled={targetPlatform === 'macos' || targetPlatform === 'all'}
               />
               <span className="layer-label">
                 [LAYER 2] String Encryption (PRE-COMPILE, 2nd)
                 <small>XOR encryption of string literals + runtime decryption</small>
+                {(targetPlatform === 'macos' || targetPlatform === 'all') && (
+                  <small className="warning-text" style={{ color: '#ff6b6b', display: 'block', marginTop: '4px' }}>
+                    Not available for macOS (ld64.lld linker incompatibility with MLIR-generated sections)
+                  </small>
+                )}
               </span>
             </label>
 
@@ -4561,6 +4573,10 @@ function App() {
                   const validArchs = PLATFORM_ARCHITECTURES[newPlatform];
                   if (validArchs.length > 0 && !validArchs.find(a => a.value === targetArchitecture)) {
                     setTargetArchitecture(validArchs[0].value);
+                  }
+                  // Disable Layer 2 (MLIR String Encryption) for macOS - ld64.lld crashes with MLIR-generated sections
+                  if (newPlatform === 'macos' || newPlatform === 'all') {
+                    setLayer2(false);
                   }
                 }}
               >

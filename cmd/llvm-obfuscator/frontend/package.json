@@ -13,9 +13,11 @@
     "@emotion/react": "^11.11.3",
     "@emotion/styled": "^11.11.0",
     "@mui/material": "^5.15.15",
+    "@xyflow/react": "^12.10.0",
     "axios": "^1.6.8",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
+    "reactflow": "^11.11.4",
     "recharts": "^2.8.0"
   },
   "devDependencies": {

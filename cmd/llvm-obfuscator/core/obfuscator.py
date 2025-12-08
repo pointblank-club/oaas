@@ -2260,53 +2260,103 @@ class LLVMObfuscator:
             except Exception as e:
                 self.logger.debug(f"Symbol obfuscation analysis failed: {e}")
 
-        # ✅ FIX #5: Calculate obfuscation score based on actual metrics INCLUDING MLIR passes
-        # Score increases with:
-        # - Symbol reduction (positive %)
-        # - Function reduction (positive %)
-        # - Entropy increase (positive %)
-        # - String obfuscation effectiveness (positive % reduction)
-        # - Symbol obfuscation pass applied
-        # - Small binary size (negative size_reduction is good, but don't penalize too much)
-        score = 50.0  # Base score
+        # ✅ FIX #5: Calculate obfuscation score based on EFFECTIVE obfuscation metrics
+        # More realistic scoring that prevents inflated 100/100 scores
+        # Weights by actual effectiveness and penalizes false positives
 
-        # Reward symbol reduction (naturally positive for good obfuscation)
-        if symbol_reduction > 0:
-            score += min(30.0, symbol_reduction * 0.3)
+        score = 20.0  # Lower base score (only 20 instead of 50)
 
-        # Reward function reduction (naturally positive for good obfuscation)
-        if function_reduction > 0:
-            score += min(20.0, function_reduction * 0.2)
+        # ✅ EFFECTIVENESS WEIGHTING: Symbol reduction
+        # Only reward SIGNIFICANT symbol reduction (>30%) for meaningful points
+        if symbol_reduction > 30:
+            # High reduction: (symbol_reduction - 30) * 0.2, max 15 points
+            score += min(15.0, (symbol_reduction - 30) * 0.2)
+            self.logger.info(f"✓ Symbol reduction bonus: +{min(15.0, (symbol_reduction - 30) * 0.2):.1f} points (reduction: {symbol_reduction:.1f}%)")
+        elif symbol_reduction > 10:
+            # Moderate reduction: 0.5 to 3 points
+            score += (symbol_reduction - 10) * 0.1
+            self.logger.info(f"✓ Symbol reduction bonus: +{(symbol_reduction - 10) * 0.1:.1f} points (reduction: {symbol_reduction:.1f}%)")
+        # else: <10% reduction = no bonus (likely false positive)
 
-        # Reward entropy increase (naturally positive for good obfuscation)
-        if entropy_increase_val > 0:
-            score += min(10.0, entropy_increase_val * 0.1)
+        # ✅ EFFECTIVENESS WEIGHTING: Function reduction
+        # Only reward SIGNIFICANT function reduction (>20%) for meaningful points
+        if function_reduction > 20:
+            # High reduction: (function_reduction - 20) * 0.2, max 10 points
+            score += min(10.0, (function_reduction - 20) * 0.2)
+            self.logger.info(f"✓ Function reduction bonus: +{min(10.0, (function_reduction - 20) * 0.2):.1f} points (reduction: {function_reduction:.1f}%)")
+        elif function_reduction > 5:
+            # Moderate reduction: 0.3 to 3 points
+            score += (function_reduction - 5) * 0.1
+            self.logger.info(f"✓ Function reduction bonus: +{(function_reduction - 5) * 0.1:.1f} points (reduction: {function_reduction:.1f}%)")
+        # else: <5% reduction = no bonus
 
-        # ✅ NEW: Reward string obfuscation from MLIR pass (NOW CORRECTLY CALCULATED)
-        # Each 10% of strings encrypted adds 1 point, max 15 points
-        if string_encryption_percentage > 0:
-            score += min(15.0, (string_encryption_percentage / 10.0))
-            self.logger.info(f"✓ String obfuscation bonus: +{min(15.0, (string_encryption_percentage / 10.0)):.1f} points (from {string_encryption_percentage:.1f}% encryption)")
+        # ✅ EFFECTIVENESS WEIGHTING: Entropy increase (most important metric)
+        # Entropy is the strongest indicator of actual obfuscation effectiveness
+        # Award more generously for REAL entropy increase (>20% is good, >50% is excellent)
+        if entropy_increase_val > 50:
+            # Excellent entropy increase: max 25 points
+            score += min(25.0, 10.0 + (entropy_increase_val - 50) * 0.15)
+            self.logger.info(f"✓ Entropy increase bonus: +{min(25.0, 10.0 + (entropy_increase_val - 50) * 0.15):.1f} points (increase: {entropy_increase_val:.1f}%)")
+        elif entropy_increase_val > 20:
+            # Good entropy increase: 5 to 10 points
+            score += 5.0 + (entropy_increase_val - 20) * 0.1
+            self.logger.info(f"✓ Entropy increase bonus: +{5.0 + (entropy_increase_val - 20) * 0.1:.1f} points (increase: {entropy_increase_val:.1f}%)")
+        elif entropy_increase_val > 0:
+            # Minimal entropy increase: 0.5 to 5 points (not much protection)
+            score += entropy_increase_val * 0.1
+            self.logger.info(f"✓ Entropy increase bonus: +{entropy_increase_val * 0.1:.1f} points (increase: {entropy_increase_val:.1f}%)")
+        # else: No entropy increase = significant red flag
 
-        # ✅ NEW: Reward symbol obfuscation from MLIR pass
-        # Each 10% of symbols obfuscated adds 1 point, max 15 points
-        # Plus 5 base points for enabling the pass
+        # ✅ EFFECTIVENESS WEIGHTING: String obfuscation
+        # Only significant string encryption (>30%) provides meaningful protection
+        if string_encryption_percentage > 30:
+            # High encryption: (percentage - 30) * 0.15, max 10 points
+            score += min(10.0, (string_encryption_percentage - 30) * 0.15)
+            self.logger.info(f"✓ String obfuscation bonus: +{min(10.0, (string_encryption_percentage - 30) * 0.15):.1f} points (encryption: {string_encryption_percentage:.1f}%)")
+        elif string_encryption_percentage > 5:
+            # Moderate encryption: 0.5 to 3 points
+            score += (string_encryption_percentage - 5) * 0.05
+            self.logger.info(f"✓ String obfuscation bonus: +{(string_encryption_percentage - 5) * 0.05:.1f} points (encryption: {string_encryption_percentage:.1f}%)")
+        # else: <5% encryption = negligible protection
+
+        # ✅ EFFECTIVENESS WEIGHTING: Symbol obfuscation from MLIR pass
+        # Only significant symbol obfuscation (>40%) provides meaningful protection
         if "symbol-obfuscate" in passes:
-            if symbol_obfuscation_percentage > 0:
-                symbol_bonus = min(15.0, (symbol_obfuscation_percentage / 10.0)) + 5.0  # % bonus + pass bonus
+            if symbol_obfuscation_percentage > 40:
+                # High obfuscation: (percentage - 40) * 0.1, max 10 points
+                symbol_bonus = min(10.0, (symbol_obfuscation_percentage - 40) * 0.1)
                 score += symbol_bonus
-                self.logger.info(f"✓ Symbol obfuscation bonus: +{symbol_bonus:.1f} points (from {symbol_obfuscation_percentage:.1f}% obfuscation)")
+                self.logger.info(f"✓ Symbol obfuscation bonus: +{symbol_bonus:.1f} points (obfuscation: {symbol_obfuscation_percentage:.1f}%)")
+            elif symbol_obfuscation_percentage > 10:
+                # Moderate obfuscation: 0.3 to 3 points
+                symbol_bonus = (symbol_obfuscation_percentage - 10) * 0.05
+                score += symbol_bonus
+                self.logger.info(f"✓ Symbol obfuscation bonus: +{symbol_bonus:.1f} points (obfuscation: {symbol_obfuscation_percentage:.1f}%)")
             else:
-                # Pass enabled but no metrics available - give pass bonus only
-                score += 10.0
-                self.logger.info("✓ Symbol obfuscation bonus: +10 points (pass enabled, metrics unavailable)")
+                # Pass enabled but low metrics: 1 point (pass penalty)
+                score += 1.0
+                self.logger.info("✓ Symbol obfuscation bonus: +1 point (pass enabled but low effectiveness)")
 
-        # Small penalty for binary size increase (but obfuscation always increases size somewhat)
-        # Only penalize if size increase is extreme (>100%)
-        if size_reduction > 100:
-            score -= min(10.0, (size_reduction - 100) * 0.05)
+        # ✅ FALSE POSITIVE DETECTION: Check for metric misalignment
+        # If metrics don't align, it suggests misleading obfuscation
+        has_high_symbol_reduction = symbol_reduction > 30
+        has_high_entropy_increase = entropy_increase_val > 20
+        has_passes_enabled = len(passes) > 0
 
-        score = min(100.0, max(0.0, score))
+        if has_passes_enabled and has_high_symbol_reduction and not has_high_entropy_increase:
+            # Suspicious: High symbol reduction but low entropy = misleading obfuscation
+            penalty = min(5.0, (symbol_reduction / 100) * 3)
+            score -= penalty
+            self.logger.warning(f"⚠️  False positive detection: High symbol reduction ({symbol_reduction:.1f}%) but low entropy increase ({entropy_increase_val:.1f}%). Penalizing by {penalty:.1f} points.")
+
+        # ✅ PENALTY: Extreme binary size increase (>200%) suggests bloated obfuscation
+        if size_reduction > 200:
+            penalty = min(15.0, (size_reduction - 200) * 0.05)
+            score -= penalty
+            self.logger.info(f"✓ Binary size penalty: -{penalty:.1f} points (size increase: {size_reduction:.1f}%)")
+
+        # Final clamping: Max score 85 (preventing easy 100/100), Min 0
+        score = min(85.0, max(0.0, score))
 
         # ✅ FIX: Bogus code info from actual IR analysis or estimation
         # Prefer actual metrics from IR analysis, fall back to estimation if not available

@@ -1,6 +1,8 @@
 // Loop-heavy example to demonstrate Polygeist's affine/SCF dialect advantages
 // Polygeist can analyze and obfuscate these structured loops more effectively
 
+//Simple code
+
 #include <stdio.h>
 
 #define SIZE 100

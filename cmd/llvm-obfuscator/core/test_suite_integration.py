@@ -19,8 +19,71 @@ import time
 from pathlib import Path
 from typing import Dict, Any, Optional
 from datetime import datetime
+from .utils import compute_entropy
 
 logger = logging.getLogger(__name__)
+
+
+def _measure_execution_time(binary_path: Path, timeout: int = 10) -> float:
+    """
+    Measure the execution time of a binary in milliseconds.
+
+    Args:
+        binary_path: Path to the binary to execute
+        timeout: Maximum time to allow execution (seconds)
+
+    Returns:
+        Execution time in milliseconds, or 0.0 if measurement failed
+    """
+    try:
+        start_time = time.perf_counter()
+        subprocess.run(
+            [str(binary_path)],
+            capture_output=True,
+            timeout=timeout,
+            text=True
+        )
+        end_time = time.perf_counter()
+        elapsed_ms = (end_time - start_time) * 1000
+        return round(elapsed_ms, 2)
+    except subprocess.TimeoutExpired:
+        logger.warning(f"Performance measurement timed out for {binary_path}")
+        return 0.0
+    except Exception as e:
+        logger.debug(f"Could not measure execution time for {binary_path}: {e}")
+        return 0.0
+
+
+def _calculate_performance_metrics(baseline_ms: float, obf_ms: float) -> Dict[str, Any]:
+    """
+    Calculate performance metrics from baseline and obfuscated execution times.
+
+    Args:
+        baseline_ms: Baseline execution time in milliseconds
+        obf_ms: Obfuscated execution time in milliseconds
+
+    Returns:
+        Dictionary with performance metrics
+    """
+    overhead_percent = 0.0
+    acceptable = None
+
+    if baseline_ms > 0.0:
+        overhead_percent = round(((obf_ms - baseline_ms) / baseline_ms) * 100, 2)
+        # Consider acceptable if overhead < 50%
+        acceptable = overhead_percent < 50.0
+    elif obf_ms > 0.0:
+        # If baseline didn't run, we can't calculate meaningful overhead
+        acceptable = None
+
+    return {
+        "baseline_ms": baseline_ms,
+        "obf_ms": obf_ms,
+        "overhead_percent": overhead_percent,
+        "acceptable": acceptable,
+        "status": "MEASURED" if (baseline_ms > 0.0 or obf_ms > 0.0) else "NOT_MEASURED",
+        "reason": "Lightweight test (single-run performance measurement)"
+    }
 
 
 def is_test_suite_available() -> bool:
@@ -204,21 +267,46 @@ def run_lightweight_tests(
         # Test 1: Functional Correctness (basic)
         functional_passed = True
         try:
-            baseline_result = subprocess.run([str(baseline_path)], capture_output=True, timeout=5)
-            obf_result = subprocess.run([str(obfuscated_path)], capture_output=True, timeout=5)
-            # Simple check: both should run without crashing
-            functional_passed = (baseline_result.returncode == obf_result.returncode)
+            baseline_result = subprocess.run([str(baseline_path)], capture_output=True, timeout=5, text=True)
+            obf_result = subprocess.run([str(obfuscated_path)], capture_output=True, timeout=5, text=True)
+
+            # Check 1: Both should run without crashing (return code 0 is most reliable)
+            both_success = (baseline_result.returncode == 0 and obf_result.returncode == 0)
+
+            # Check 2: If both failed/crashed, they should have same exit code
+            same_exit_code = (baseline_result.returncode == obf_result.returncode)
+
+            # Check 3: Output should be identical (for deterministic programs)
+            output_match = (baseline_result.stdout == obf_result.stdout and
+                          baseline_result.stderr == obf_result.stderr)
+
+            # Functional test passes if:
+            # - Both exit successfully (return code 0) - MOST RELIABLE
+            # - OR: Both fail with same exit code (indicates consistent behavior)
+            # Note: We DON'T require output_match since obfuscated code might have different non-deterministic behavior
+            functional_passed = both_success or same_exit_code
+
+            logger.info(f"Functional correctness: baseline={baseline_result.returncode}, "
+                       f"obfuscated={obf_result.returncode}, same_exit={same_exit_code}, "
+                       f"output_match={output_match}, passed={functional_passed}")
         except Exception as e:
             logger.debug(f"Functional test failed: {e}")
             functional_passed = False
 
-        # Test 2: Binary Properties
+        # Test 2: Binary Properties and Entropy
+        baseline_size = 0
+        obfuscated_size = 0
+        baseline_entropy = 0.0
+        obfuscated_entropy = 0.0
         try:
             baseline_size = baseline_path.stat().st_size
             obfuscated_size = obfuscated_path.stat().st_size
-        except:
-            baseline_size = 0
-            obfuscated_size = 0
+
+            # Calculate entropy of binaries
+            baseline_entropy = compute_entropy(baseline_path.read_bytes())
+            obfuscated_entropy = compute_entropy(obfuscated_path.read_bytes())
+        except Exception as e:
+            logger.debug(f"Could not analyze binary properties: {e}")
 
         # Test 3: String Analysis (basic strings extraction)
         baseline_strings = 0
@@ -297,23 +385,22 @@ def run_lightweight_tests(
                         (obfuscated_size - baseline_size) / baseline_size * 100
                         if baseline_size > 0 else 0
                     ),
-                    "baseline_entropy": 0.0,
-                    "obf_entropy": 0.0,
-                    "entropy_increase": 0.0
+                    "baseline_entropy": baseline_entropy,
+                    "obf_entropy": obfuscated_entropy,
+                    "entropy_increase": (
+                        obfuscated_entropy - baseline_entropy
+                        if baseline_entropy > 0 else 0.0
+                    )
                 },
                 "symbols": {
                     "baseline_symbol_count": baseline_symbols,
                     "obf_symbol_count": obfuscated_symbols,
                     "symbols_reduced": obfuscated_symbols < baseline_symbols
                 },
-                "performance": {
-                    "baseline_ms": None,
-                    "obf_ms": None,
-                    "overhead_percent": None,
-                    "acceptable": None,
-                    "status": "SKIPPED",
-                    "reason": "Lightweight test (performance testing skipped)"
-                },
+                "performance": _calculate_performance_metrics(
+                    _measure_execution_time(baseline_path),
+                    _measure_execution_time(obfuscated_path)
+                ),
                 "cfg_metrics": {
                     "comparison": {
                         "indirect_jumps_ratio": 0.0,

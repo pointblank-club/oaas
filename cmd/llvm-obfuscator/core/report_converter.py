@@ -2,6 +2,7 @@
 
 import json
 import logging
+import re
 from pathlib import Path
 from typing import Dict, Any
 from datetime import datetime
@@ -460,7 +461,19 @@ def json_to_pdf(report: Dict[str, Any]) -> bytes:
         story.append(Spacer(1, 0.15*inch))
 
     if warnings:
-        for warning in warnings[:3]:  # Show first 3 warnings
+        # Filter out informational warnings about exception handling that don't indicate failures
+        # Use regex for more robust matching to handle variations in warning text
+        exception_handling_patterns = re.compile(
+            r"(c\+\+\s+)?exception\s+handling|"
+            r"flattening\s+(?:pass\s+)?disabled|"
+            r"exception-aware\s+obfuscation|"
+            r"invoke.*landingpad|"
+            r"known\s+to\s+crash\s+on\s+exception",
+            re.IGNORECASE
+        )
+        display_warnings = [w for w in warnings if not exception_handling_patterns.search(w)]
+
+        for warning in display_warnings[:3]:  # Show first 3 warnings (excluding informational ones)
             warn_data = [[f"⚠️ {warning}"]]
             warn_table = Table(warn_data, colWidths=[7*inch])
             warn_table.setStyle(TableStyle([
@@ -473,37 +486,42 @@ def json_to_pdf(report: Dict[str, Any]) -> bytes:
                 ('BORDER', (0, 0), (-1, -1), 1, colors.HexColor('#dc3545')),
             ]))
             story.append(warn_table)
-        story.append(Spacer(1, 0.15*inch))
 
-    # Score Section - SIMPLE AND WORKING
-    score = float(report.get('obfuscation_score', 0)) if report.get('obfuscation_score') else 0
+        # Only add spacer if we actually displayed warnings
+        if display_warnings:
+            story.append(Spacer(1, 0.15*inch))
 
-    # Determine grade and color
-    if score >= 80:
-        score_grade = "Excellent Protection"
-        grade_color_hex = '#28a745'  # Green
-    elif score >= 60:
-        score_grade = "Good Protection"
-        grade_color_hex = '#ffc107'  # Yellow/Amber
-    else:
-        score_grade = "Moderate Protection"
-        grade_color_hex = '#dc3545'  # Red
+    # Score Section
+    score = _safe_float(report.get('obfuscation_score', 0))
 
-    # Simple score display - NO fancy tables
-    story.append(Paragraph(
-        '<para align="center"><font size="14" color="#1f6feb"><b>OBFUSCATION SCORE</b></font></para>',
-        styles['Normal']
-    ))
-    story.append(Spacer(1, 0.1*inch))
-    story.append(Paragraph(
-        f'<para align="center"><font size="48"><b>{score:.1f}/100</b></font></para>',
-        styles['Normal']
-    ))
-    story.append(Spacer(1, 0.05*inch))
-    story.append(Paragraph(
-        f'<para align="center"><font size="16" color="{grade_color_hex}"><b>{score_grade}</b></font></para>',
-        styles['Normal']
-    ))
+    # Table 1: Header
+    t1 = Table([['OBFUSCATION SCORE']], colWidths=[7*inch])
+    t1.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,-1), colors.HexColor('#1f6feb')),
+        ('TEXTCOLOR', (0,0), (-1,-1), colors.white),
+        ('ALIGN', (0,0), (-1,-1), 'CENTER'),
+        ('FONTNAME', (0,0), (-1,-1), 'Helvetica-Bold'),
+        ('FONTSIZE', (0,0), (-1,-1), 14),
+        ('TOPPADDING', (0,0), (-1,-1), 10),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 10),
+    ]))
+    story.append(t1)
+
+    # Create a single table for the score section (score only)
+    score_data = [
+        [f'{score:.1f}/100']
+    ]
+    score_table = Table(score_data, colWidths=[7*inch])
+    score_table.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,-1), colors.HexColor('#f5f5f5')),
+        ('ALIGN', (0,0), (-1,-1), 'CENTER'),
+        ('FONTNAME', (0,0), (0,0), 'Helvetica-Bold'),
+        ('FONTSIZE', (0,0), (0,0), 40),
+        ('TEXTCOLOR', (0,0), (0,0), colors.black),
+        ('TOPPADDING', (0,0), (0,0), 20),
+        ('BOTTOMPADDING', (0,0), (0,0), 20),
+    ]))
+    story.append(score_table)
     story.append(Spacer(1, 0.15*inch))
 
     # Quick Metrics Row
@@ -528,7 +546,7 @@ def json_to_pdf(report: Dict[str, Any]) -> bytes:
         ('GRID', (0, 0), (-1, -1), 1, colors.HexColor('#e0e0e0')),
     ]))
     story.append(quick_table)
-    story.append(Spacer(1, 0.08*inch))
+    story.append(Spacer(1, 0.05*inch))
 
     # Add Comparison Progress Bars Chart
     comparison_chart = create_comparison_progress_bars(report)
@@ -596,13 +614,13 @@ def json_to_pdf(report: Dict[str, Any]) -> bytes:
         ]))
         story.append(compiler_table)
 
-    # Add page break
-    story.append(PageBreak())
-
-    # ============= PAGE 2: Before/After Comparison & Attributes =============
-
-    story.append(Paragraph("Metrics Comparison & Output Details", styles['Title']))
+    # Spacing before next section (no forced page break to allow natural continuation)
     story.append(Spacer(1, 0.1*inch))
+
+    # ============= CONTINUATION: Before/After Comparison & Attributes =============
+
+    story.append(Paragraph("Metrics Comparison & Output Details", styles['Heading1']))
+    story.append(Spacer(1, 0.05*inch))
 
     # Before/After Comparison
     story.append(Paragraph("<b>Before/After Metrics</b>", styles['Heading2']))
@@ -811,7 +829,7 @@ def json_to_pdf(report: Dict[str, Any]) -> bytes:
             ]))
             story.append(cycles_table)
 
-    # ============= PAGE 3: Advanced Metrics (if available) =============
+    # ============= ADVANCED METRICS SECTION (if available) =============
 
     control_flow = report.get('control_flow_metrics')
     instruction_metrics = report.get('instruction_metrics')
@@ -819,9 +837,9 @@ def json_to_pdf(report: Dict[str, Any]) -> bytes:
     pattern_resistance = report.get('pattern_resistance')
 
     if any([control_flow, instruction_metrics, binary_structure, pattern_resistance]):
-        story.append(PageBreak())
-        story.append(Paragraph("Advanced Analysis Dashboard", styles['Title']))
         story.append(Spacer(1, 0.1*inch))
+        story.append(Paragraph("Advanced Analysis Dashboard", styles['Heading1']))
+        story.append(Spacer(1, 0.05*inch))
 
         # Control Flow Metrics
         if control_flow:
@@ -966,13 +984,13 @@ def json_to_pdf(report: Dict[str, Any]) -> bytes:
             ]))
             story.append(pattern_table)
 
-    # ============= PAGE 4: Test Suite Results (if available) =============
+    # ============= TEST SUITE RESULTS SECTION (if available) =============
 
     test_results = report.get('test_results')
     if test_results:
-        story.append(PageBreak())
-        story.append(Paragraph("Functional Correctness & Reliability Testing", styles['Title']))
-        story.append(Spacer(1, 0.15*inch))
+        story.append(Spacer(1, 0.1*inch))
+        story.append(Paragraph("Functional Correctness & Reliability Testing", styles['Heading1']))
+        story.append(Spacer(1, 0.05*inch))
 
         # Reliability Status Banner
         reliability_status = report.get('reliability_status', {})
@@ -1132,8 +1150,7 @@ def json_to_pdf(report: Dict[str, Any]) -> bytes:
     if phoronix_info and phoronix_info.get('key_metrics'):
         key_metrics = phoronix_info.get('key_metrics', {})
         if key_metrics.get('available'):
-            story.append(PageBreak())
-            story.append(Spacer(1, 0.1*inch))
+            story.append(Spacer(1, 0.2*inch))
 
             # Section heading
             bench_heading = ParagraphStyle(

@@ -323,28 +323,72 @@ class IRAnalyzer:
         """Estimate MBA (Mixed Boolean-Arithmetic) expressions.
 
         MBA expressions mix arithmetic and boolean operations.
-        Heuristic: Count complex arithmetic chains.
+        This improved detector recognizes:
+        1. Direct multi-op on same line (traditional chaining)
+        2. Linear MBA synthetic expressions (chains of arithmetic ops)
+        3. Interleaved arithmetic+boolean operations
         """
         count = 0
+        lines = ir_text.split('\n')
+        arithmetic_ops = {'add', 'sub', 'mul', 'div', 'udiv', 'sdiv', 'urem', 'srem', 'shl', 'lshr', 'ashr'}
+        boolean_ops = {'xor', 'and', 'or'}
 
-        # Look for lines with multiple operations
-        for line in ir_text.split('\n'):
+        # Track variables used in chains to identify Linear MBA patterns
+        var_usage = {}  # Maps variable names to list of operations they're used in
+        for i, line in enumerate(lines):
             line = line.strip()
+            if not line or line.startswith(';'):
+                continue
 
-            # Count operations on same line (would indicate chaining/MBA)
-            ops = 0
-            if ' add ' in line:
-                ops += 1
-            if ' mul ' in line or ' div ' in line:
-                ops += 1
-            if ' xor ' in line or ' and ' in line or ' or ' in line:
-                ops += 1
-            if ' shl ' in line or ' lshr ' in line:
-                ops += 1
+            # Extract the assigned variable
+            var_match = re.match(r'(%[\w.]+)\s*=', line)
+            if not var_match:
+                continue
 
-            # If multiple operations in expression, likely MBA-like
-            if ops >= 2:
+            var = var_match.group(1)
+
+            # Count operations in this line
+            op_count = 0
+            found_ops = []
+            for op in arithmetic_ops | boolean_ops:
+                if f' {op} ' in line or f' {op}\t' in line:
+                    op_count += 1
+                    found_ops.append(op)
+
+            # Pattern 1: Multiple operations on same line (direct MBA)
+            if op_count >= 2:
                 count += 1
+            # Pattern 2: Arithmetic operations (foundation of Linear MBA)
+            elif op_count >= 1 and any(op in arithmetic_ops for op in found_ops):
+                # Track this variable for chain detection
+                if var not in var_usage:
+                    var_usage[var] = []
+                var_usage[var].append(('arithmetic', i))
+
+        # Pattern 3: Detect Linear MBA chains (variable reuse in dependent operations)
+        # Look for sequences where one operation's output feeds into another
+        for i, line in enumerate(lines):
+            line = line.strip()
+            if not line or line.startswith(';'):
+                continue
+
+            var_match = re.match(r'(%[\w.]+)\s*=', line)
+            if not var_match:
+                continue
+
+            var = var_match.group(1)
+
+            # Check if this instruction uses any of the previously computed variables
+            for prev_var in var_usage.keys():
+                if prev_var != var and prev_var in line:
+                    # Check if it's an arithmetic/boolean operation
+                    for op in arithmetic_ops | boolean_ops:
+                        if f' {op} ' in line or f' {op}\t' in line:
+                            # This is a chain: prev_var -> operation -> var
+                            # Only count if it's part of a chain of 2+ operations
+                            count += 1
+                            break  # Count once per line even if multiple ops found
+                    break  # Only count once per variable match
 
         return count
 

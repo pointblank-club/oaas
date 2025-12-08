@@ -61,7 +61,8 @@ class LLVMObfuscator:
     def __init__(self, reporter: Optional[ObfuscationReport] = None) -> None:
         self.logger = create_logger(__name__)
         self.reporter = reporter
-        self.fake_loop_generator = FakeLoopGenerator()
+        # Use random seed for fake loops to ensure different output each compilation
+        self.fake_loop_generator = FakeLoopGenerator(seed=int.from_bytes(os.urandom(4), 'big'))
         self.remarks_collector = RemarksCollector()
         self.upx_packer = UPXPacker()
         # ✅ NEW: Initialize IR analyzer for advanced metrics

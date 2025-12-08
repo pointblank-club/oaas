@@ -4256,6 +4256,68 @@ function App() {
                 flagO3 && flagStripSymbols && flagNoBuiltin && flagLTO
                 ? 'Deselect All' : 'Select All'}
             </button>
+            <button
+              className="select-all-btn"
+              onClick={() => {
+                // Helper function to get random integer in range [min, max]
+                const randomInt = (min: number, max: number) => Math.floor(Math.random() * (max - min + 1)) + min;
+
+                // Helper function to pick random item from array
+                const randomChoice = <T,>(arr: T[]): T => arr[Math.floor(Math.random() * arr.length)];
+
+                // Helper function for random boolean
+                const randomBool = () => Math.random() > 0.5;
+
+                // Enable all layers
+                setLayer1(true);
+                setLayer2(true);
+                setLayer2_5(true);
+                setLayer3(true);
+                setLayer4(true);
+                setLayer5(true);
+
+                // Layer 1: Symbol Obfuscation - randomize values
+                setSymbolAlgorithm(randomChoice(['sha256', 'blake2b', 'siphash']));
+                setSymbolHashLength(randomInt(8, 32));
+                setSymbolPrefix(randomChoice(['none', 'typed', 'underscore']));
+
+                // Layer 2: String Encryption - randomize numeric values only
+                setStringMinLength(randomInt(1, 20));
+                setStringEncryptFormatStrings(true);
+                setFakeLoops(randomInt(0, 50));
+
+                // Layer 2.5: Indirect Calls - just enable (no randomization)
+                setIndirectStdlib(true);
+                setIndirectCustom(true);
+
+                // Layer 3: OLLVM Passes - enable all and randomize numeric values only
+                setPassFlattening(true);
+                setPassSubstitution(true);
+                setPassBogusControlFlow(true);
+                setPassSplitBasicBlocks(true);
+                setPassLinearMBA(true);
+                setOllvmSplitNum(randomInt(1, 10));
+                setOllvmBogusLoop(randomInt(1, 5));
+                setCycles(randomInt(1, 5));
+
+                // Layer 4: Compiler Flags - enable all (no randomization)
+                setFlagSymbolHiding(true);
+                setFlagOmitFramePointer(true);
+                setFlagSpeculativeLoadHardening(true);
+                setFlagO3(true);
+                setFlagStripSymbols(true);
+                setFlagNoBuiltin(true);
+                setFlagLTO(true);
+
+                // Layer 5: UPX Packing - enable with defaults (no randomization)
+                setUpxCompression('best');
+                setUpxLzma(true);
+                setUpxPreserveOriginal(false);
+              }}
+              title="Randomize all settings - enables all layers and randomizes Layer 1, 2, 3 values"
+            >
+              Randomize
+            </button>
           </div>
           <div className="layers-grid">
             {/* Layer 1: Symbol Obfuscation */}

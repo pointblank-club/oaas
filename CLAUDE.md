@@ -6,7 +6,7 @@
 2. Deployment is at https://oaas.pointblank.club
 3. NEVER EVER CO AUTHOR CLAUDE OR MENTION CLAUDE IN ANY PR OR COMMITS
 4. ALWAYS WRITE .md FILES TO /docs DIR AND ONLY CREATE NEW .md file IF IT CANNOT BE ADDED / MERGED IN AN EXISTING DOC 
-5. Our original repo ran out of CI credits, now we push to a fork : https://github.com/slashexx/oaas
+5. We push and raise PR's to https://github.com/slashexx/oaas
 
 
 ## Production Server

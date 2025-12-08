@@ -1998,6 +1998,9 @@ class LLVMObfuscator:
             if ir_file.exists():
                 # Convert IR back to binary without any obfuscation passes
                 final_cmd = [compiler, str(ir_file), "-o", str(baseline_abs)]
+                # Add cross-compilation flags for Windows/macOS targets
+                cross_compile_flags = self._get_cross_compile_flags(config.platform, config.architecture)
+                final_cmd.extend(cross_compile_flags)
                 self.logger.debug(f"Baseline binary compilation command: {' '.join(final_cmd)}")
                 run_command(final_cmd)
 

@@ -25,12 +25,17 @@ target_include_directories(MLIRObfuscation
     ${LLVM_INCLUDE_DIRS}
 )
 
-# Link only against OpenSSL for crypto functions
-# DO NOT link against MLIR/LLVM static libs to avoid duplicate symbol registration
+# Link against MLIR/LLVM shared libraries and OpenSSL
 target_link_libraries(MLIRObfuscation
   PRIVATE
+    MLIR
+    LLVM
     OpenSSL::Crypto
 )
 
 # Add LLVM/MLIR compile definitions
 target_compile_definitions(MLIRObfuscation PRIVATE ${LLVM_DEFINITIONS})
+
+# CRITICAL: Match LLVM build settings - no RTTI, no exceptions
+# LLVM was built with LLVM_ENABLE_RTTI=OFF and LLVM_ENABLE_EH=OFF
+target_compile_options(MLIRObfuscation PRIVATE -fno-rtti -fno-exceptions)

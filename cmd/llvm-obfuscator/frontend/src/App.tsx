@@ -1817,6 +1817,7 @@ function App() {
   const [dogboltLoading, setDogboltLoading] = useState(false);
   const [dogboltError, setDogboltError] = useState<string | null>(null);
   const [selectedDecompiler, setSelectedDecompiler] = useState<string | null>(null);
+  const [dogboltCountdown, setDogboltCountdown] = useState<number | null>(null); // Total seconds remaining
 
   // Original binary decompilation results state
   const [originalDogboltResults, setOriginalDogboltResults] = useState<any>(null);
@@ -1901,6 +1902,35 @@ function App() {
       .then(res => setServerStatus(res.ok ? 'online' : 'offline'))
       .catch(() => setServerStatus('offline'));
   }, []);
+
+  // Dogbolt countdown timer effect
+  useEffect(() => {
+    // Stop timer immediately when results are ready (no pending decompilers)
+    if (dogboltResults && dogboltResults.pending === 0) {
+      setDogboltCountdown(null);
+      return;
+    }
+    
+    if (dogboltLoading && (!dogboltResults || (dogboltResults && dogboltResults.pending > 0)) && !dogboltError) {
+      // Start countdown at 5 minutes (300 seconds) immediately (only if not already set)
+      setDogboltCountdown(prev => prev === null ? 300 : prev);
+      
+      // Decrement countdown every second
+      const interval = setInterval(() => {
+        setDogboltCountdown(prev => {
+          if (prev === null || prev <= 0) {
+            return 0; // Keep at 0 when time is up
+          }
+          return prev - 1;
+        });
+      }, 1000); // 1 second
+      
+      return () => clearInterval(interval);
+    } else {
+      // Reset countdown when loading stops or results are received
+      setDogboltCountdown(null);
+    }
+  }, [dogboltLoading, dogboltResults, dogboltError]);
 
   // Restore session on mount
   useEffect(() => {
@@ -2957,10 +2987,38 @@ function App() {
               const finishedDecompilers = new Set<string>();
               const bestVersions: Record<string, any> = {};
               const startTime = Date.now();
+              const MAX_TIMEOUT_SECONDS = 300; // 5 minutes maximum (reduced from 10)
+              let pollTimeoutId: NodeJS.Timeout | null = null;
               
               // Polling function
               const pollResults = async (): Promise<void> => {
                 try {
+                  const elapsedSecs = Math.floor((Date.now() - startTime) / 1000);
+                  
+                  // Check for timeout
+                  if (elapsedSecs >= MAX_TIMEOUT_SECONDS) {
+                    console.warn('[DOGBOLT] Polling timeout reached, stopping');
+                    const timeoutData = {
+                      binary_id: binaryId,
+                      decompilers: results,
+                      total_decompilers: totalDecompilers,
+                      completed: results.filter(r => r.has_code).length,
+                      failed: results.filter(r => r.error).length + (totalDecompilers - finishedDecompilers.size),
+                      pending: 0,
+                      elapsed_seconds: elapsedSecs,
+                      error: `Decompilation timeout after ${MAX_TIMEOUT_SECONDS} seconds. Some decompilers may still be processing.`
+                    };
+                    
+                    if (isOriginal) {
+                      setOriginalDogboltResults(timeoutData);
+                      setOriginalDogboltLoading(false);
+                    } else {
+                      setDogboltResults(timeoutData);
+                      setDogboltLoading(false);
+                    }
+                    return;
+                  }
+                  
                   const allResults = await fetchArray(resultUrl);
                   
                   // Find best version for each decompiler
@@ -2998,19 +3056,46 @@ function App() {
                         const codeData = await codeResponse.json();
                         const code = codeData.code || '';
                         
+                        // Check if code is empty or only whitespace
+                        const trimmedCode = code.trim();
+                        if (!trimmedCode || trimmedCode.length === 0) {
+                          // Mark as failed with empty code error
+                          results.push({
+                            decompiler_name: decompilerName,
+                            decompiler_version: decompilerVersion,
+                            decompiler_key: decompilerKey,
+                            code: '',
+                            has_code: false,
+                            error: 'Empty decompile result',
+                            language: decompilerName === 'Snowman' ? 'cpp' : 'c',
+                            analysis_time: resultData.analysis_time,
+                            created: resultData.created,
+                          });
+                        } else {
+                          results.push({
+                            decompiler_name: decompilerName,
+                            decompiler_version: decompilerVersion,
+                            decompiler_key: decompilerKey,
+                            code: code,
+                            has_code: true,
+                            language: decompilerName === 'Snowman' ? 'cpp' : 'c',
+                            analysis_time: resultData.analysis_time,
+                            created: resultData.created,
+                          });
+                        }
+                        finishedDecompilers.add(decompilerName);
+                      } catch (downloadErr) {
+                        console.error(`[DOGBOLT] Failed to download from ${decompilerName}:`, downloadErr);
+                        // Mark as failed
                         results.push({
                           decompiler_name: decompilerName,
                           decompiler_version: decompilerVersion,
                           decompiler_key: decompilerKey,
-                          code: code,
-                          has_code: true,
-                          language: decompilerName === 'Snowman' ? 'cpp' : 'c',
-                          analysis_time: resultData.analysis_time,
-                          created: resultData.created,
+                          error: downloadErr instanceof Error ? downloadErr.message : 'Download failed',
+                          has_code: false,
+                          language: 'c',
                         });
                         finishedDecompilers.add(decompilerName);
-                      } catch (downloadErr) {
-                        console.error(`[DOGBOLT] Failed to download from ${decompilerName}:`, downloadErr);
                       }
                     } else if (resultData.error) {
                       results.push({
@@ -3025,7 +3110,6 @@ function App() {
                     }
                   }
                   
-                  const elapsedSecs = Math.floor((Date.now() - startTime) / 1000);
                   const pending = totalDecompilers - finishedDecompilers.size;
                   
                   if (pending > 0) {
@@ -3034,7 +3118,7 @@ function App() {
                       binary_id: binaryId,
                       decompilers: results,
                       total_decompilers: totalDecompilers,
-                      completed: finishedDecompilers.size,
+                      completed: results.filter(r => r.has_code).length,
                       failed: results.filter(r => r.error).length,
                       pending: pending,
                       elapsed_seconds: elapsedSecs,
@@ -3046,7 +3130,9 @@ function App() {
                       setDogboltResults(updateData);
                     }
                     
-                    setTimeout(pollResults, 5000);
+                    // Poll more frequently at first, then slow down
+                    const pollDelay = elapsedSecs < 60 ? 3000 : 5000; // 3s for first minute, then 5s
+                    pollTimeoutId = setTimeout(pollResults, pollDelay);
                   } else {
                     // All done
                     const successful = results.filter(r => r.has_code).length;
@@ -3105,7 +3191,33 @@ function App() {
                   }
                 } catch (pollErr) {
                   console.error('[DOGBOLT] Polling error:', pollErr);
-                  setTimeout(pollResults, 5000);
+                  const elapsedSecs = Math.floor((Date.now() - startTime) / 1000);
+                  
+                  // Only retry if we haven't timed out
+                  if (elapsedSecs < MAX_TIMEOUT_SECONDS) {
+                    const pollDelay = elapsedSecs < 60 ? 3000 : 5000; // 3s for first minute, then 5s
+                    pollTimeoutId = setTimeout(pollResults, pollDelay);
+                  } else {
+                    // Timeout reached, stop polling
+                    const timeoutData = {
+                      binary_id: binaryId,
+                      decompilers: results,
+                      total_decompilers: totalDecompilers,
+                      completed: results.filter(r => r.has_code).length,
+                      failed: results.filter(r => r.error).length + (totalDecompilers - finishedDecompilers.size),
+                      pending: 0,
+                      elapsed_seconds: elapsedSecs,
+                      error: `Decompilation timeout after ${MAX_TIMEOUT_SECONDS} seconds. Error: ${pollErr instanceof Error ? pollErr.message : String(pollErr)}`
+                    };
+                    
+                    if (isOriginal) {
+                      setOriginalDogboltResults(timeoutData);
+                      setOriginalDogboltLoading(false);
+                    } else {
+                      setDogboltResults(timeoutData);
+                      setDogboltLoading(false);
+                    }
+                  }
                 }
               };
               
@@ -5288,33 +5400,48 @@ function App() {
           <section className="section report-section">
             <h2 className="section-title" style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
               [6] DOGBOLT DECOMPILATION RESULTS
-              {dogboltLoading && (
-                <div style={{
-                  width: '16px',
-                  height: '16px',
-                  border: '2px solid var(--border-color)',
-                  borderTop: '2px solid var(--accent)',
-                  borderRadius: '50%',
-                  animation: 'spin 1s linear infinite',
-                  flexShrink: 0
-                }} />
-              )}
             </h2>
             
-            {dogboltLoading && !dogboltResults && !dogboltError && (
+            {dogboltLoading && (!dogboltResults || !dogboltResults.decompilers?.some((d: any) => d.has_code)) && !dogboltError && (
               <div style={{ padding: '20px', textAlign: 'center', color: 'var(--text-secondary)' }}>
-                <div style={{ fontSize: '2em', marginBottom: '10px' }}>⏳</div>
-                <p style={{ fontSize: '1.1em', fontWeight: 'bold', marginBottom: '10px' }}>
-                  Decompiling obfuscated binary with dogbolt.org...
-                </p>
-                <p style={{ fontSize: '0.9em', marginTop: '10px' }}>
-                  This may take 1-2 minutes as we wait for all decompilers to complete.
-                </p>
-                <div style={{ marginTop: '20px', padding: '15px', backgroundColor: 'var(--bg-secondary)', borderRadius: '8px', fontSize: '0.9em' }}>
-                  <p style={{ margin: '5px 0' }}>✓ Uploading binary to dogbolt.org</p>
-                  <p style={{ margin: '5px 0', color: 'var(--text-secondary)' }}>⏳ Waiting for decompilers to process...</p>
-                  <p style={{ margin: '5px 0', color: 'var(--text-secondary)' }}>⏳ Fetching decompiled code...</p>
+                <div style={{ fontSize: '2em', marginBottom: '10px', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+                  <div style={{
+                    width: '16px',
+                    height: '16px',
+                    border: '2px solid var(--border-color)',
+                    borderTop: '2px solid var(--accent)',
+                    borderRadius: '50%',
+                    animation: 'spin 1s linear infinite',
+                    flexShrink: 0
+                  }} />
                 </div>
+                <p style={{ fontSize: '1.1em', fontWeight: 'bold', marginBottom: '10px' }}>
+                  Decompiling obfuscated binary for analysis...
+                </p>
+                <p style={{ fontSize: '1em', fontWeight: 'bold', marginBottom: '10px', color: 'var(--accent)' }}>
+                  {dogboltCountdown !== null && dogboltCountdown > 0 ? (() => {
+                    const minutes = Math.floor(dogboltCountdown / 60);
+                    const seconds = dogboltCountdown % 60;
+                    if (minutes > 1) {
+                      return `Loading results in ${minutes} minutes ${seconds} seconds`;
+                    } else if (minutes === 1) {
+                      return 'About 1 minute remaining';
+                    } else {
+                      return `Loading results in ${seconds} seconds`;
+                    }
+                  })() : 'Loading results in 5 minutes'}
+                </p>
+                {dogboltResults && dogboltResults.pending > 0 && (
+                  <p style={{ fontSize: '0.85em', marginTop: '10px', color: 'var(--text-secondary)' }}>
+                    {dogboltResults.completed} of {dogboltResults.total_decompilers} decompilers completed
+                    {dogboltResults.elapsed_seconds > 0 && ` • ${Math.floor(dogboltResults.elapsed_seconds / 60)}m ${dogboltResults.elapsed_seconds % 60}s elapsed`}
+                  </p>
+                )}
+                {dogboltResults && dogboltResults.elapsed_seconds > 180 && (
+                  <p style={{ fontSize: '0.85em', marginTop: '10px', color: '#ffc107' }}>
+                    ⚠ Taking longer than expected. This may indicate network issues or decompiler delays.
+                  </p>
+                )}
               </div>
             )}
 
@@ -5330,7 +5457,7 @@ function App() {
               </div>
             )}
 
-            {dogboltResults && !dogboltLoading && !dogboltError && (
+            {dogboltResults && !dogboltError && (
               <div>
                 <div style={{ 
                   display: 'flex', 
@@ -5436,7 +5563,7 @@ function App() {
                           </div>
                         );
                       }
-                      if (selected.code) {
+                      if (selected.code && selected.code.trim().length > 0) {
                         return (
                           <div>
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
@@ -5583,7 +5710,7 @@ function App() {
                             </div>
                           );
                         }
-                        if (selected.code) {
+                        if (selected.code && selected.code.trim().length > 0) {
                           return (
                             <div>
                               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
@@ -5661,6 +5788,17 @@ function App() {
                                   <CFGVisualizer code={selected.code} decompilerName={selected.decompiler_name} />
                                 </div>
                               )}
+                            </div>
+                          );
+                        }
+                        // Check if code exists but is empty
+                        if (selected.code !== undefined && selected.code !== null && selected.code.trim().length === 0) {
+                          return (
+                            <div>
+                              <h4 style={{ marginTop: 0 }}>Original Binary - {selected.decompiler_name} v{selected.decompiler_version}</h4>
+                              <div style={{ padding: '15px', backgroundColor: 'var(--bg-tertiary)', borderRadius: '4px', color: 'var(--danger)' }}>
+                                <strong>Error:</strong> Empty decompile result
+                              </div>
                             </div>
                           );
                         }

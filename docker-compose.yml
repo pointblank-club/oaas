@@ -8,6 +8,7 @@ services:
       - OBFUSCATOR_DISABLE_AUTH=true
     volumes:
       - ./cmd/llvm-obfuscator/reports:/app/reports
+      - ./cmd/llvm-obfuscator/binaries:/app/binaries
     expose:
       - "8000"
     healthcheck:
@@ -16,6 +17,32 @@ services:
       timeout: 5s
       retries: 5
       start_period: 30s
+    depends_on:
+      ghidra-lifter:
+        condition: service_healthy
+    networks:
+      - obfuscator-network
+
+  ghidra-lifter:
+    build:
+      context: ./binary_obfuscation_pipeline/mcsema_impl/ghidra_lifter
+      dockerfile: Dockerfile
+    image: pb-ghidra-lifter:latest
+    volumes:
+      - ./cmd/llvm-obfuscator/reports:/app/reports
+      - ./cmd/llvm-obfuscator/binaries:/app/binaries
+    expose:
+      - "5000"
+    ports:
+      - "5001:5000"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:5000/health"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    networks:
+      - obfuscator-network
 
   frontend:
     build:
@@ -27,5 +54,11 @@ services:
     depends_on:
       backend:
         condition: service_healthy
+    networks:
+      - obfuscator-network
+
+networks:
+  obfuscator-network:
+    driver: bridge
 
 

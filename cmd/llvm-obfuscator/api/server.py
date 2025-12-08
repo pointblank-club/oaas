@@ -9,6 +9,8 @@ import secrets
 import shutil
 import subprocess
 import tempfile
+import threading
+import uuid
 import zipfile
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -30,6 +32,7 @@ from core import (
     analyze_binary,
     report_converter,
 )
+from core.binary_pipeline_worker import BinaryPipelineWorker
 from core.comparer import CompareConfig, compare_binaries
 from core.config import AdvancedConfiguration, PassConfiguration, UPXConfiguration, Architecture, RemarksConfiguration, IndirectCallConfiguration
 from core.exceptions import JobNotFoundError, ValidationError
@@ -2948,3 +2951,251 @@ async def local_folder_upload(files: List[UploadFile] = File(...)):
     except Exception as e:
         logger.error(f"Failed to upload files: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to upload files: {str(e)}")
+
+
+# ========== BINARY OBFUSCATION API ==========
+# Register binary obfuscation routes
+from pathlib import Path as PathlibPath
+
+BINARY_JOBS: Dict[str, Dict] = {}
+BINARY_JOBS_DIR = PathlibPath("/tmp/binary_obfuscation_jobs")
+BINARY_JOBS_DIR.mkdir(parents=True, exist_ok=True)
+
+
+@app.post("/api/binary_obfuscate")
+async def binary_obfuscate(
+    passes: Optional[str] = None,
+    file: UploadFile = File(...)
+):
+    """
+    POST /api/binary_obfuscate
+
+    Start a binary obfuscation job.
+
+    Parameters:
+    - file: Windows PE binary (.exe)
+    - passes: JSON string with pass configuration
+
+    Returns:
+    {
+        "job_id": "...",
+        "status": "QUEUED"
+    }
+    """
+
+    try:
+        # Validate file extension
+        if not file.filename.lower().endswith(".exe"):
+            raise HTTPException(
+                status_code=400,
+                detail="Only .exe files are supported"
+            )
+
+        # Parse passes configuration
+        try:
+            passes_config = json.loads(passes) if passes else {"substitution": True}
+        except json.JSONDecodeError:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid passes JSON"
+            )
+
+        # Only substitution is allowed for now
+        if not isinstance(passes_config.get("substitution"), bool):
+            passes_config = {"substitution": True}
+
+        # Create job directory
+        job_id = str(uuid.uuid4())
+        job_dir = BINARY_JOBS_DIR / job_id
+        job_dir.mkdir(parents=True, exist_ok=True)
+
+        # Save uploaded binary
+        input_exe = job_dir / "input.exe"
+        content = await file.read()
+        input_exe.write_bytes(content)
+
+        # Create metadata
+        metadata = {
+            "job_id": job_id,
+            "input_file": file.filename,
+            "input_size": len(content),
+            "passes_config": passes_config,
+            "status": "QUEUED",
+            "stage": "GHIDRA",
+            "progress": 0
+        }
+
+        metadata_file = job_dir / "metadata.json"
+        metadata_file.write_text(json.dumps(metadata, indent=2))
+
+        # Store job info
+        BINARY_JOBS[job_id] = {
+            "job_dir": str(job_dir),
+            "status": "QUEUED",
+            "stage": "GHIDRA",
+            "progress": 0,
+            "worker": None
+        }
+
+        # Start pipeline in background thread
+        def run_pipeline():
+            try:
+                BINARY_JOBS[job_id]["status"] = "RUNNING"
+                BINARY_JOBS[job_id]["stage"] = "GHIDRA"
+                BINARY_JOBS[job_id]["progress"] = 10
+
+                worker = BinaryPipelineWorker(str(job_dir), passes_config)
+                BINARY_JOBS[job_id]["worker"] = worker
+
+                success, message = worker.execute()
+
+                if success:
+                    BINARY_JOBS[job_id]["status"] = "COMPLETED"
+                    BINARY_JOBS[job_id]["stage"] = "COMPLETED"
+                    BINARY_JOBS[job_id]["progress"] = 100
+
+                    # Update metadata
+                    metadata["status"] = "COMPLETED"
+                    metadata_file.write_text(json.dumps(metadata, indent=2))
+                else:
+                    BINARY_JOBS[job_id]["status"] = "ERROR"
+                    BINARY_JOBS[job_id]["error"] = message
+                    logger.error(f"Job {job_id} failed: {message}")
+
+            except Exception as e:
+                BINARY_JOBS[job_id]["status"] = "ERROR"
+                BINARY_JOBS[job_id]["error"] = str(e)
+                logger.error(f"Job {job_id} exception: {e}")
+
+        thread = threading.Thread(target=run_pipeline, daemon=True)
+        thread.start()
+
+        return JSONResponse({
+            "job_id": job_id,
+            "status": "QUEUED",
+            "message": "Job queued for processing"
+        })
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Binary obfuscation error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/binary_obfuscate/status/{job_id}")
+async def get_job_status(job_id: str):
+    """
+    GET /api/binary_obfuscate/status/{job_id}
+
+    Get job status and progress.
+
+    Returns:
+    {
+        "job_id": "...",
+        "status": "QUEUED|RUNNING|COMPLETED|ERROR",
+        "stage": "GHIDRA|LIFTING|IR22|OLLVM|FINALIZING|COMPLETED|ERROR",
+        "progress": 0-100,
+        "logs": "...",
+        "metrics": {...},
+        "download_url": "..."
+    }
+    """
+
+    if job_id not in BINARY_JOBS:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    job = BINARY_JOBS[job_id]
+    job_dir = PathlibPath(job["job_dir"])
+
+    # Map internal stage to frontend stage names
+    stage_mapping = {
+        "GHIDRA": "CFG",
+        "LIFTING": "LIFTING",
+        "IR22": "IR22",
+        "OLLVM": "OLLVM",
+        "FINALIZING": "FINALIZING",
+        "COMPLETED": "COMPLETED",
+        "ERROR": "ERROR"
+    }
+
+    # Get logs
+    logs = ""
+    if job["worker"]:
+        logs = job["worker"].get_logs()
+
+    # Get metrics
+    metrics = None
+    if job["worker"]:
+        metrics = job["worker"].get_metrics()
+
+    # Build response
+    response = {
+        "job_id": job_id,
+        "status": job["status"],
+        "stage": stage_mapping.get(job.get("stage", "GHIDRA"), "UNKNOWN"),
+        "progress": job.get("progress", 0),
+        "logs": logs[-2000:] if logs else "",  # Last 2000 chars
+    }
+
+    if metrics:
+        response["metrics"] = metrics
+
+    if job["status"] == "COMPLETED":
+        # Add download URLs
+        final_exe = job_dir / "final" / "final.exe"
+        obf_bc = job_dir / "obf" / "program_obf.bc"
+
+        if final_exe.exists():
+            response["download_url"] = f"/api/binary_obfuscate/artifact/{job_id}/final.exe"
+        if obf_bc.exists():
+            response["ir_download_url"] = f"/api/binary_obfuscate/artifact/{job_id}/program_obf.bc"
+
+    elif job["status"] == "ERROR":
+        response["error"] = job.get("error", "Unknown error")
+
+    return JSONResponse(response)
+
+
+@app.get("/api/binary_obfuscate/artifact/{job_id}/{artifact_name}")
+async def get_artifact(job_id: str, artifact_name: str):
+    """
+    GET /api/binary_obfuscate/artifact/{job_id}/{artifact_name}
+
+    Download job artifacts.
+
+    Supported artifacts:
+    - final.exe
+    - program_obf.bc
+    - program_llvm22.bc
+    - logs.txt
+    - metrics.json
+    """
+
+    if job_id not in BINARY_JOBS:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    job_dir = PathlibPath(BINARY_JOBS[job_id]["job_dir"])
+
+    # Validate artifact name
+    allowed_artifacts = {
+        "final.exe": job_dir / "final" / "final.exe",
+        "program_obf.bc": job_dir / "obf" / "program_obf.bc",
+        "program_llvm22.bc": job_dir / "ir" / "program_llvm22.bc",
+        "logs.txt": job_dir / "logs.txt",
+        "metrics.json": job_dir / "metrics.json",
+    }
+
+    if artifact_name not in allowed_artifacts:
+        raise HTTPException(status_code=400, detail="Invalid artifact name")
+
+    artifact_path = allowed_artifacts[artifact_name]
+
+    if not artifact_path.exists():
+        raise HTTPException(status_code=404, detail=f"Artifact {artifact_name} not found")
+
+    return FileResponse(
+        path=artifact_path,
+        filename=artifact_name,
+        media_type="application/octet-stream"
+    )

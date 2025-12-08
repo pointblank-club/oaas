@@ -1,0 +1,12 @@
+{
+  "flattening": false,
+  "bogus_control_flow": false,
+  "substitution": true,
+  "split": false,
+  "linear_mba": false,
+  "string_encrypt": false,
+  "symbol_obfuscate": false,
+  "constant_obfuscate": false,
+  "crypto_hash": false,
+  "standard_llvm_opts": false
+}

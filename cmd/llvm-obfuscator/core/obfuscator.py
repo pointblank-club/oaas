@@ -1378,6 +1378,34 @@ class LLVMObfuscator:
                 run_command(opt_cmd, cwd=source_abs.parent)
                 current_input = obfuscated_ir
 
+        # ═══════════════════════════════════════════════════════════
+        # VM LAYER (OPTIONAL, ISOLATED, EXPERIMENTAL)
+        # ═══════════════════════════════════════════════════════════
+        if hasattr(config, 'vm') and config.vm.enabled:
+            from modules.vm.runner import run_vm_isolated
+
+            virtualized_ll = destination_abs.parent / f"{destination_abs.stem}_virtualized.ll"
+
+            vm_result = run_vm_isolated(
+                input_ll=current_input,
+                output_ll=virtualized_ll,
+                functions=config.vm.functions,
+                timeout=config.vm.timeout,
+            )
+
+            if vm_result.success:
+                current_input = virtualized_ll
+                warnings.append(
+                    f"VM: virtualized {len(vm_result.functions_virtualized)} functions"
+                )
+                self.logger.info(f"VM layer applied: {vm_result.metrics}")
+            else:
+                warnings.append(
+                    f"VM: skipped ({vm_result.error}), using standard obfuscation"
+                )
+                self.logger.warning(f"VM layer skipped: {vm_result.error}")
+        # ═══════════════════════════════════════════════════════════
+
         # Stage 3: Compile to binary
         self.logger.info("Compiling final IR to binary...")
         final_cmd = [compiler, str(current_input), "-o", str(destination_abs)] + compiler_flags
@@ -1611,6 +1639,34 @@ class LLVMObfuscator:
             self.logger.info(f"Command: {' '.join(opt_cmd)}")
             run_command(opt_cmd, cwd=source_abs.parent)
             current_input = obfuscated_ir
+
+        # ═══════════════════════════════════════════════════════════
+        # VM LAYER (OPTIONAL, ISOLATED, EXPERIMENTAL)
+        # ═══════════════════════════════════════════════════════════
+        if hasattr(config, 'vm') and config.vm.enabled:
+            from modules.vm.runner import run_vm_isolated
+
+            virtualized_ll = destination_abs.parent / f"{destination_abs.stem}_virtualized.ll"
+
+            vm_result = run_vm_isolated(
+                input_ll=current_input,
+                output_ll=virtualized_ll,
+                functions=config.vm.functions,
+                timeout=config.vm.timeout,
+            )
+
+            if vm_result.success:
+                current_input = virtualized_ll
+                warnings.append(
+                    f"VM: virtualized {len(vm_result.functions_virtualized)} functions"
+                )
+                self.logger.info(f"VM layer applied: {vm_result.metrics}")
+            else:
+                warnings.append(
+                    f"VM: skipped ({vm_result.error}), using standard obfuscation"
+                )
+                self.logger.warning(f"VM layer skipped: {vm_result.error}")
+        # ═══════════════════════════════════════════════════════════
 
         # Stage 5: Compile to binary
         self.logger.info("Compiling final IR to binary...")

@@ -196,6 +196,13 @@ class RemarksModel(BaseModel):
     pass_filter: str = Field(default=".*", description="Regex filter for passes")
 
 
+class VMModel(BaseModel):
+    """VM virtualization configuration (experimental)."""
+    enabled: bool = False
+    timeout: int = Field(default=60, ge=10, le=300, description="VM timeout in seconds")
+    fallback_on_error: bool = True
+
+
 class ConfigModel(BaseModel):
     level: int = Field(3, ge=1, le=5)
     passes: PassesModel = PassesModel()
@@ -208,6 +215,7 @@ class ConfigModel(BaseModel):
     upx: UPXModel = UPXModel()
     indirect_calls: IndirectCallsModel = IndirectCallsModel()
     remarks: RemarksModel = RemarksModel()  # Enable remarks by default
+    vm: VMModel = VMModel()  # VM virtualization (experimental, disabled by default)
 
 
 class ObfuscateRequest(BaseModel):
@@ -416,6 +424,11 @@ def _build_config_from_request(payload: ObfuscateRequest, destination_dir: Path,
             "custom_pass_plugin": chosen_plugin,
             "entrypoint_command": payload.entrypoint_command,
             "project_root": str(project_root) if project_root else None,
+            "vm": {
+                "enabled": payload.config.vm.enabled,
+                "timeout": payload.config.vm.timeout,
+                "fallback_on_error": payload.config.vm.fallback_on_error,
+            },
         }
     )
     return output_config

@@ -1866,6 +1866,10 @@ function App() {
   const [ollvmSplitNum, setOllvmSplitNum] = useState<number | string>(3);
   const [ollvmBogusLoop, setOllvmBogusLoop] = useState<number | string>(1);
 
+  // Layer 3.5: VM Virtualization (experimental)
+  const [vmEnabled, setVmEnabled] = useState(false);
+  const [vmTimeout, setVmTimeout] = useState<number | string>(60);
+
   // Layer 4: Compiler Flags sub-options
   const [flagSymbolHiding, setFlagSymbolHiding] = useState(false);
   const [flagOmitFramePointer, setFlagOmitFramePointer] = useState(false);
@@ -2796,6 +2800,11 @@ function App() {
             enabled: true,  // Always enable remarks by default
             format: 'yaml',
             pass_filter: '.*'  // Capture all optimization passes
+          },
+          vm: {
+            enabled: vmEnabled,
+            timeout: vmEnabled ? (typeof vmTimeout === 'number' ? vmTimeout : parseInt(String(vmTimeout)) || 60) : 60,
+            fallback_on_error: true
           }
         },
         report_formats: ['json', 'markdown', 'pdf'],
@@ -4527,6 +4536,51 @@ function App() {
                   />
                   <small style={{ display: 'block', color: '#888', marginTop: '4px' }}>
                     More cycles = stronger obfuscation but larger binary
+                  </small>
+                </label>
+              </div>
+            )}
+
+            {/* Layer 3.5: VM Virtualization (Experimental) */}
+            <label className="layer-checkbox">
+              <input
+                type="checkbox"
+                checked={vmEnabled}
+                onChange={(e) => setVmEnabled(e.target.checked)}
+                data-testid="vm-toggle"
+              />
+              <span className="layer-label">
+                [LAYER 3.5] VM Virtualization (EXPERIMENTAL)
+                <small>Convert functions to VM bytecode - strongest obfuscation</small>
+              </span>
+            </label>
+
+            {vmEnabled && (
+              <div className="layer-config">
+                <div className="layer-info" style={{ marginBottom: '10px', padding: '8px', background: 'rgba(255, 193, 7, 0.1)', borderRadius: '4px', border: '1px solid rgba(255, 193, 7, 0.3)' }}>
+                  <strong style={{ color: '#ffc107' }}>Experimental Feature</strong>
+                  <p style={{ margin: '4px 0 0 0', fontSize: '0.85em', color: '#ccc' }}>
+                    VM virtualization transforms simple arithmetic functions into VM bytecode.
+                    Falls back gracefully if functions cannot be virtualized.
+                  </p>
+                </div>
+                <label>
+                  Timeout (seconds):
+                  <input
+                    type="number"
+                    min="10"
+                    max="300"
+                    value={vmTimeout}
+                    onChange={(e) => setVmTimeout(e.target.value === '' ? '' : parseInt(e.target.value) || 60)}
+                    onBlur={(e) => {
+                      const val = parseInt(e.target.value) || 60;
+                      setVmTimeout(Math.min(300, Math.max(10, val)));
+                    }}
+                    title="Maximum time for VM virtualization (10-300 seconds)"
+                    data-testid="vm-timeout"
+                  />
+                  <small style={{ display: 'block', color: '#888', marginTop: '4px' }}>
+                    If timeout is reached, original code is preserved (graceful fallback)
                   </small>
                 </label>
               </div>

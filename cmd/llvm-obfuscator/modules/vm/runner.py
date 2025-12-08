@@ -63,19 +63,23 @@ def run_vm_isolated(
             error=f"Input file not found: {input_ll}",
         )
 
-    # Get path to virtualizer script
-    virtualizer_script = Path(__file__).parent / "virtualizer" / "main.py"
-    if not virtualizer_script.exists():
-        logger.warning(f"VM virtualizer script not found: {virtualizer_script}")
+    # Get the base directory containing the modules package
+    # We need to run from a directory where "modules.vm.virtualizer.main" is importable
+    base_dir = Path(__file__).parent.parent.parent  # cmd/llvm-obfuscator directory
+
+    # Verify virtualizer module exists
+    virtualizer_module = base_dir / "modules" / "vm" / "virtualizer" / "main.py"
+    if not virtualizer_module.exists():
+        logger.warning(f"VM virtualizer module not found: {virtualizer_module}")
         return VMResult(
             success=False,
-            error=f"Virtualizer script not found: {virtualizer_script}",
+            error=f"Virtualizer module not found: {virtualizer_module}",
         )
 
-    # Build subprocess command
+    # Build subprocess command - run as module to handle relative imports
     cmd = [
         sys.executable,
-        str(virtualizer_script),
+        "-m", "modules.vm.virtualizer.main",
         "--input", str(input_ll),
         "--output", str(output_ll),
     ]
@@ -88,12 +92,13 @@ def run_vm_isolated(
 
     try:
         # Run virtualizer as subprocess with timeout
+        # cwd must be set to base_dir so the module import works
         result = subprocess.run(
             cmd,
             capture_output=True,
             text=True,
             timeout=timeout,
-            cwd=str(input_ll.parent),
+            cwd=str(base_dir),
         )
 
         # Check for process failure

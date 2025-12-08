@@ -55,11 +55,10 @@ class TestVMRunner(unittest.TestCase):
         self.assertEqual(result.output_path, self.output_ir)
         self.assertTrue(self.output_ir.exists())
 
-        # Verify output file has same content (passthrough stub)
-        self.assertEqual(
-            self.test_ir.read_text(),
-            self.output_ir.read_text()
-        )
+        # Verify output file exists and has valid LLVM IR content
+        output_content = self.output_ir.read_text()
+        self.assertIn("; ModuleID", output_content)  # Valid LLVM IR header
+        self.assertIn("@main", output_content)  # Function preserved
 
     def test_runner_timeout(self) -> None:
         """Test timeout kills process and returns failure result."""

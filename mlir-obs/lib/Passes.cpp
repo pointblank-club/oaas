@@ -8,6 +8,7 @@
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
+#include "llvm/ADT/STLExtras.h"
 
 #include <string>
 #include <set>
@@ -216,7 +217,7 @@ void StringEncryptPass::runOnOperation() {
   }
 
   // Step 5: Register __obfs_init as a constructor via llvm.global_ctors
-  // Use LLVM::GlobalCtorsOp which is the proper MLIR op for this
+  // Use GlobalCtorsOp AND add to @llvm.used to prevent dead code elimination
   builder.setInsertionPointToEnd(module.getBody());
 
   // Check if GlobalCtorsOp already exists
@@ -234,7 +235,6 @@ void StringEncryptPass::runOnOperation() {
     SmallVector<Attribute> newPriorities;
     SmallVector<Attribute> newData;
 
-    // Copy existing entries
     for (auto attr : existingCtors.getCtors())
       newCtors.push_back(attr);
     for (auto attr : existingCtors.getPriorities())
@@ -244,13 +244,10 @@ void StringEncryptPass::runOnOperation() {
         newData.push_back(attr);
     }
 
-    // BUG #4 FIX: Use priority 101 (high) instead of 65535 (lowest)
-    // Lower number = higher priority, runs earlier before user code
     newCtors.push_back(FlatSymbolRefAttr::get(ctx, "__obfs_init"));
     newPriorities.push_back(builder.getI32IntegerAttr(101));
     newData.push_back(LLVM::ZeroAttr::get(ctx));
 
-    // Replace the old op with updated one
     builder.setInsertionPoint(existingCtors);
     builder.create<LLVM::GlobalCtorsOp>(
         loc,
@@ -266,7 +263,6 @@ void StringEncryptPass::runOnOperation() {
     SmallVector<Attribute> data;
 
     ctors.push_back(FlatSymbolRefAttr::get(ctx, "__obfs_init"));
-    // BUG #4 FIX: Use priority 101 (high) instead of 65535 (lowest)
     priorities.push_back(builder.getI32IntegerAttr(101));
     data.push_back(LLVM::ZeroAttr::get(ctx));
 
@@ -276,6 +272,40 @@ void StringEncryptPass::runOnOperation() {
         builder.getArrayAttr(priorities),
         builder.getArrayAttr(data)
     );
+  }
+
+  // Step 6: Add __obfs_init and __obfs_decrypt to @llvm.used to prevent DCE
+  // This ensures the linker and optimizer cannot remove these critical functions
+  auto ptrArrayType = LLVM::LLVMArrayType::get(i8PtrType, 2);
+
+  // Check if @llvm.used already exists
+  LLVM::GlobalOp existingUsed = nullptr;
+  for (auto &op : module.getBody()->getOperations()) {
+    if (auto globalOp = llvm::dyn_cast<LLVM::GlobalOp>(&op)) {
+      if (globalOp.getSymName() == "llvm.used") {
+        existingUsed = globalOp;
+        break;
+      }
+    }
+  }
+
+  // Create @llvm.used with our functions
+  // Note: We create a new one; if one exists, we'd need to merge (simplified here)
+  if (!existingUsed) {
+    SmallVector<Attribute> usedRefs;
+    usedRefs.push_back(FlatSymbolRefAttr::get(ctx, "__obfs_init"));
+    usedRefs.push_back(FlatSymbolRefAttr::get(ctx, "__obfs_decrypt"));
+
+    auto usedGlobal = builder.create<LLVM::GlobalOp>(
+        loc,
+        ptrArrayType,
+        /*isConstant=*/true,
+        LLVM::Linkage::Appending,
+        "llvm.used",
+        builder.getArrayAttr(usedRefs)
+    );
+    // Set the section to llvm.metadata (required for @llvm.used)
+    usedGlobal.setSection("llvm.metadata");
   }
 
   // Skip encrypting metadata attributes - only encrypt actual string data in globals

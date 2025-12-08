@@ -5,6 +5,9 @@ from enum import Enum
 from pathlib import Path
 from typing import Dict, List, Optional
 
+# VM obfuscation configuration (isolated module)
+from modules.vm.config import VMConfig
+
 
 class Platform(str, Enum):
     LINUX = "linux"
@@ -174,6 +177,7 @@ class ObfuscationConfig:
     project_root: Optional[Path] = None  # Root directory for multi-file projects (where entrypoint runs)
     custom_compiler_wrapper: Optional[str] = None  # Path to compiler wrapper (obf-clang) for transparent build interception
     mlir_frontend: MLIRFrontend = MLIRFrontend.CLANG  # DEFAULT to existing pipeline (SAFE)
+    vm: VMConfig = field(default_factory=VMConfig)  # VM obfuscation (optional, isolated)
 
     @classmethod
     def from_dict(cls, data: Dict) -> "ObfuscationConfig":
@@ -265,6 +269,16 @@ class ObfuscationConfig:
         mlir_frontend_str = data.get("mlir_frontend", "clang")
         mlir_frontend = MLIRFrontend.from_string(mlir_frontend_str)
 
+        # Parse VM obfuscation configuration (optional, disabled by default)
+        vm_data = data.get("vm", {})
+        vm_config = VMConfig(
+            enabled=vm_data.get("enabled", False),
+            functions=vm_data.get("functions", []),
+            timeout=vm_data.get("timeout", 60),
+            complexity=vm_data.get("complexity", 1),
+            fallback_on_error=vm_data.get("fallback_on_error", True),
+        )
+
         return cls(
             level=level,
             platform=platform,
@@ -278,6 +292,7 @@ class ObfuscationConfig:
             project_root=project_root,
             custom_compiler_wrapper=custom_compiler_wrapper,
             mlir_frontend=mlir_frontend,
+            vm=vm_config,
         )
 
 

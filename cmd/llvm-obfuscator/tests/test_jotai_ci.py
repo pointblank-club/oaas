@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import List, Dict, Optional
 from datetime import datetime
 
-# Add parent directory to path
+
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from core.jotai_benchmark import (
@@ -40,15 +40,15 @@ from core import (
 
 
 class JotaiCITester:
-    """CI-friendly Jotai benchmark tester."""
+    
     
     def __init__(
         self,
         output_dir: Path = Path("./jotai_ci_results"),
         obfuscation_level: int = 3,
         max_benchmarks: int = 50,
-        min_success_rate: float = 0.7,  # 70% success rate required
-        random_seed: Optional[int] = None,  # For reproducible random selection
+        min_success_rate: float = 0.7,  
+        random_seed: Optional[int] = None,  
     ):
         self.output_dir = output_dir
         self.obfuscation_level = obfuscation_level
@@ -59,7 +59,7 @@ class JotaiCITester:
         self.summary: Dict = {}
         
     def run_tests(self) -> bool:
-        """Run all tests and return True if CI should pass."""
+        
         print("=" * 70)
         print("Jotai CI Integration Test")
         print("=" * 70)
@@ -69,26 +69,25 @@ class JotaiCITester:
         print(f"Min success rate: {self.min_success_rate * 100:.0f}%")
         print()
         
-        # Initialize
+        
         print("[1/5] Initializing benchmark manager...")
         manager = JotaiBenchmarkManager(auto_download=True)
         print(f"✓ Benchmark cache: {manager.cache_dir}")
         print()
-        
-        # Get benchmarks
+    
         print(f"[2/5] Getting benchmarks...")
         all_benchmarks = manager.list_benchmarks(
             category=BenchmarkCategory.ANGHALEAVES,
-            limit=None  # Get all available
+            limit=None  
         )
         
         if not all_benchmarks:
-            print("❌ ERROR: No benchmarks found!")
+            print(" ERROR: No benchmarks found!")
             return False
         
         print(f"✓ Found {len(all_benchmarks)} total benchmarks")
         
-        # Randomly select subset if needed - ALL benchmarks should be compilable
+        
         if len(all_benchmarks) > self.max_benchmarks:
             if self.random_seed is not None:
                 random.seed(self.random_seed)
@@ -100,7 +99,7 @@ class JotaiCITester:
             print(f"  Using all {len(benchmarks)} benchmarks")
         print()
         
-        # Setup obfuscator
+        
         print("[3/5] Setting up obfuscator...")
         config = ObfuscationConfig(
             level=ObfuscationLevel(self.obfuscation_level),
@@ -129,45 +128,44 @@ class JotaiCITester:
             output_dir=self.output_dir,
             category=BenchmarkCategory.ANGHALEAVES,
             limit=self.max_benchmarks,
-            max_failures=10,  # Stop after 10 consecutive failures
-            skip_compilation_errors=True  # Skip benchmarks that don't compile
+            max_failures=10,  
+            skip_compilation_errors=True  
         )
         
         print()
         
-        # Generate report
+        
         print("[5/5] Generating report...")
         report_file = self.output_dir / "jotai_ci_report.json"
         manager.generate_report(self.results, report_file)
         print(f"✓ Report saved: {report_file}")
         print()
-        
-        # Calculate summary
+    
         self._calculate_summary()
         
-        # Print results
+        
         self._print_summary()
         
-        # Check if CI should pass
+        
         return self._check_ci_pass()
     
     def _calculate_summary(self):
-        """Calculate test summary statistics."""
+        
         total = len(self.results)
         
-        # Filter out skipped benchmarks (compilation errors)
+        
         tested = [r for r in self.results if r.compilation_success]
         skipped = total - len(tested)
         
-        # Success metrics
+        
         obfuscation_success = sum(1 for r in tested if r.obfuscation_success)
         functional_success = sum(1 for r in tested if r.functional_test_passed)
         
-        # Input testing
+        
         total_inputs = sum(r.inputs_tested for r in tested)
         passed_inputs = sum(r.inputs_passed for r in tested)
         
-        # Size metrics
+        
         size_changes = []
         for r in tested:
             if r.size_baseline and r.size_obfuscated and r.size_baseline > 0:
@@ -307,7 +305,7 @@ def main():
     
     args = parser.parse_args()
     
-    # Run tests
+    
     tester = JotaiCITester(
         output_dir=args.output,
         obfuscation_level=args.level,
@@ -318,12 +316,12 @@ def main():
     
     success = tester.run_tests()
     
-    # Save summary if requested
+    
     if args.json_report:
         tester.save_summary(args.json_report)
         print(f"\nSummary saved to: {args.json_report}")
     
-    # Exit with appropriate code
+    
     sys.exit(0 if success else 1)
 
 

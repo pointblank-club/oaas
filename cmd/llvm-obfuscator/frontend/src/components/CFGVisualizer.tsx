@@ -24,10 +24,7 @@ interface BasicBlock {
   type?: 'entry' | 'control' | 'return' | 'regular';
 }
 
-/**
- * Simple CFG parser for decompiled C code
- * Extracts basic blocks and control flow edges
- */
+
 function parseCFG(code: string): { nodes: Node[]; edges: Edge[] } {
   const lines = code.split('\n');
   const blocks: BasicBlock[] = [];
@@ -74,13 +71,13 @@ function parseCFG(code: string): { nodes: Node[]; edges: Edge[] } {
     if (isBraceOpen) braceDepth++;
     if (isBraceClose) braceDepth--;
     
-    // Start new block on control flow or function end
+    
     if (isControlFlow || (isBraceClose && braceDepth === 0 && inFunction)) {
       if (currentBlock) {
         currentBlock.lineEnd = originalLine - 1;
         blocks.push(currentBlock);
         
-        // Create edge for control flow
+        
         if (isControlFlow) {
           const nextBlockId = `block_${blockCounter}`;
           edges.push({
@@ -108,14 +105,14 @@ function parseCFG(code: string): { nodes: Node[]; edges: Edge[] } {
         type: isReturn ? 'return' : isControlFlow ? 'control' : 'regular',
       };
     } else if (currentBlock) {
-      // Add line to current block
+      
       currentBlock.code += '\n' + line;
-      // Check if this block contains a return statement
+      
       if (/return\s*/.test(line) && !currentBlock.type) {
         currentBlock.type = 'return';
       }
     } else if (line && !line.startsWith('//') && !line.startsWith('/*')) {
-      // Start new block for non-comment code
+      
       currentBlock = {
         id: `block_${blockCounter++}`,
         label: `Block ${blockCounter}`,
@@ -127,13 +124,13 @@ function parseCFG(code: string): { nodes: Node[]; edges: Edge[] } {
     }
   }
   
-  // Add final block
+  
   if (currentBlock) {
     currentBlock.lineEnd = lines.length;
     blocks.push(currentBlock);
   }
   
-  // Create sequential edges between blocks
+  
   for (let i = 0; i < blocks.length - 1; i++) {
     const hasExplicitEdge = edges.some(e => e.source === blocks[i].id);
     if (!hasExplicitEdge) {
@@ -147,7 +144,7 @@ function parseCFG(code: string): { nodes: Node[]; edges: Edge[] } {
     }
   }
   
-  // Color scheme for different block types
+  
   const getBlockColor = (blockType?: string) => {
     switch (blockType) {
       case 'entry':
@@ -161,7 +158,7 @@ function parseCFG(code: string): { nodes: Node[]; edges: Edge[] } {
     }
   };
 
-  // Convert to ReactFlow nodes
+  
   const nodes: Node[] = blocks.map((block, index) => {
     const codePreview = block.code.split('\n').slice(0, 3).join('\n');
     const truncatedCode = codePreview.length > 100 

@@ -64,7 +64,7 @@ export const FileTree: React.FC<FileTreeProps> = ({ files, selectedFile, onFileS
       });
     });
 
-    // Sort children: directories first, then files, both alphabetically
+    
     const sortChildren = (node: FileNode) => {
       node.children.sort((a, b) => {
         if (a.isDirectory && !b.isDirectory) return -1;

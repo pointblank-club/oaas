@@ -101,10 +101,7 @@ const INSTRUCTION_COLORS: { [key: string]: string } = {
   other: '#6e40aa',
 };
 
-/**
- * Protection Score Card - Main summary widget
- * Displays score on 0-100 scale (industry-standard PRCS framework)
- */
+
 const ProtectionScoreCard: React.FC<{ score?: number }> = ({ score = 0 }) => {
   // Score is already on 0-100 scale
   const scoreValue = Math.round(score);
@@ -191,9 +188,7 @@ const ProtectionScoreCard: React.FC<{ score?: number }> = ({ score = 0 }) => {
   );
 };
 
-/**
- * Control Flow Comparison Bar Chart
- */
+
 const ControlFlowChart: React.FC<{ metrics: ControlFlowMetricsData }> = ({
   metrics,
 }) => {
@@ -274,9 +269,7 @@ const ControlFlowChart: React.FC<{ metrics: ControlFlowMetricsData }> = ({
   );
 };
 
-/**
- * Instruction Distribution Pie Chart
- */
+
 const InstructionChart: React.FC<{ metrics: InstructionMetricsData }> = ({
   metrics,
 }) => {
@@ -417,9 +410,7 @@ const InstructionChart: React.FC<{ metrics: InstructionMetricsData }> = ({
   );
 };
 
-/**
- * Metric Card - Small informational card
- */
+
 interface MetricCardProps {
   label: string;
   value: string | number;
@@ -466,12 +457,7 @@ const MetricCard: React.FC<MetricCardProps> = ({
   );
 };
 
-/**
- * Main MetricsDashboard Component
- */
-/**
- * Phoronix Benchmarking Metrics Card
- */
+
 const PhoronixMetricsCard: React.FC<{ metrics?: PhoronixMetrics }> = ({ metrics }) => {
   if (!metrics) return null;
 

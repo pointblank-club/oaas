@@ -2738,8 +2738,8 @@ function App() {
         // - macOS: uses COMDAT sections which Mach-O doesn't support
         // - Windows ARM64: corrupts SEH (Structured Exception Handling) metadata
         if (flagSpeculativeLoadHardening && !isMacOSTarget && !isWindowsArm64) flags.push('-mspeculative-load-hardening');
-        // LTO (Link-Time Optimization) - enables whole-program optimization
-        if (flagLTO) flags.push('-flto');
+        // LTO (Link-Time Optimization) - DISABLED: requires LLVM 22 linker (lld)
+        // if (flagLTO) flags.push('-flto');
       }
 
       // NOTE: Layer 3 OLLVM passes are handled via config.passes object below
@@ -4750,14 +4750,15 @@ function App() {
                   />
                   Disable Built-in Functions (-fno-builtin)
                 </label>
-                <label className="sub-option">
+                {/* LTO temporarily disabled - requires LLVM 22 linker */}
+                {/* <label className="sub-option">
                   <input
                     type="checkbox"
                     checked={flagLTO}
                     onChange={(e) => setFlagLTO(e.target.checked)}
                   />
                   Link-Time Optimization (-flto)
-                </label>
+                </label> */}
               </div>
             )}
 

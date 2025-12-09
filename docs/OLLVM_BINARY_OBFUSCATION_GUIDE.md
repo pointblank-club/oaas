@@ -23,6 +23,20 @@ LLVM 22 IR Upgrade → OLLVM Pass Application → Final Binary Compilation
 
 This guide details which OLLVM passes are safe to add to the pipeline and how to build/deploy them.
 
+### CRITICAL: McSema Uses LLVM 9
+
+**IMPORTANT**: McSema's mcsema-lift tool MUST use LLVM 9, not LLVM 11.
+
+LLVM 11 has a **CallSite API bug** that causes segfaults during the optimization phase. The CallSite API was deprecated in LLVM 11, and the compatibility wrapper in McSema/Remill has bugs that cause crashes.
+
+**Docker Image**: `trailofbits/mcsema:llvm9-ubuntu20.04-amd64`
+
+**Binary Paths**:
+- `mcsema-lift-9.0`: `/opt/trailofbits/bin/mcsema-lift-9.0`
+- Semantics: `/opt/trailofbits/share/remill/9/semantics`
+
+The LLVM 9 bitcode output is then upgraded to LLVM 22 for OLLVM pass application.
+
 ### Key Constraint: McSema IR Compatibility
 
 McSema produces **lifted IR** - not normal compiled code. It uses a **state machine** architecture for control flow instead of traditional CFGs. This makes certain OLLVM passes dangerous because they can:

@@ -52,9 +52,10 @@ services:
       - obfuscator-network
 
   mcsema-lift:
+    # Build using LLVM 9 base - LLVM 11 has CallSite bug that causes segfaults
     build:
-      context: .
-      dockerfile: binary_obfuscation_pipeline/mcsema_impl/mcsema_lift/Dockerfile
+      context: ./binary_obfuscation_pipeline/mcsema_impl/mcsema_lift
+      dockerfile: Dockerfile
     image: pb-mcsema-lift:latest
     platform: linux/amd64
     volumes:

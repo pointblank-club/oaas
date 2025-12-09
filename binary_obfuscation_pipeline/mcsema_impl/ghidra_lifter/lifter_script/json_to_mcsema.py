@@ -270,6 +270,10 @@ def convert_json_to_mcsema(json_path, output_path, arch='amd64', os_type='window
     logger.info("Converting segments...")
 
     for seg_json in cfg_json.get('segments', []):
+        perms = seg_json.get('permissions', 'r')
+        seg_name = seg_json.get('name', '')
+        is_executable = 'x' in perms
+
         segment = module.segments.add()
 
         # ea = effective address (start address)
@@ -277,40 +281,31 @@ def convert_json_to_mcsema(json_path, output_path, arch='amd64', os_type='window
 
         # Get segment size
         seg_size = seg_json.get('size', 0)
-        is_initialized = seg_json.get('is_initialized', True)
 
-        # Raw bytes (decode from base64)
-        # For uninitialized segments like .bss, create zero-filled bytes of the correct size
+        # Include data for ALL segments - mcsema needs data segments for memory references
+        # The key is to NOT create functions/basic blocks in non-executable segments
         data_b64 = seg_json.get('data_base64', '')
         if data_b64:
             try:
                 segment.data = base64.b64decode(data_b64)
             except Exception as e:
                 logger.warning(f"Failed to decode segment data: {e}")
-                # Fall back to zero bytes
                 segment.data = bytes(seg_size) if seg_size > 0 else b'\x00'
         else:
-            # Uninitialized segment (like .bss) - fill with zeros
-            # McSema requires data bytes even for uninitialized segments
-            if seg_size > 0:
-                segment.data = bytes(seg_size)
-                logger.debug(f"  Created zero-filled data for uninitialized segment: {seg_json.get('name', '')} ({seg_size} bytes)")
-            else:
-                # At minimum, provide a single zero byte to avoid empty range errors
-                segment.data = b'\x00'
+            segment.data = bytes(seg_size) if seg_size > 0 else b'\x00'
 
-        # Permissions
-        perms = seg_json.get('permissions', 'r')
+        # Permissions - data segments should be read-only or writable, NOT executable
         segment.read_only = 'w' not in perms
 
         # Segment properties
         segment.is_external = False
-        segment.name = seg_json.get('name', '')
+        segment.name = seg_name
         segment.is_exported = False
-        segment.is_thread_local = seg_json.get('name', '') == '.tls'  # Mark TLS segment
+        segment.is_thread_local = False
 
         stats['segments'] += 1
-        logger.debug(f"  Segment: {segment.name} @ 0x{segment.ea:x} ({len(segment.data)} bytes, init={is_initialized})")
+        exec_mark = " [EXEC]" if is_executable else " [DATA]"
+        logger.debug(f"  Segment: {seg_name} @ 0x{segment.ea:x} ({len(segment.data)} bytes){exec_mark}")
 
     logger.info(f"  Converted {stats['segments']} segments")
 

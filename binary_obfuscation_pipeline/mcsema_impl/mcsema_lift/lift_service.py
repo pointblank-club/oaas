@@ -6,8 +6,10 @@ Wraps mcsema-lift binary and exposes it as a REST API.
 
 This service:
 1. Accepts McSema .cfg protobuf files (from json_to_mcsema.py converter)
-2. Runs mcsema-lift to convert CFG to LLVM 11 bitcode
+2. Runs mcsema-lift to convert CFG to LLVM 9 bitcode
 3. Returns the .bc file path or downloads
+
+IMPORTANT: Using LLVM 9 version - LLVM 11 has CallSite bug that causes segfaults.
 
 Endpoints:
 - POST /lift - Lift CFG to bitcode
@@ -32,15 +34,15 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
-# Configuration
-MCSEMA_LIFT_PATH = '/mcsema/mcsema/bin/mcsema-lift-11.0'
+# Configuration - LLVM 9 paths (LLVM 11 has CallSite bug that causes segfaults)
+# Paths for official trailofbits/mcsema:llvm9-ubuntu20.04-amd64 image
+MCSEMA_LIFT_PATH = '/opt/trailofbits/bin/mcsema-lift-9.0'
 OUTPUT_DIR = '/app/output'
 CFG_DIR = '/app/cfg'
 
 # Semantics paths for Remill (required by mcsema-lift)
 SEMANTICS_PATHS = [
-    '/mcsema/remill/share/remill/11.0/semantics',
-    '/mcsema/remill/share/remill/semantics',
+    '/opt/trailofbits/share/remill/9/semantics',
 ]
 SEMANTICS_SEARCH_PATH = ':'.join(SEMANTICS_PATHS)
 
@@ -51,12 +53,13 @@ os.makedirs(CFG_DIR, exist_ok=True)
 
 class McSemaLifter:
     """
-    Wrapper for mcsema-lift-11.0 binary.
+    Wrapper for mcsema-lift-9.0 binary.
 
     mcsema-lift converts a McSema CFG protobuf file (produced by IDA/Ghidra)
-    into LLVM 11 bitcode (.bc).
+    into LLVM 9 bitcode (.bc).
 
-    IMPORTANT: This binary is x86_64 only - must run on amd64 platform.
+    IMPORTANT: Using LLVM 9 - LLVM 11 has CallSite API bug that causes segfaults.
+    This binary is x86_64 only - must run on amd64 platform.
     """
 
     def __init__(self):

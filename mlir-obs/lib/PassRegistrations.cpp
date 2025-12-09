@@ -5,9 +5,7 @@
 namespace mlir {
 namespace obs {
 
-// Static registration - these will be created when the plugin loads
 inline void registerPasses() {
-  // Core obfuscation passes (work with any MLIR)
   registerPass([]() -> std::unique_ptr<Pass> {
     return std::make_unique<StringEncryptPass>();
   });
@@ -16,7 +14,6 @@ inline void registerPasses() {
     return std::make_unique<SymbolObfuscatePass>();
   });
 
-  // Polygeist-specific pass (works on SCF dialect)
   registerPass([]() -> std::unique_ptr<Pass> {
     return std::make_unique<SCFObfuscatePass>();
   });
@@ -46,10 +43,9 @@ void registerImportObfuscationPass() {
   PassRegistration<ImportObfuscationPass>();
 }
 
-} // namespace obs
-} // namespace mlir
+}
+}
 
-// Plugin entry point - mlir-opt expects this exact function signature
 extern "C" LLVM_ATTRIBUTE_WEAK ::mlir::PassPluginLibraryInfo
 mlirGetPassPluginInfo() {
   return {MLIR_PLUGIN_API_VERSION, "MLIRObfuscation", LLVM_VERSION_STRING,

@@ -1,6 +1,3 @@
-# Build MLIR Obfuscation plugin as a shared module
-# This plugin is loaded by mlir-opt via --load-pass-plugin
-
 add_library(MLIRObfuscation SHARED
   Passes.cpp
   PassRegistrations.cpp
@@ -11,7 +8,6 @@ add_library(MLIRObfuscation SHARED
   ImportObfuscationPass.cpp
 )
 
-# Set output name and properties
 set_target_properties(MLIRObfuscation PROPERTIES
   PREFIX ""
   SUFFIX ".so"
@@ -25,7 +21,6 @@ target_include_directories(MLIRObfuscation
     ${LLVM_INCLUDE_DIRS}
 )
 
-# Link against MLIR/LLVM shared libraries and OpenSSL
 target_link_libraries(MLIRObfuscation
   PRIVATE
     MLIR
@@ -33,9 +28,6 @@ target_link_libraries(MLIRObfuscation
     OpenSSL::Crypto
 )
 
-# Add LLVM/MLIR compile definitions
 target_compile_definitions(MLIRObfuscation PRIVATE ${LLVM_DEFINITIONS})
 
-# CRITICAL: Match LLVM build settings - no RTTI, no exceptions
-# LLVM was built with LLVM_ENABLE_RTTI=OFF and LLVM_ENABLE_EH=OFF
 target_compile_options(MLIRObfuscation PRIVATE -fno-rtti -fno-exceptions)

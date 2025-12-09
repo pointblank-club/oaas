@@ -17,9 +17,8 @@ using namespace mlir::obs;
 
 namespace {
 
-/// Compute SHA256 hash of input string using modern EVP API
 static std::string computeSHA256(const std::string &input, const std::string &salt) {
-  std::string data = salt + input + salt;  // Salt prefix and suffix
+  std::string data = salt + input + salt;
 
   unsigned char hash[EVP_MAX_MD_SIZE];
   unsigned int hashLen = 0;
@@ -39,7 +38,6 @@ static std::string computeSHA256(const std::string &input, const std::string &sa
   return ss.str();
 }
 
-/// Compute BLAKE2B hash of input string
 static std::string computeBLAKE2B(const std::string &input, const std::string &salt) {
   std::string data = salt + input + salt;
 
@@ -61,15 +59,10 @@ static std::string computeBLAKE2B(const std::string &input, const std::string &s
   return ss.str();
 }
 
-/// Compute SipHash (using SHA256 as fallback since OpenSSL doesn't have SipHash built-in)
-/// For true SipHash, you'd need to link a separate library or implement it
 static std::string computeSipHash(const std::string &input, const std::string &salt) {
-  // For now, use SHA256 as a fast cryptographic hash
-  // TODO: Add proper SipHash implementation if needed
   return computeSHA256(input, salt);
 }
 
-/// Generate obfuscated name from hash
 static std::string generateHashedName(const std::string &originalName,
                                        CryptoHashPass::HashAlgorithm algo,
                                        const std::string &salt,
@@ -88,21 +81,18 @@ static std::string generateHashedName(const std::string &originalName,
       break;
   }
 
-  // Truncate to specified length
   std::string truncated = fullHash.substr(0, hashLength);
 
-  // Add prefix to indicate it's a function
   return "f_" + truncated;
 }
 
-} // namespace
+}
 
 void CryptoHashPass::runOnOperation() {
   ModuleOp module = getOperation();
   MLIRContext *ctx = module.getContext();
   SymbolTable symbolTable(module);
 
-  // Detect which dialect we're working with
   bool hasFuncDialect = false;
   bool hasLLVMDialect = false;
 
@@ -114,25 +104,20 @@ void CryptoHashPass::runOnOperation() {
     }
   });
 
-  // Process Func dialect (high-level MLIR from ClangIR/Polygeist)
   if (hasFuncDialect) {
     llvm::StringMap<std::string> renameMap;
 
-    // Step 1: Collect rename map for func definitions
     module.walk([&](func::FuncOp func) {
       StringRef oldName = func.getSymName();
 
-      // Skip main function to preserve entry point
       if (oldName == "main") {
         return;
       }
 
-      // Skip functions that start with llvm. or mlir. (intrinsics)
       if (oldName.starts_with("llvm.") || oldName.starts_with("mlir.")) {
         return;
       }
 
-      // Only assign a new name once per function
       if (renameMap.find(oldName) == renameMap.end()) {
         std::string newName = generateHashedName(
             oldName.str(),
@@ -144,7 +129,6 @@ void CryptoHashPass::runOnOperation() {
       }
     });
 
-    // Step 2: Update symbol references *before* renaming definitions
     module.walk([&](Operation *op) {
       SmallVector<NamedAttribute> updatedAttrs;
       bool changed = false;
@@ -160,7 +144,6 @@ void CryptoHashPass::runOnOperation() {
             continue;
           }
         }
-        // No change -> keep original
         updatedAttrs.push_back(attr);
       }
 
@@ -169,7 +152,6 @@ void CryptoHashPass::runOnOperation() {
       }
     });
 
-    // Step 3: Rename function definitions *after* updating uses
     module.walk([&](func::FuncOp func) {
       StringRef oldName = func.getSymName();
       auto it = renameMap.find(oldName);
@@ -179,25 +161,20 @@ void CryptoHashPass::runOnOperation() {
     });
   }
 
-  // Process LLVM dialect (post-lowering from mlir-translate or ClangIR lowering)
   if (hasLLVMDialect) {
     llvm::StringMap<std::string> renameMap;
 
-    // Step 1: Collect rename map for LLVM func definitions
     module.walk([&](LLVM::LLVMFuncOp func) {
       StringRef oldName = func.getSymName();
 
-      // Skip main function to preserve entry point
       if (oldName == "main") {
         return;
       }
 
-      // Skip LLVM intrinsics
       if (oldName.starts_with("llvm.")) {
         return;
       }
 
-      // Only assign a new name once per function
       if (renameMap.find(oldName) == renameMap.end()) {
         std::string newName = generateHashedName(
             oldName.str(),
@@ -209,7 +186,6 @@ void CryptoHashPass::runOnOperation() {
       }
     });
 
-    // Step 2: Update symbol references
     module.walk([&](Operation *op) {
       SmallVector<NamedAttribute> updatedAttrs;
       bool changed = false;
@@ -233,7 +209,6 @@ void CryptoHashPass::runOnOperation() {
       }
     });
 
-    // Step 3: Rename LLVM function definitions
     module.walk([&](LLVM::LLVMFuncOp func) {
       StringRef oldName = func.getSymName();
       auto it = renameMap.find(oldName);

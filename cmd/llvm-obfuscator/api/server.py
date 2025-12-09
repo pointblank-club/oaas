@@ -2958,7 +2958,8 @@ async def local_folder_upload(files: List[UploadFile] = File(...)):
 from pathlib import Path as PathlibPath
 
 BINARY_JOBS: Dict[str, Dict] = {}
-BINARY_JOBS_DIR = PathlibPath("/tmp/binary_obfuscation_jobs")
+# Use shared volume path accessible by both backend and ghidra-lifter containers
+BINARY_JOBS_DIR = PathlibPath("/app/binary_jobs")
 BINARY_JOBS_DIR.mkdir(parents=True, exist_ok=True)
 
 

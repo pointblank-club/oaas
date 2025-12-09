@@ -21,7 +21,8 @@ logger = logging.getLogger(__name__)
 
 # Job tracking store (in-memory; use Redis/DB in production)
 JOBS: Dict[str, Dict] = {}
-JOBS_DIR = Path("/tmp/binary_obfuscation_jobs")
+# Use shared volume path accessible by both backend and ghidra-lifter containers
+JOBS_DIR = Path("/app/binary_jobs")
 JOBS_DIR.mkdir(parents=True, exist_ok=True)
 
 
@@ -194,6 +195,20 @@ def register_binary_obfuscation_routes(app: FastAPI):
         if job["worker"]:
             metrics = job["worker"].get_metrics()
 
+        # Build available artifacts list
+        available_artifacts = []
+        artifact_checks = {
+            "final.exe": job_dir / "final" / "final.exe",
+            "program_obf.bc": job_dir / "obf" / "program_obf.bc",
+            "program_llvm22.bc": job_dir / "ir" / "program_llvm22.bc",
+            "logs.txt": job_dir / "logs.txt",
+            "metrics.json": job_dir / "metrics.json",
+            "input.cfg": job_dir / "cfg" / "input.cfg",
+        }
+        for name, path in artifact_checks.items():
+            if path.exists():
+                available_artifacts.append(name)
+
         # Build response
         response = {
             "job_id": job_id,
@@ -201,6 +216,7 @@ def register_binary_obfuscation_routes(app: FastAPI):
             "stage": stage_mapping.get(job.get("stage", "GHIDRA"), "UNKNOWN"),
             "progress": job.get("progress", 0),
             "logs": logs[-2000:] if logs else "",  # Last 2000 chars
+            "available_artifacts": available_artifacts,
         }
 
         if metrics:
@@ -248,6 +264,7 @@ def register_binary_obfuscation_routes(app: FastAPI):
             "program_llvm22.bc": job_dir / "ir" / "program_llvm22.bc",
             "logs.txt": job_dir / "logs.txt",
             "metrics.json": job_dir / "metrics.json",
+            "input.cfg": job_dir / "cfg" / "input.cfg",  # Ghidra CFG JSON
         }
 
         if artifact_name not in allowed_artifacts:

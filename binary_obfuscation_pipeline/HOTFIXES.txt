@@ -1,0 +1,85 @@
+GHIDRA LIFTER HOTFIXES (VERIFIED WORKING)
+=========================================
+
+VERIFIED: 2025-12-09
+- Ghidra CFG Export now works end-to-end
+- Test binary: 83 functions, 130 blocks, 353 edges exported
+- Pipeline stops at Stage 2 (McSema not installed)
+
+ALL-IN-ONE HOTFIX COMMAND:
+--------------------------
+docker exec oass-ghidra-lifter-1 bash -c '
+  apt-get update && apt-get install -y openjdk-21-jdk-headless && \
+  ln -sf /usr/lib/jvm/java-21-openjdk-* /usr/lib/jvm/java-21-openjdk && \
+  sed -i "136s|.*|if [ -n \"\${JAVA_HOME}\" ] \&\& [ -x \"\${JAVA_HOME}/bin/java\" ]; then : ; else JAVA_HOME=\"\$(java -cp \"\${LS_CPATH}\" LaunchSupport \"\${INSTALL_DIR}\" \${JAVA_TYPE_ARG} -save)\"; fi|" /opt/ghidra/ghidra_11.2.1_PUBLIC/support/launch.sh
+'
+
+INDIVIDUAL STEPS:
+-----------------
+1. INSTALL JAVA 21 (Ghidra 11.2.1 requires Java 21, not 17!)
+   docker exec oass-ghidra-lifter-1 apt-get update && apt-get install -y openjdk-21-jdk-headless
+
+2. CREATE JAVA 21 SYMLINK (architecture-agnostic)
+   docker exec oass-ghidra-lifter-1 bash -c 'ln -sf /usr/lib/jvm/java-21-openjdk-* /usr/lib/jvm/java-21-openjdk'
+
+3. PATCH launch.sh to use environment JAVA_HOME (line 136)
+   docker exec oass-ghidra-lifter-1 sed -i '136s|.*|if [ -n "${JAVA_HOME}" ] \&\& [ -x "${JAVA_HOME}/bin/java" ]; then : ; else JAVA_HOME="$(java -cp "${LS_CPATH}" LaunchSupport "${INSTALL_DIR}" ${JAVA_TYPE_ARG} -save)"; fi|' /opt/ghidra/ghidra_11.2.1_PUBLIC/support/launch.sh
+
+4. SET JAVA_HOME in lifter_service.py or container ENV
+   export JAVA_HOME=/usr/lib/jvm/java-21-openjdk
+
+EXPORT_CFG.PY FIXES (Ghidra API compatibility):
+-----------------------------------------------
+1. Line 112: func.getBody().getLength() -> func.getBody().getNumAddresses()
+   (AddressSet doesn't have getLength())
+
+2. Line 106: instr.isBranch() -> instr.getFlowType().isJump() or instr.getFlowType().isConditional()
+   (InstructionDB doesn't have isBranch())
+
+DOCKERFILE FIXES (APPLIED 2025-12-09):
+--------------------------------------
+✅ Changed openjdk-17-jdk-headless -> openjdk-21-jdk-headless
+✅ Updated JAVA_HOME to /usr/lib/jvm/java-21-openjdk
+✅ Added launch.sh patch after Ghidra download
+✅ Added JAVA_HOME to lifter_service.py subprocess calls
+
+LIFTER_SERVICE.PY FIXES (APPLIED 2025-12-09):
+---------------------------------------------
+✅ HARDCODE JAVA_HOME: JAVA_HOME = '/usr/lib/jvm/java-21-openjdk'
+   (Do NOT use os.getenv() - container env may have wrong Java 17 path!)
+✅ Pass JAVA_HOME to _verify_ghidra() subprocess
+✅ Pass JAVA_HOME to lift() subprocess
+
+CRITICAL BUG FIX (2025-12-09):
+------------------------------
+os.getenv('JAVA_HOME', '/usr/lib/jvm/java-21-openjdk') returns wrong value if
+container has JAVA_HOME set to Java 17. Must HARDCODE the path:
+  JAVA_HOME = '/usr/lib/jvm/java-21-openjdk'  # NOT os.getenv()!
+
+REBUILD COMMAND:
+----------------
+docker compose build ghidra-lifter && docker compose up -d ghidra-lifter
+
+QUICK RUNTIME HOTFIX (without rebuild):
+---------------------------------------
+# 1. Apply hotfix + restart in one command
+docker compose restart ghidra-lifter && sleep 5 && \
+docker exec oass-ghidra-lifter-1 bash -c '
+  apt-get update && apt-get install -y openjdk-21-jdk-headless && \
+  ln -sf /usr/lib/jvm/java-21-openjdk-* /usr/lib/jvm/java-21-openjdk && \
+  sed -i "136s|.*|if [ -n \"\${JAVA_HOME}\" ] \&\& [ -x \"\${JAVA_HOME}/bin/java\" ]; then : ; else JAVA_HOME=\"\$(java -cp \"\${LS_CPATH}\" LaunchSupport \"\${INSTALL_DIR}\" \${JAVA_TYPE_ARG} -save)\"; fi|" /opt/ghidra/ghidra_11.2.1_PUBLIC/support/launch.sh
+'
+
+# 2. Copy updated Python scripts (with JAVA_HOME and API fixes)
+docker cp lifter_script/lifter_service.py oass-ghidra-lifter-1:/app/lifter_script/
+docker cp lifter_script/export_cfg.py oass-ghidra-lifter-1:/app/lifter_script/
+
+# 3. Restart to pick up new code
+docker compose restart ghidra-lifter
+
+# 4. Re-apply hotfix after restart
+docker exec oass-ghidra-lifter-1 bash -c '
+  apt-get update && apt-get install -y openjdk-21-jdk-headless && \
+  ln -sf /usr/lib/jvm/java-21-openjdk-* /usr/lib/jvm/java-21-openjdk && \
+  sed -i "136s|.*|if [ -n \"\${JAVA_HOME}\" ] \&\& [ -x \"\${JAVA_HOME}/bin/java\" ]; then : ; else JAVA_HOME=\"\$(java -cp \"\${LS_CPATH}\" LaunchSupport \"\${INSTALL_DIR}\" \${JAVA_TYPE_ARG} -save)\"; fi|" /opt/ghidra/ghidra_11.2.1_PUBLIC/support/launch.sh
+'

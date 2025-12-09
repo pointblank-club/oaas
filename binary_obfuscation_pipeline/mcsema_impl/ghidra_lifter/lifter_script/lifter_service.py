@@ -33,7 +33,10 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__)
 
 # Configuration
-GHIDRA_HOME = os.getenv('GHIDRA_HOME', '/opt/ghidra/ghidra_11.4.3_PUBLIC')
+GHIDRA_HOME = os.getenv('GHIDRA_HOME', '/opt/ghidra/ghidra_11.2.1_PUBLIC')
+# IMPORTANT: Ghidra 11.2.1 requires Java 21. Always use Java 21 path, regardless
+# of container's JAVA_HOME env var (which may be incorrectly set to Java 17)
+JAVA_HOME = '/usr/lib/jvm/java-21-openjdk'
 SCRIPT_PATH = '/app/lifter_script'
 REPORTS_DIR = '/app/reports'
 BINARIES_DIR = '/app/binaries'
@@ -86,11 +89,16 @@ class GhidraLifter:
             )
 
         try:
+            # Set JAVA_HOME for Ghidra verification
+            env = os.environ.copy()
+            env['JAVA_HOME'] = JAVA_HOME
+
             result = subprocess.run(
                 [analyze_headless, '-version'],
                 capture_output=True,
                 text=True,
-                timeout=10
+                timeout=10,
+                env=env
             )
             logger.info(f"Ghidra verified: {result.stdout.strip()}")
         except Exception as e:
@@ -144,12 +152,16 @@ class GhidraLifter:
             logger.debug(f"Command: {' '.join(cmd)}")
 
             try:
-                # Run Ghidra headless analysis
+                # Run Ghidra headless analysis with JAVA_HOME set
+                env = os.environ.copy()
+                env['JAVA_HOME'] = JAVA_HOME
+
                 process = subprocess.run(
                     cmd,
                     capture_output=True,
                     text=True,
-                    timeout=300  # 5 minute timeout for analysis
+                    timeout=300,  # 5 minute timeout for analysis
+                    env=env
                 )
 
                 # Check result

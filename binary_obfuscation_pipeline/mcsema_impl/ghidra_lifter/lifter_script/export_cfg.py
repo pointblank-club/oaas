@@ -98,18 +98,20 @@ try:
         for instr in instructions:
             src = instr.getAddress()
             flows = instr.getFlows()
-            
+            flow_type = instr.getFlowType()
+            is_branch = flow_type.isJump() or flow_type.isConditional()
+
             for f in flows:
                 edges.append({
                     "from": str(src),
                     "to": str(f),
-                    "type": "branch" if instr.isBranch() else "flow"
+                    "type": "branch" if is_branch else "flow"
                 })
         
         cfg["functions"].append({
             "name": func_name,
             "address": func_entry,
-            "size": int(func.getBody().getLength()),
+            "size": int(func.getBody().getNumAddresses()),
             "basic_blocks": blocks,
             "edges": edges,
         })

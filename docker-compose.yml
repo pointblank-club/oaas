@@ -6,10 +6,12 @@ services:
     image: pb-obfuscator-backend:latest
     environment:
       - OBFUSCATOR_DISABLE_AUTH=true
+      - GHIDRA_LIFTER_URL=http://ghidra-lifter:5000
     volumes:
       - ./cmd/llvm-obfuscator/reports:/app/reports
       - ./cmd/llvm-obfuscator/binaries:/app/binaries
       - ./binary_obfuscation_pipeline:/app/binary_obfuscation_pipeline
+      - binary_jobs:/app/binary_jobs
     expose:
       - "8000"
     healthcheck:
@@ -32,6 +34,7 @@ services:
     volumes:
       - ./cmd/llvm-obfuscator/reports:/app/reports
       - ./cmd/llvm-obfuscator/binaries:/app/binaries
+      - binary_jobs:/app/binary_jobs
     expose:
       - "5000"
     ports:
@@ -57,6 +60,10 @@ services:
         condition: service_healthy
     networks:
       - obfuscator-network
+
+volumes:
+  binary_jobs:
+    driver: local
 
 networks:
   obfuscator-network:

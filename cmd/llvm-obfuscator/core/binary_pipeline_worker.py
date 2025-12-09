@@ -112,32 +112,76 @@ class BinaryPipelineWorker:
             return False, str(e)
 
     def step1_ghidra_lifting(self) -> bool:
-        """Step 1: Export CFG using Ghidra."""
+        """Step 1: Export CFG using Ghidra via the ghidra-lifter service."""
+        import requests
+
         input_exe = self.job_dir / "input.exe"
 
         if not input_exe.exists():
             self.logger.log("input.exe not found", level="ERROR")
             return False
 
-        # Find run_ghidra_lifter.sh (script is at root/binary_obfuscation_pipeline/...)
-        script_path = Path("/app/binary_obfuscation_pipeline/mcsema_impl/ghidra_lifter/run_ghidra_lifter.sh")
+        self.logger.log("Starting Ghidra CFG Export via ghidra-lifter service...")
 
-        if not script_path.exists():
-            self.logger.log(f"run_ghidra_lifter.sh not found at {script_path}", level="ERROR")
+        # The ghidra-lifter service is accessible via Docker network
+        # Service name is 'ghidra-lifter' and it listens on port 5000
+        ghidra_lifter_url = os.getenv("GHIDRA_LIFTER_URL", "http://ghidra-lifter:5000")
+
+        try:
+            # First copy the binary to the shared volume so ghidra-lifter can access it
+            # The /app/binaries directory is shared between backend and ghidra-lifter
+            shared_binary_path = Path("/app/binaries") / f"{self.job_dir.name}_input.exe"
+            import shutil
+            shutil.copy(input_exe, shared_binary_path)
+            self.logger.log(f"Copied binary to shared volume: {shared_binary_path}")
+
+            # Output CFG path in the shared reports directory
+            output_cfg_path = str(self.cfg_dir / "input.cfg")
+
+            # Call ghidra-lifter service via HTTP
+            self.logger.log(f"Calling ghidra-lifter at {ghidra_lifter_url}/lift/file")
+
+            response = requests.post(
+                f"{ghidra_lifter_url}/lift/file",
+                json={
+                    "binary_path": str(shared_binary_path),
+                    "output_cfg_path": output_cfg_path
+                },
+                timeout=300  # 5 minute timeout
+            )
+
+            if response.status_code == 200:
+                result = response.json()
+                if result.get("success"):
+                    self.logger.log(f"Ghidra CFG export successful: {result.get('stats', {})}")
+                    # Verify the CFG file was created
+                    if (self.cfg_dir / "input.cfg").exists():
+                        self.logger.log("CFG file verified at expected location")
+                        return True
+                    else:
+                        self.logger.log("CFG file not found at expected location", level="ERROR")
+                        return False
+                else:
+                    self.logger.log(f"Ghidra lifter returned error: {result.get('error')}", level="ERROR")
+                    return False
+            else:
+                self.logger.log(f"Ghidra lifter HTTP error: {response.status_code} - {response.text}", level="ERROR")
+                return False
+
+        except requests.exceptions.ConnectionError as e:
+            self.logger.log(f"Cannot connect to ghidra-lifter service: {e}", level="ERROR")
+            self.logger.log("Make sure ghidra-lifter container is running and healthy", level="ERROR")
             return False
-
-        cmd = [
-            str(script_path),
-            str(input_exe),
-            str(self.cfg_dir)
-        ]
-
-        success, output = self.run_command(cmd, "Ghidra CFG Export")
-        return success and (self.cfg_dir / "program.cfg").exists()
+        except requests.exceptions.Timeout:
+            self.logger.log("Ghidra lifter request timeout (5 minutes)", level="ERROR")
+            return False
+        except Exception as e:
+            self.logger.log(f"Unexpected error calling ghidra-lifter: {e}", level="ERROR")
+            return False
 
     def step2_mcsema_lifting(self) -> bool:
         """Step 2: Lift CFG to LLVM IR using McSema."""
-        cfg_.py
+        cfg_file = self.cfg_dir / "input.cfg"
         if not cfg_file.exists():
             self.logger.log("CFG file not found", level="ERROR")
             return False

@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import BinaryMetricsDashboard from './BinaryMetricsDashboard';
+import BinaryCFGVisualizer from './BinaryCFGVisualizer';
 
 type PipelineStage = 'CFG' | 'LIFTING' | 'IR22' | 'OLLVM' | 'FINALIZING' | 'COMPLETED' | 'ERROR';
 type JobStatus = 'QUEUED' | 'RUNNING' | 'COMPLETED' | 'ERROR' | 'CANCELLED';
@@ -129,6 +130,10 @@ export function BinaryObfuscationMode({ onJobStart, onModeChange }: BinaryObfusc
   const [showLogsPanel, setShowLogsPanel] = useState(true);
   const [isCancelling, setIsCancelling] = useState(false);
   const [showModeSwitchConfirmation, setShowModeSwitchConfirmation] = useState(false);
+  const [cfgData, setCfgData] = useState<any>(null);
+  const [cfgLoading, setCfgLoading] = useState(false);
+  const [cfgError, setCfgError] = useState<string | null>(null);
+  const [showCFGPanel, setShowCFGPanel] = useState(true);
   const logsEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -220,6 +225,26 @@ export function BinaryObfuscationMode({ onJobStart, onModeChange }: BinaryObfusc
         metrics: metrics || prev.metrics
       } : null);
 
+      // Fetch CFG data when available (after Stage 1 completes)
+      if (statusData.available_artifacts?.includes('input.cfg') && !cfgData && !cfgLoading) {
+        setCfgLoading(true);
+        try {
+          const cfgResponse = await fetch(`/api/binary_obfuscate/artifact/${jobId}/input.cfg`);
+          if (cfgResponse.ok) {
+            const cfg = await cfgResponse.json();
+            setCfgData(cfg);
+            setCfgError(null);
+          } else {
+            setCfgError('Failed to load CFG');
+          }
+        } catch (err) {
+          setCfgError('Failed to fetch CFG data');
+          console.warn('Failed to fetch CFG:', err);
+        } finally {
+          setCfgLoading(false);
+        }
+      }
+
       // Stop polling on completion, error, or cancellation
       if (statusData.stage === 'COMPLETED' || statusData.stage === 'ERROR' || statusData.status === 'CANCELLED') {
         if (pollIntervalRef.current) {
@@ -240,6 +265,10 @@ export function BinaryObfuscationMode({ onJobStart, onModeChange }: BinaryObfusc
     }
 
     setError(null);
+    // Reset CFG state for new job
+    setCfgData(null);
+    setCfgError(null);
+    setCfgLoading(false);
 
     try {
       const formData = new FormData();
@@ -748,6 +777,60 @@ export function BinaryObfuscationMode({ onJobStart, onModeChange }: BinaryObfusc
               </div>
             )}
           </section>
+
+          {/* CFG Visualization Panel - shows after Stage 1 completes */}
+          {(cfgData || cfgLoading || cfgError) && (
+            <section style={{
+              marginBottom: '30px',
+              backgroundColor: 'var(--bg-secondary)',
+              borderRadius: '8px',
+              border: '1px solid var(--border-color)',
+              overflow: 'hidden',
+              animation: 'fadeIn 0.5s ease-out'
+            }}>
+              <div
+                onClick={() => setShowCFGPanel(!showCFGPanel)}
+                style={{
+                  padding: '16px',
+                  backgroundColor: 'var(--bg-secondary)',
+                  borderBottom: showCFGPanel ? '1px solid var(--border-color)' : 'none',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  userSelect: 'none'
+                }}
+              >
+                <h3 style={{ margin: 0, fontSize: '1.1em', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <span>🔍</span> Binary Control Flow Graph
+                  {cfgData && (
+                    <span style={{
+                      fontSize: '0.75em',
+                      color: 'var(--success)',
+                      backgroundColor: 'var(--bg-tertiary)',
+                      padding: '2px 8px',
+                      borderRadius: '4px'
+                    }}>
+                      {cfgData.functions?.length || 0} functions
+                    </span>
+                  )}
+                </h3>
+                <span style={{ fontSize: '1.2em', color: 'var(--text-secondary)' }}>
+                  {showCFGPanel ? '▼' : '▶'}
+                </span>
+              </div>
+
+              {showCFGPanel && (
+                <div style={{ animation: 'slideDown 0.3s ease-out' }}>
+                  <BinaryCFGVisualizer
+                    cfgData={cfgData}
+                    isLoading={cfgLoading}
+                    error={cfgError || undefined}
+                  />
+                </div>
+              )}
+            </section>
+          )}
 
           {/* Completion View */}
           {jobState.stage === 'COMPLETED' && (

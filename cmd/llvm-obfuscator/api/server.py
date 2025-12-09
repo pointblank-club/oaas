@@ -31,7 +31,7 @@ from core import (
     report_converter,
 )
 from core.comparer import CompareConfig, compare_binaries
-from core.config import AdvancedConfiguration, PassConfiguration, UPXConfiguration, Architecture, RemarksConfiguration
+from core.config import AdvancedConfiguration, PassConfiguration, UPXConfiguration, Architecture, RemarksConfiguration, IndirectCallConfiguration
 from core.exceptions import JobNotFoundError, ValidationError
 from core.ir_analyzer import IRAnalyzer
 from core.test_suite_integration import (
@@ -196,6 +196,11 @@ class RemarksModel(BaseModel):
     pass_filter: str = Field(default=".*", description="Regex filter for passes")
 
 
+class AntiDebugModel(BaseModel):
+    enabled: bool = False
+    techniques: list[str] = Field(default_factory=lambda: ["ptrace", "proc_status"], description="Anti-debug techniques: ptrace, proc_status, parent_check, timing")
+
+
 class VMModel(BaseModel):
     """VM virtualization configuration (experimental)."""
     enabled: bool = False
@@ -214,6 +219,7 @@ class ConfigModel(BaseModel):
     fake_loops: int = Field(0, ge=0, le=50)
     upx: UPXModel = UPXModel()
     indirect_calls: IndirectCallsModel = IndirectCallsModel()
+    anti_debug: AntiDebugModel = AntiDebugModel()
     remarks: RemarksModel = RemarksModel()  # Enable remarks by default
     vm: VMModel = VMModel()  # VM virtualization (experimental, disabled by default)
 
@@ -374,6 +380,12 @@ def _build_config_from_request(payload: ObfuscateRequest, destination_dir: Path,
         use_lzma=payload.config.upx.use_lzma,
         preserve_original=payload.config.upx.preserve_original,
     )
+    # Configure indirect calls
+    indirect_calls = IndirectCallConfiguration(
+        enabled=payload.config.indirect_calls.enabled,
+        obfuscate_stdlib=payload.config.indirect_calls.obfuscate_stdlib,
+        obfuscate_custom=payload.config.indirect_calls.obfuscate_custom,
+    )
     # Configure remarks (enabled by default)
     remarks_config = RemarksConfiguration(
         enabled=payload.config.remarks.enabled,
@@ -381,10 +393,20 @@ def _build_config_from_request(payload: ObfuscateRequest, destination_dir: Path,
         pass_filter=payload.config.remarks.pass_filter,
     )
     
+    # Configure anti-debugging
+    from core.config import AntiDebugConfiguration
+    logger.info(f"Anti-debug config from request: enabled={payload.config.anti_debug.enabled}, techniques={payload.config.anti_debug.techniques}")
+    anti_debug_config = AntiDebugConfiguration(
+        enabled=payload.config.anti_debug.enabled,
+        techniques=payload.config.anti_debug.techniques,
+    )
+    
     advanced = AdvancedConfiguration(
         cycles=payload.config.cycles,
         fake_loops=payload.config.fake_loops,
+        indirect_calls=indirect_calls,
         upx_packing=upx_config,
+        anti_debug=anti_debug_config,
         remarks=remarks_config,
     )
     # Auto-load plugin if passes are requested and no explicit plugin provided
@@ -416,6 +438,10 @@ def _build_config_from_request(payload: ObfuscateRequest, destination_dir: Path,
                             "advanced": {
                                 "cycles": advanced.cycles,
                                 "fake_loops": advanced.fake_loops,
+                                "anti_debug": {
+                                    "enabled": advanced.anti_debug.enabled,
+                                    "techniques": advanced.anti_debug.techniques,
+                                },
                             },            "output": {
                 "directory": str(destination_dir),
                 "report_format": payload.report_formats,

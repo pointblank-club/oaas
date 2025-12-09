@@ -9,6 +9,7 @@ from typing import Dict, List, Optional
 from .config import Architecture, ObfuscationConfig, Platform
 from .exceptions import ObfuscationError
 from .fake_loop_inserter import FakeLoopGenerator
+from .anti_debug_injector import AntiDebugInjector
 from .ir_analyzer import IRAnalyzer
 from .multifile_compiler import compile_multifile_ir_workflow
 from .reporter import ObfuscationReport
@@ -63,6 +64,7 @@ class LLVMObfuscator:
         self.reporter = reporter
         # Use random seed for fake loops to ensure different output each compilation
         self.fake_loop_generator = FakeLoopGenerator(seed=int.from_bytes(os.urandom(4), 'big'))
+        self.anti_debug_injector = AntiDebugInjector()
         self.remarks_collector = RemarksCollector()
         self.upx_packer = UPXPacker()
         # ✅ NEW: Initialize IR analyzer for advanced metrics
@@ -331,6 +333,37 @@ class LLVMObfuscator:
                 self.logger.error(f"Indirect call obfuscation failed: {e}")
                 indirect_call_result = None
 
+        # Insert anti-debugging code (if enabled) - BEFORE fake loops
+        anti_debug_checks = []
+        if config.advanced.anti_debug.enabled:
+            self.logger.info(f"Injecting anti-debugging protection with techniques: {config.advanced.anti_debug.techniques}")
+            anti_debug_source = output_directory / f"{working_source.stem}_antidebug{working_source.suffix}"
+            try:
+                modified_content, anti_debug_checks = self.anti_debug_injector.inject_anti_debug(
+                    working_source,
+                    techniques=config.advanced.anti_debug.techniques,
+                    output_path=anti_debug_source
+                )
+                if anti_debug_checks:
+                    self.logger.info(f"Successfully injected anti-debugging: {', '.join([c.check_type for c in anti_debug_checks])}")
+                    self.logger.info(f"Anti-debug source saved to: {anti_debug_source}")
+                    # Verify the file was actually written
+                    if anti_debug_source.exists():
+                        file_size = anti_debug_source.stat().st_size
+                        self.logger.info(f"Anti-debug source file size: {file_size} bytes")
+                        # Check if ptrace is in the file
+                        content_check = anti_debug_source.read_text(encoding='utf-8', errors='ignore')
+                        if 'ptrace' in content_check.lower():
+                            self.logger.info("Verified: ptrace code found in modified source")
+                        else:
+                            self.logger.warning("WARNING: ptrace code NOT found in modified source!")
+                    working_source = anti_debug_source  # Use the modified source
+                else:
+                    self.logger.warning("Anti-debugging injection completed but no checks were added")
+            except Exception as e:
+                self.logger.error(f"Anti-debugging injection failed: {e}", exc_info=True)
+                # Continue with original source if injection fails
+
         # Insert fake loops into source code (if enabled)
         fake_loops = []
         if config.advanced.fake_loops and config.advanced.fake_loops > 0:
@@ -497,6 +530,11 @@ class LLVMObfuscator:
                 "algorithm": "MLIR symbol-obfuscate pass" if config.passes.symbol_obfuscate else "none",
                 "symbols_obfuscated": base_metrics.get("symbol_reduction", 0),
             }),
+            "anti_debugging": {
+                "enabled": config.advanced.anti_debug.enabled,
+                "techniques": config.advanced.anti_debug.techniques if config.advanced.anti_debug.enabled else [],
+                "checks_injected": len(anti_debug_checks),
+            },
             "indirect_calls": indirect_call_result or {"enabled": False},
             "upx_packing": upx_result or {"enabled": False},
             "obfuscation_score": base_metrics["obfuscation_score"],

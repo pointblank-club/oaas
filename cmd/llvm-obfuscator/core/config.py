@@ -146,12 +146,18 @@ class RemarksConfiguration:
 
 
 @dataclass
+class AntiDebugConfiguration:
+    enabled: bool = False
+    techniques: List[str] = field(default_factory=lambda: ["ptrace", "proc_status"])  # ptrace, proc_status, parent_check, timing
+
+@dataclass
 class AdvancedConfiguration:
     cycles: int = 1
     fake_loops: int = 0
     indirect_calls: IndirectCallConfiguration = field(default_factory=IndirectCallConfiguration)
     remarks: RemarksConfiguration = field(default_factory=RemarksConfiguration)
     upx_packing: UPXConfiguration = field(default_factory=UPXConfiguration)
+    anti_debug: AntiDebugConfiguration = field(default_factory=AntiDebugConfiguration)
     # ✅ NEW: IR and advanced metrics analysis options
     preserve_ir: bool = True  # Keep IR files after compilation for analysis
     ir_metrics_enabled: bool = True  # Extract CFG and instruction metrics
@@ -244,12 +250,18 @@ class ObfuscationConfig:
             use_lzma=upx_data.get("use_lzma", True),
             preserve_original=upx_data.get("preserve_original", False),
         )
+        anti_debug_data = adv_data.get("anti_debug", {})
+        anti_debug_config = AntiDebugConfiguration(
+            enabled=anti_debug_data.get("enabled", False),
+            techniques=anti_debug_data.get("techniques", ["ptrace", "proc_status"]),
+        )
         advanced = AdvancedConfiguration(
             cycles=adv_data.get("cycles", 1),
             fake_loops=adv_data.get("fake_loops", 0),
             indirect_calls=indirect_calls,
             remarks=remarks_config,
             upx_packing=upx_config,
+            anti_debug=anti_debug_config,
         )
         output_data = data.get("output", {})
         output = OutputConfiguration(

@@ -1849,6 +1849,7 @@ function App() {
 
   // Layer 2: String Encryption sub-options
   const [fakeLoops, setFakeLoops] = useState<number | string>(0);
+  const [antiDebug, setAntiDebug] = useState(false); // Anti-debugging protection
   const [stringMinLength, setStringMinLength] = useState<number | string>(4);
   const [stringEncryptFormatStrings, setStringEncryptFormatStrings] = useState(true);
 
@@ -2795,6 +2796,10 @@ function App() {
             compression_level: layer5 ? upxCompression : 'best',
             use_lzma: layer5 ? upxLzma : true,
             preserve_original: layer5 ? upxPreserveOriginal : false
+          },
+          anti_debug: {
+            enabled: antiDebug,  // From UI toggle
+            techniques: ['ptrace', 'proc_status']  // Default techniques
           },
           remarks: {
             enabled: true,  // Always enable remarks by default
@@ -4445,6 +4450,19 @@ function App() {
                 </label>
               </div>
             )}
+
+            {/* Anti-Debugging Protection */}
+            <label className="layer-checkbox">
+              <input
+                type="checkbox"
+                checked={antiDebug}
+                onChange={(e) => setAntiDebug(e.target.checked)}
+              />
+              <span className="layer-label">
+                Anti-Debugging Protection
+                <small>Detect and prevent debugging (ptrace, GDB, strace detection)</small>
+              </span>
+            </label>
 
             {/* Layer 2.5: Indirect Call Obfuscation */}
             <label className="layer-checkbox">

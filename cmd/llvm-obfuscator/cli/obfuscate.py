@@ -337,6 +337,7 @@ def _build_config(
     upx_compression: str,
     upx_lzma: bool,
     upx_preserve_original: bool,
+    upx_custom_path: Optional[Path],
     enable_anti_debug: bool,
     report_formats: str,
     custom_flags: Optional[str],
@@ -372,6 +373,7 @@ def _build_config(
         compression_level=upx_compression,
         use_lzma=upx_lzma,
         preserve_original=upx_preserve_original,
+        custom_upx_path=upx_custom_path,
     )
     anti_debug_config = AntiDebugConfiguration(
         enabled=enable_anti_debug,
@@ -418,6 +420,7 @@ def compile(
     upx_compression: str = typer.Option("best", help="UPX compression level (fast, default, best, brute)"),
     upx_lzma: bool = typer.Option(True, "--upx-lzma/--no-upx-lzma", help="Use LZMA compression for UPX"),
     upx_preserve_original: bool = typer.Option(False, "--upx-preserve-original", help="Keep backup of pre-UPX binary"),
+    upx_custom_path: Optional[Path] = typer.Option(None, "--upx-custom-path", help="Path to custom UPX binary (overrides system UPX)"),
     enable_anti_debug: bool = typer.Option(False, "--enable-anti-debug", help="Enable anti-debugging protection (ptrace, /proc/self/status checks)"),
     report_formats: str = typer.Option("json", help="Report formats (comma separated)"),
     custom_flags: Optional[str] = typer.Option(None, help="Additional compiler flags"),
@@ -447,6 +450,7 @@ def compile(
             upx_compression=upx_compression,
             upx_lzma=upx_lzma,
             upx_preserve_original=upx_preserve_original,
+            upx_custom_path=upx_custom_path,
             enable_anti_debug=enable_anti_debug,
             report_formats=report_formats,
             custom_flags=custom_flags,

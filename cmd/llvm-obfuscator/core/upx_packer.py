@@ -41,13 +41,69 @@ class UPXPacker:
         "brute": ["--brute"],  # Very slow but maximum compression
     }
     
-    def __init__(self):
+    def __init__(self, custom_upx_path: Optional[Path] = None):
+        """
+        Initialize UPX packer.
+        
+        Args:
+            custom_upx_path: Optional path to custom UPX binary. If provided, uses this instead of system UPX.
+        """
         self.logger = create_logger(__name__)
+        self.custom_upx_path = custom_upx_path
+        self.upx_binary = self._resolve_upx_binary()
         self.upx_available = self._check_upx_available()
+    
+    def _resolve_upx_binary(self) -> Optional[Path]:
+        """Resolve the UPX binary path (custom or system).
+        
+        Priority order:
+        1. Custom UPX path from config (if provided)
+        2. Default Docker image UPX path (/usr/local/llvm-obfuscator/bin/upx)
+        3. System UPX (from PATH)
+        """
+        if self.custom_upx_path:
+            upx_path = Path(self.custom_upx_path)
+            if upx_path.exists() and upx_path.is_file():
+                # Check if it's executable
+                if not upx_path.stat().st_mode & 0o111:
+                    self.logger.warning(f"Custom UPX path exists but is not executable: {upx_path}")
+                    return None
+                return upx_path
+            else:
+                self.logger.warning(f"Custom UPX path does not exist: {upx_path}")
+                return None
+        
+        # Check default Docker image location (for production Docker images)
+        docker_upx = Path("/usr/local/llvm-obfuscator/bin/upx")
+        if docker_upx.exists() and docker_upx.is_file():
+            try:
+                # Verify it's executable
+                if docker_upx.stat().st_mode & 0o111:
+                    return docker_upx
+            except Exception:
+                pass
+        
+        # Fall back to system UPX
+        system_upx = shutil.which("upx")
+        if system_upx:
+            return Path(system_upx)
+        return None
     
     def _check_upx_available(self) -> bool:
         """Check if UPX is installed and available."""
-        return shutil.which("upx") is not None
+        if self.upx_binary is None:
+            return False
+        # Verify the binary is actually executable
+        try:
+            result = subprocess.run(
+                [str(self.upx_binary), "--version"],
+                capture_output=True,
+                timeout=5,
+            )
+            return result.returncode == 0
+        except Exception as e:
+            self.logger.debug(f"UPX version check failed: {e}")
+            return False
     
     def pack(
         self,
@@ -71,7 +127,10 @@ class UPXPacker:
             Dict with packing results or None if packing failed/skipped
         """
         if not self.upx_available:
-            self.logger.warning("UPX not installed. Install with: apt install upx-ucl (Linux) or brew install upx (macOS)")
+            if self.custom_upx_path:
+                self.logger.warning(f"Custom UPX not available at: {self.custom_upx_path}")
+            else:
+                self.logger.warning("UPX not installed. Install with: apt install upx-ucl (Linux) or brew install upx (macOS)")
             return None
         
         if not binary_path.exists():
@@ -94,7 +153,7 @@ class UPXPacker:
             self.logger.debug(f"Created backup: {backup_path}")
         
         # Build UPX command
-        cmd = ["upx"]
+        cmd = [str(self.upx_binary)]
         
         # Add compression level flags
         if compression_level in self.COMPRESSION_LEVELS:
@@ -207,7 +266,7 @@ class UPXPacker:
             return False
         
         try:
-            cmd = ["upx", "-d", str(binary_path)]
+            cmd = [str(self.upx_binary), "-d", str(binary_path)]
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
             
             if result.returncode == 0:
@@ -235,7 +294,7 @@ class UPXPacker:
             return False
         
         try:
-            cmd = ["upx", "-t", str(binary_path)]
+            cmd = [str(self.upx_binary), "-t", str(binary_path)]
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
             return result.returncode == 0
         except Exception as e:

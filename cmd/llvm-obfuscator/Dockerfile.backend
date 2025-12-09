@@ -10,6 +10,7 @@ ENV PYTHONUNBUFFERED=1
 # Split into two layers for better caching:
 # Layer 1: Base tools that rarely change
 # Layer 2: Dev libraries that might be added to
+# Note: upx-ucl removed - using custom UPX binary instead
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
@@ -18,7 +19,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     llvm \
     lld \
     libc6-dev \
-    upx-ucl \
     autoconf \
     automake \
     libtool \
@@ -73,6 +73,9 @@ COPY plugins/linux-x86_64/clang plugins/linux-x86_64/clang++ plugins/linux-x86_6
      plugins/linux-x86_64/mlir-translate plugins/linux-x86_64/clangir \
      plugins/linux-x86_64/lld \
      /usr/local/llvm-obfuscator/bin/
+# Copy custom UPX binary (downloaded from GCP during CI/CD)
+# This will fail if upx doesn't exist, but we'll install system UPX as fallback in RUN step
+COPY plugins/linux-x86_64/upx /usr/local/llvm-obfuscator/bin/upx
 COPY plugins/linux-x86_64/LLVMObfuscationPlugin.so \
      plugins/linux-x86_64/MLIRObfuscation.so \
      plugins/linux-x86_64/libLLVM.so.22.0git \
@@ -105,7 +108,12 @@ RUN mv /usr/local/llvm-obfuscator/bin/clang /usr/local/llvm-obfuscator/bin/clang
     ln -sf /usr/local/llvm-obfuscator/bin/clang.real /usr/local/llvm-obfuscator/bin/clang && \
     ln -sf /usr/local/llvm-obfuscator/bin/lld /usr/local/llvm-obfuscator/bin/ld.lld && \
     ln -sf /usr/local/llvm-obfuscator/bin/lld /usr/local/llvm-obfuscator/bin/ld64.lld && \
-    echo "/usr/local/llvm-obfuscator/lib" > /etc/ld.so.conf.d/llvm.conf && ldconfig
+    echo "/usr/local/llvm-obfuscator/lib" > /etc/ld.so.conf.d/llvm.conf && ldconfig && \
+    # Verify custom UPX if present, otherwise install system UPX as fallback
+    (test -f /usr/local/llvm-obfuscator/bin/upx && /usr/local/llvm-obfuscator/bin/upx --version >/dev/null 2>&1 && \
+     echo "✅ Custom UPX installed at /usr/local/llvm-obfuscator/bin/upx" || \
+     (apt-get update && apt-get install -y --no-install-recommends upx-ucl && rm -rf /var/lib/apt/lists/* && \
+      echo "✅ System UPX installed as fallback"))
 
 # Note: UPX compression removed - binaries from GCP are uncompressed for faster execution
 # Fix incomplete bundled headers by copying ALL missing files from system clang

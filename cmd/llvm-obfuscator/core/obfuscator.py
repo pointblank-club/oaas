@@ -73,7 +73,8 @@ class LLVMObfuscator:
         self.fake_loop_generator = FakeLoopGenerator(seed=int.from_bytes(os.urandom(4), 'big'))
         self.anti_debug_injector = AntiDebugInjector()
         self.remarks_collector = RemarksCollector()
-        self.upx_packer = UPXPacker()
+        # UPX packer will be initialized with custom path when needed
+        self.upx_packer = None
         # ✅ NEW: Initialize IR analyzer for advanced metrics
         # Use paths matching Dockerfile.backend (Docker container)
         opt_binary = Path("/usr/local/llvm-obfuscator/bin/opt")
@@ -370,7 +371,8 @@ class LLVMObfuscator:
                 modified_content, anti_debug_checks = self.anti_debug_injector.inject_anti_debug(
                     working_source,
                     techniques=config.advanced.anti_debug.techniques,
-                    output_path=anti_debug_source
+                    output_path=anti_debug_source,
+                    platform=config.platform.value
                 )
                 if anti_debug_checks:
                     self.logger.info(f"Successfully injected anti-debugging: {', '.join([c.check_type for c in anti_debug_checks])}")

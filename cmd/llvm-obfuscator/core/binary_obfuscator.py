@@ -78,10 +78,19 @@ class BinaryObfuscator:
         from .upx_packer import UPXPacker
         
         if config.advanced.upx_packing.enabled:
-            upx = UPXPacker()
+            upx = UPXPacker(custom_upx_path=config.advanced.upx_packing.custom_upx_path)
             try:
-                result = upx.pack(binary_path, output_binary, config.advanced.upx_packing)
-                if result:
+                result = upx.pack(
+                    binary_path=binary_path,
+                    compression_level=config.advanced.upx_packing.compression_level,
+                    use_lzma=config.advanced.upx_packing.use_lzma,
+                    force=True,
+                    preserve_original=config.advanced.upx_packing.preserve_original,
+                )
+                if result and result.get("status") == "success":
+                    if binary_path != output_binary:
+                        import shutil
+                        shutil.copy2(binary_path, output_binary)
                     self.logger.info("Binary packed with UPX")
                     return {"success": True, "method": "upx_packing"}
             except Exception as e:

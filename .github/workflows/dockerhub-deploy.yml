@@ -63,6 +63,7 @@ jobs:
         chmod +x cmd/llvm-obfuscator/plugins/linux-x86_64/mlir-translate || true
         chmod +x cmd/llvm-obfuscator/plugins/linux-x86_64/clangir || true
         chmod +x cmd/llvm-obfuscator/plugins/linux-x86_64/lld || true
+        chmod +x cmd/llvm-obfuscator/plugins/linux-x86_64/upx || true
 
         echo "✅ Binaries ready"
         ls -lh cmd/llvm-obfuscator/plugins/linux-x86_64/ | head -10
@@ -78,7 +79,13 @@ jobs:
         if [ ! -f "cmd/llvm-obfuscator/plugins/linux-x86_64/LLVMObfuscationPlugin.so" ]; then
           echo "❌ plugin not found"; exit 1
         fi
-        echo "✅ All binaries verified"
+        # UPX is optional - log if present
+        if [ -f "cmd/llvm-obfuscator/plugins/linux-x86_64/upx" ]; then
+          echo "✅ Custom UPX binary found"
+        else
+          echo "ℹ️  Custom UPX not found (will use system UPX as fallback)"
+        fi
+        echo "✅ All required binaries verified"
 
     - name: Upload plugins as artifact
       uses: actions/upload-artifact@v4

@@ -144,6 +144,83 @@ class AntiDebugInjector:
         
         return "\n".join(code_parts)
 
+    def _generate_windows_anti_debug_code(self) -> str:
+        """Generate Windows-specific anti-debugging code using IsDebuggerPresent."""
+        var = self._unique_var("win_dbg")
+        return f"""
+    /* Anti-debug: Windows IsDebuggerPresent check */
+    {{
+        if (IsDebuggerPresent()) {{
+            /* Debugger detected */
+            ExitProcess(1);
+        }}
+    }}
+    
+    /* Anti-debug: Windows CheckRemoteDebuggerPresent check */
+    {{
+        BOOL {var}_is_debugged = FALSE;
+        if (CheckRemoteDebuggerPresent(GetCurrentProcess(), &{var}_is_debugged)) {{
+            if ({var}_is_debugged) {{
+                /* Remote debugger detected */
+                ExitProcess(1);
+            }}
+        }}
+    }}"""
+
+    def _inject_windows_anti_debug(
+        self,
+        content: str,
+        source_path: Path,
+        output_path: Optional[Path]
+    ) -> Tuple[str, List[AntiDebugCheck]]:
+        """Inject Windows-specific anti-debugging code."""
+        
+        # Check if Windows.h is already included
+        has_windows_h = '#include <windows.h>' in content.lower() or '#include <Windows.h>' in content
+        
+        # Add Windows.h header if missing
+        header_insertions = []
+        if not has_windows_h:
+            header_insertions.append("#include <windows.h>\n")
+        
+        # Add headers after existing includes or at the top
+        if header_insertions:
+            include_pattern = re.compile(r'^#include\s*[<"].*[>"]', re.MULTILINE)
+            last_include = None
+            for match in include_pattern.finditer(content):
+                last_include = match.end()
+            
+            if last_include is not None:
+                headers_text = '\n' + ''.join(header_insertions)
+                content = content[:last_include] + headers_text + content[last_include:]
+            else:
+                headers_text = ''.join(header_insertions) + '\n'
+                content = headers_text + content
+        
+        # Generate Windows anti-debug code
+        anti_debug_code = self._generate_windows_anti_debug_code()
+        
+        # Find main function and inject
+        main_pattern = re.compile(r'\b(int|void)\s+main\s*\([^)]*\)\s*\{', re.MULTILINE)
+        main_match = main_pattern.search(content)
+        
+        checks = []
+        if main_match:
+            # Inject after main's opening brace
+            insert_pos = main_match.end()
+            content = content[:insert_pos] + anti_debug_code + content[insert_pos:]
+            checks.append(AntiDebugCheck(
+                check_type="windows_api",
+                location="main",
+                code_snippet="IsDebuggerPresent + CheckRemoteDebuggerPresent"
+            ))
+        
+        # Write output if path provided
+        if output_path:
+            output_path.write_text(content, encoding='utf-8')
+        
+        return content, checks
+
     def _find_function_bodies(self, content: str) -> List[Tuple[int, int]]:
         """
         Find positions of function bodies in C/C++ source code.
@@ -327,7 +404,8 @@ static void __anti_debug_init(void) {{
         self,
         source_path: Path,
         techniques: Optional[List[str]] = None,
-        output_path: Optional[Path] = None
+        output_path: Optional[Path] = None,
+        platform: str = "linux"
     ) -> Tuple[str, List[AntiDebugCheck]]:
         """
         Inject anti-debugging code into source file.
@@ -336,6 +414,7 @@ static void __anti_debug_init(void) {{
             source_path: Path to source file
             techniques: List of techniques to use (default: ["ptrace", "proc_status"])
             output_path: Optional output path (if None, returns modified content)
+            platform: Target platform ("linux", "windows", "macos")
         
         Returns:
             Tuple of (modified source content, list of inserted checks)
@@ -344,6 +423,12 @@ static void __anti_debug_init(void) {{
             techniques = ["ptrace", "proc_status"]
         
         content = source_path.read_text(encoding='utf-8', errors='ignore')
+        
+        # Check if targeting Windows - use Windows-specific anti-debug
+        is_windows = platform.lower() in ["windows", "win32", "win64", "mingw"]
+        
+        if is_windows:
+            return self._inject_windows_anti_debug(content, source_path, output_path)
         
         # Check if required headers are already included
         # Note: <string.h> works for both C and C++ and puts strncmp in global namespace

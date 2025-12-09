@@ -312,6 +312,7 @@ class UPXModel(BaseModel):
     compression_level: str = Field("best", pattern="^(fast|default|best|brute)$")
     use_lzma: bool = True
     preserve_original: bool = False
+    custom_upx_path: Optional[str] = None  # Path to custom UPX binary (overrides system UPX)
 
 
 class IndirectCallsModel(BaseModel):
@@ -509,6 +510,7 @@ def _build_config_from_request(payload: ObfuscateRequest, destination_dir: Path,
         compression_level=payload.config.upx.compression_level,
         use_lzma=payload.config.upx.use_lzma,
         preserve_original=payload.config.upx.preserve_original,
+        custom_upx_path=Path(payload.config.upx.custom_upx_path) if payload.config.upx.custom_upx_path else None,
     )
     # Configure indirect calls
     indirect_calls = IndirectCallConfiguration(
@@ -571,6 +573,13 @@ def _build_config_from_request(payload: ObfuscateRequest, destination_dir: Path,
                                 "anti_debug": {
                                     "enabled": advanced.anti_debug.enabled,
                                     "techniques": advanced.anti_debug.techniques,
+                                },
+                                "upx_packing": {
+                                    "enabled": upx_config.enabled,
+                                    "compression_level": upx_config.compression_level,
+                                    "use_lzma": upx_config.use_lzma,
+                                    "preserve_original": upx_config.preserve_original,
+                                    "custom_upx_path": str(upx_config.custom_upx_path) if upx_config.custom_upx_path else None,
                                 },
                             },            "output": {
                 "directory": str(destination_dir),

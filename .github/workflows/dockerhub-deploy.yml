@@ -1,9 +1,7 @@
 name: Build and Push to Docker Hub
 
 on:
-  push:
-    branches: [ main, develop ]
-    tags: [ 'v*' ]
+  workflow_dispatch:
 
 concurrency:
   group: build-and-push-${{ github.ref }}
@@ -223,7 +221,6 @@ jobs:
   notify:
     needs: [build-backend, build-frontend]
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
 
     steps:
     - name: Deployment summary

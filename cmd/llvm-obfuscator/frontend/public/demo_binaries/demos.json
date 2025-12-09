@@ -1,0 +1,58 @@
+{
+  "demos": [
+    {
+      "id": "simple_calc",
+      "name": "Simple Calculator",
+      "description": "Basic calculator demonstrating add and subtract operations",
+      "filename": "simple_calc.exe",
+      "size_bytes": 38400,
+      "category": "basic",
+      "features": ["functions", "arithmetic"]
+    },
+    {
+      "id": "loop_demo",
+      "name": "Loop Demo",
+      "description": "Demonstrates for loop control flow",
+      "filename": "loop_demo.exe",
+      "size_bytes": 38400,
+      "category": "control_flow",
+      "features": ["loops", "iteration"]
+    },
+    {
+      "id": "conditional_demo",
+      "name": "Conditional Demo",
+      "description": "Demonstrates if-else conditional statements",
+      "filename": "conditional_demo.exe",
+      "size_bytes": 38400,
+      "category": "control_flow",
+      "features": ["conditionals", "branching"]
+    },
+    {
+      "id": "array_demo",
+      "name": "Array Demo",
+      "description": "Demonstrates array operations and indexing",
+      "filename": "array_demo.exe",
+      "size_bytes": 37888,
+      "category": "data_structures",
+      "features": ["arrays", "indexing", "loops"]
+    },
+    {
+      "id": "string_demo",
+      "name": "String Demo",
+      "description": "Demonstrates string operations using C strings",
+      "filename": "string_demo.exe",
+      "size_bytes": 38400,
+      "category": "data_structures",
+      "features": ["strings", "string_length", "indexing"]
+    },
+    {
+      "id": "fibonacci_demo",
+      "name": "Fibonacci Demo",
+      "description": "Calculates Fibonacci numbers up to F(7)",
+      "filename": "fibonacci_demo.exe",
+      "size_bytes": 38400,
+      "category": "algorithms",
+      "features": ["functions", "loops", "arithmetic"]
+    }
+  ]
+}

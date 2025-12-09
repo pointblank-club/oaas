@@ -1,5 +1,6 @@
 # Python artifacts
 
+mcsema-install/*
 .claude/
 __pycache__/
 *.py[cod]

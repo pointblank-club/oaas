@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect } from 'react';
 import './App.css';
 import { GitHubIntegration, FileTree, TestResults, CFGVisualizer } from './components';
 import { MetricsDashboard } from './components/MetricsDashboard';
+import { BinaryObfuscationMode } from './components/BinaryObfuscationMode';
 import githubLogo from '../assets/github.png';
 import { DATABASE_ENGINE_C, GAME_ENGINE_CPP } from './largeDemos';
 
@@ -1687,6 +1688,7 @@ interface RepoFile {
 
 function App() {
   const [darkMode, setDarkMode] = useState(true);
+  const [obfuscationMode, setObfuscationMode] = useState<'source' | 'binary'>('source');
   const [serverStatus, setServerStatus] = useState<'checking' | 'online' | 'offline'>('checking');
   const [file, setFile] = useState<File | null>(null);
   const [inputMode, setInputMode] = useState<'file' | 'paste' | 'github' | 'demo'>('file');
@@ -3489,6 +3491,53 @@ function App() {
         </div>
       </header>
 
+      {/* Mode Switch */}
+      <div style={{
+        padding: '15px 20px',
+        backgroundColor: 'var(--bg-secondary)',
+        borderBottom: '1px solid var(--border-color)',
+        display: 'flex',
+        gap: '8px',
+        justifyContent: 'center'
+      }}>
+        <button
+          onClick={() => {
+            setObfuscationMode('source');
+            setFile(null);
+            setJobId(null);
+          }}
+          style={{
+            padding: '10px 20px',
+            backgroundColor: obfuscationMode === 'source' ? 'white' : 'transparent',
+            color: obfuscationMode === 'source' ? 'var(--bg-primary)' : 'var(--text-primary)',
+            border: '2px solid white',
+            borderRadius: '4px',
+            cursor: 'pointer',
+            fontWeight: obfuscationMode === 'source' ? 'bold' : 'normal',
+            transition: 'all 0.2s ease'
+          }}>
+          Source Obfuscation
+        </button>
+        <button
+          onClick={() => {
+            setObfuscationMode('binary');
+            setFile(null);
+            setJobId(null);
+          }}
+          style={{
+            padding: '10px 20px',
+            backgroundColor: obfuscationMode === 'binary' ? 'white' : 'transparent',
+            color: obfuscationMode === 'binary' ? 'var(--bg-primary)' : 'var(--text-primary)',
+            border: '2px solid white',
+            borderRadius: '4px',
+            cursor: 'pointer',
+            fontWeight: obfuscationMode === 'binary' ? 'bold' : 'normal',
+            transition: 'all 0.2s ease'
+          }}>
+          Binary Obfuscation
+        </button>
+      </div>
+
       {/* Modal */}
       {modal && (
         <div className="modal-overlay" onClick={() => { setModal(null); setShowErrorDetails(false); }}>
@@ -3862,6 +3911,8 @@ function App() {
       )}
 
       <main className="main-content">
+        {obfuscationMode === 'source' ? (
+          <>
         {/* Input Section */}
         <section className="section">
           <h2 className="section-title">[1] SOURCE INPUT</h2>
@@ -6058,6 +6109,14 @@ function App() {
               return null;
             }
           })()
+        )}
+          </>
+        ) : (
+          <BinaryObfuscationMode
+            onJobStart={(jobId) => setJobId(jobId)}
+            obfuscationMode={obfuscationMode}
+            onModeChange={(mode) => setObfuscationMode(mode)}
+          />
         )}
       </main>
 

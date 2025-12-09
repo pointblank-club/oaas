@@ -100,6 +100,7 @@ class PassConfiguration:
     string_encrypt: bool = False
     symbol_obfuscate: bool = False
     constant_obfuscate: bool = False
+    address_obfuscation: bool = False  # Layer 1.5: Address-level obfuscation
     crypto_hash: Optional[CryptoHashConfiguration] = None
 
     def enabled_passes(self) -> List[str]:
@@ -112,6 +113,7 @@ class PassConfiguration:
             "string-encrypt": self.string_encrypt,
             "symbol-obfuscate": self.symbol_obfuscate,
             "constant-obfuscate": self.constant_obfuscate,
+            "address-obfuscation": self.address_obfuscation,
         }
         passes = [name for name, enabled in mapping.items() if enabled]
 

@@ -305,6 +305,7 @@ class PassesModel(BaseModel):
     string_encrypt: bool = False
     symbol_obfuscate: bool = False
     constant_obfuscate: bool = False
+    address_obfuscation: bool = False  # Layer 1.5: Address-level obfuscation
 
 
 class UPXModel(BaseModel):

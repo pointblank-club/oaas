@@ -1003,7 +1003,7 @@ class LLVMObfuscator:
 
         compiler = base_compiler
 
-        mlir_passes = [p for p in enabled_passes if p in ["string-encrypt", "symbol-obfuscate", "crypto-hash", "constant-obfuscate"]]
+        mlir_passes = [p for p in enabled_passes if p in ["string-encrypt", "symbol-obfuscate", "crypto-hash", "constant-obfuscate", "address-obfuscation"]]
         ollvm_passes = [p for p in enabled_passes if p not in mlir_passes]
 
         # The input for the current stage of the pipeline
@@ -1631,7 +1631,7 @@ class LLVMObfuscator:
 
         compiler = base_compiler
 
-        mlir_passes = [p for p in enabled_passes if p in ["string-encrypt", "symbol-obfuscate", "crypto-hash", "constant-obfuscate"]]
+        mlir_passes = [p for p in enabled_passes if p in ["string-encrypt", "symbol-obfuscate", "crypto-hash", "constant-obfuscate", "address-obfuscation"]]
         ollvm_passes = [p for p in enabled_passes if p not in mlir_passes]
 
         current_input = source_abs
@@ -1655,23 +1655,44 @@ class LLVMObfuscator:
         clangir_cmd.extend(cross_compile_flags)
         run_command(clangir_cmd, cwd=source_abs.parent)
 
-        # 1b: Lower ClangIR to LLVM dialect MLIR
+        # 1b: Layer 1.5 - Address Obfuscation (if enabled)
+        cir_input = cir_mlir_file
+        if "address-obfuscation" in mlir_passes:
+            self.logger.info("Applying Layer 1.5 address obfuscation to CIR...")
+            obfuscated_cir = destination_abs.parent / f"{destination_abs.stem}_cir_obfuscated.mlir"
+            cir_obf_cmd = [
+                "mlir-opt",
+                str(cir_input),
+                "--cir-address-obf",
+                "-o", str(obfuscated_cir)
+            ]
+            run_command(cir_obf_cmd, cwd=source_abs.parent)
+            cir_input = obfuscated_cir
+
+        # 1c: Lower CIR to Func dialect (or LLVM dialect if no Layer 1.5)
         llvm_mlir_file = destination_abs.parent / f"{destination_abs.stem}_llvm.mlir"
-        lower_cmd = ["mlir-opt", str(cir_mlir_file), "--cir-to-llvm", "-o", str(llvm_mlir_file)]
+        if "address-obfuscation" in mlir_passes:
+            # Use Layer 1.5 CIR-to-Func lowering
+            lower_cmd = ["mlir-opt", str(cir_input), "--convert-cir-to-func", "-o", str(llvm_mlir_file)]
+        else:
+            # Use standard CIR-to-LLVM lowering
+            lower_cmd = ["mlir-opt", str(cir_input), "--cir-to-llvm", "-o", str(llvm_mlir_file)]
         run_command(lower_cmd, cwd=source_abs.parent)
 
         current_input = llvm_mlir_file
 
         # Stage 2: Apply MLIR Obfuscation Passes
-        if mlir_passes:
-            self.logger.info("Applying MLIR obfuscation passes: %s", ", ".join(mlir_passes))
+        # Filter out address-obfuscation since it was already applied in Stage 1b
+        remaining_mlir_passes = [p for p in mlir_passes if p != "address-obfuscation"]
+        if remaining_mlir_passes:
+            self.logger.info("Applying MLIR obfuscation passes: %s", ", ".join(remaining_mlir_passes))
 
             mlir_plugin = self._get_mlir_plugin_path()
             if not mlir_plugin:
                 raise ObfuscationError("MLIR passes requested but plugin not found.")
 
             obfuscated_mlir = destination_abs.parent / f"{destination_abs.stem}_obfuscated.mlir"
-            passes_str = ",".join(mlir_passes)
+            passes_str = ",".join(remaining_mlir_passes)
             pass_pipeline = f"builtin.module({passes_str})"
 
             opt_cmd = [

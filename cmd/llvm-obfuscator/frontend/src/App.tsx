@@ -1833,8 +1833,9 @@ function App() {
   // Benchmarking options
   const [runBenchmarks, setRunBenchmarks] = useState(false);
 
-  // Layer states (execution order: 1→2→3→4→5)
+  // Layer states (execution order: 1→1.5→2→2.5→3→4→5)
   const [layer1, setLayer1] = useState(false); // Symbol obfuscation (PRE-COMPILE, FIRST)
+  const [layer1_5, setLayer1_5] = useState(false); // Address obfuscation (PRE-COMPILE, 1.5)
   const [layer2, setLayer2] = useState(false); // String encryption (PRE-COMPILE, SECOND)
   const [layer2_5, setLayer2_5] = useState(false); // Indirect calls (PRE-COMPILE, 2.5)
   const [layer3, setLayer3] = useState(false); // OLLVM passes (COMPILE, THIRD - optional)
@@ -2431,6 +2432,7 @@ function App() {
       setLayer5(false);
       // Disable all other layers
       setLayer1(false);
+      setLayer1_5(false);
       setLayer2(false);
       setLayer2_5(false);
       setLayer3(true); // Enable Layer 3 to use passes
@@ -2452,6 +2454,7 @@ function App() {
       setUpxLzma(false);
       // Disable symbol obfuscation and extra features
       setLayer1(false);
+      setLayer1_5(false);
       setLayer2(false);
       setLayer2_5(false);
       setLayer3(true); // Enable Layer 3 for passes
@@ -2471,8 +2474,9 @@ function App() {
       setLayer5(true);
       setUpxCompression('best');
       setUpxLzma(true);
-      // Symbol obfuscation enabled
+      // Symbol obfuscation and address obfuscation enabled for maximum protection
       setLayer1(true);
+      setLayer1_5(true);  // Enable Layer 1.5 for maximum obfuscation
       setLayer2(false);
       setLayer2_5(false);
       setLayer3(true); // Layer 3 for passes
@@ -2770,6 +2774,7 @@ function App() {
             bogus_control_flow: layer3 && passBogusControlFlow,
             split: layer3 && passSplitBasicBlocks,
             linear_mba: layer3 && passLinearMBA,
+            address_obfuscation: layer1_5,  // Layer 1.5: Address obfuscation
             ollvm_split_num: layer3 ? (typeof ollvmSplitNum === 'number' ? ollvmSplitNum : parseInt(String(ollvmSplitNum)) || 3) : 3,
             ollvm_bogus_loop: layer3 ? (typeof ollvmBogusLoop === 'number' ? ollvmBogusLoop : parseInt(String(ollvmBogusLoop)) || 1) : 1
           },
@@ -4390,6 +4395,19 @@ function App() {
                 </label>
               </div>
             )}
+
+            {/* Layer 1.5: Address Obfuscation */}
+            <label className="layer-checkbox">
+              <input
+                type="checkbox"
+                checked={layer1_5}
+                onChange={(e) => setLayer1_5(e.target.checked)}
+              />
+              <span className="layer-label">
+                [LAYER 1.5] Address Obfuscation (PRE-COMPILE, 1.5)
+                <small>XOR masking of pointer indices and array accesses in MLIR</small>
+              </span>
+            </label>
 
             {/* Layer 2: String Encryption */}
             <label className={`layer-checkbox ${(targetPlatform === 'macos' || targetPlatform === 'all') ? 'disabled' : ''}`}>

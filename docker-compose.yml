@@ -4,6 +4,7 @@ services:
       context: ./cmd/llvm-obfuscator
       dockerfile: Dockerfile.backend
     image: pb-obfuscator-backend:latest
+    platform: linux/amd64
     environment:
       - OBFUSCATOR_DISABLE_AUTH=true
       - GHIDRA_LIFTER_URL=http://ghidra-lifter:5000

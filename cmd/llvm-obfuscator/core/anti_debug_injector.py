@@ -123,17 +123,24 @@ class AntiDebugInjector:
     }}"""
 
     def generate_anti_debug_code(self, techniques: List[str]) -> str:
-        """Generate anti-debugging code using specified techniques."""
+        """Generate anti-debugging code using specified techniques.
+        
+        IMPORTANT: Order matters! proc_status check must come BEFORE ptrace check.
+        Reason: ptrace(PTRACE_TRACEME) marks us as being traced by parent,
+        which would cause TracerPid to be non-zero and trigger false positives.
+        """
         code_parts = []
         
-        if "ptrace" in techniques:
-            code_parts.append(self._generate_ptrace_check())
+        # Check TracerPid FIRST (before ptrace modifies tracing state)
         if "proc_status" in techniques:
             code_parts.append(self._generate_proc_status_check())
         if "parent_check" in techniques:
             code_parts.append(self._generate_parent_check())
         if "timing" in techniques:
             code_parts.append(self._generate_time_check())
+        # ptrace check LAST (it modifies the process tracing state)
+        if "ptrace" in techniques:
+            code_parts.append(self._generate_ptrace_check())
         
         return "\n".join(code_parts)
 

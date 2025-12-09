@@ -395,6 +395,7 @@ def _build_config_from_request(payload: ObfuscateRequest, destination_dir: Path,
     
     # Configure anti-debugging
     from core.config import AntiDebugConfiguration
+    logger.info(f"Anti-debug config from request: enabled={payload.config.anti_debug.enabled}, techniques={payload.config.anti_debug.techniques}")
     anti_debug_config = AntiDebugConfiguration(
         enabled=payload.config.anti_debug.enabled,
         techniques=payload.config.anti_debug.techniques,

@@ -1,5 +1,6 @@
 #include "Obfuscator/Passes.h"
 #include "Obfuscator/Config.h"
+#include "CIR/Passes.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Pass/PassManager.h"
@@ -27,10 +28,13 @@ int main(int argc, char **argv) {
                   mlir::memref::MemRefDialect,
                   mlir::affine::AffineDialect>();
 
-  // Register all standard MLIR passes (lowering, transforms, etc.)
+
   mlir::registerAllPasses();
 
-  // Register our custom obfuscation passes
+  // Register CIR passes (Layer 1.5)
+  mlir::cir::registerCIRPasses();
+
+
   mlir::registerPass([]() -> std::unique_ptr<mlir::Pass> {
     return std::make_unique<mlir::obs::StringEncryptPass>();
   });
@@ -55,13 +59,13 @@ int main(int argc, char **argv) {
     return std::make_unique<mlir::obs::ImportObfuscationPass>();
   });
 
-  // Print banner
+  
   llvm::outs() << "MLIR Obfuscator Tool\n";
   llvm::outs() << "MLIR/LLVM Version: " << MLIR_VERSION_STRING << "\n";
   llvm::outs() << "Supported Frontend: ClangIR (LLVM 22 native)\n";
   llvm::outs() << "\n";
 
-  // Run mlir-opt main with our registered passes
+  
   return mlir::asMainReturnCode(
       mlir::MlirOptMain(argc, argv, "MLIR Obfuscator\n", registry));
 }

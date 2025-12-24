@@ -87,31 +87,42 @@ class IRAnalyzer:
             ir_file: Path to .ll or .bc IR file
 
         Returns:
-            Dict with instruction metrics
+            Dict with instruction metrics (includes _metadata field if unavailable)
         """
         if not ir_file.exists():
             self.logger.warning(f"IR file not found: {ir_file}")
-            return self._empty_instruction_metrics()
+            metrics = self._empty_instruction_metrics()
+            metrics['_metadata'] = {'status': 'unavailable', 'reason': 'IR file not found'}
+            return metrics
 
         ir_text = self._get_ir_text(ir_file)
         if not ir_text:
-            return self._empty_instruction_metrics()
+            # Could not convert bitcode or read IR file
+            metrics = self._empty_instruction_metrics()
+            metrics['_metadata'] = {'status': 'unavailable', 'reason': 'Could not convert bitcode to text or read IR file (llvm-dis may not be available)'}
+            return metrics
 
-        distribution = self._count_instruction_distribution(ir_text)
-        total_instructions = sum(distribution.values())
-        arithmetic_complexity = self._calculate_arithmetic_complexity(ir_text)
-        mba_expressions = self._estimate_mba_expressions(ir_text)
-        call_count = distribution.get("call", 0)
-        indirect_call_count = self._count_indirect_calls(ir_text)
+        try:
+            distribution = self._count_instruction_distribution(ir_text)
+            total_instructions = sum(distribution.values())
+            arithmetic_complexity = self._calculate_arithmetic_complexity(ir_text)
+            mba_expressions = self._estimate_mba_expressions(ir_text)
+            call_count = distribution.get("call", 0)
+            indirect_call_count = self._count_indirect_calls(ir_text)
 
-        return {
-            "total_instructions": total_instructions,
-            "instruction_distribution": distribution,
-            "arithmetic_complexity_score": round(arithmetic_complexity, 2),
-            "mba_expression_count": mba_expressions,
-            "call_instruction_count": call_count,
-            "indirect_call_count": indirect_call_count,
-        }
+            return {
+                "total_instructions": total_instructions,
+                "instruction_distribution": distribution,
+                "arithmetic_complexity_score": round(arithmetic_complexity, 2),
+                "mba_expression_count": mba_expressions,
+                "call_instruction_count": call_count,
+                "indirect_call_count": indirect_call_count,
+            }
+        except Exception as e:
+            self.logger.error(f"Instruction analysis failed: {e}")
+            metrics = self._empty_instruction_metrics()
+            metrics['_metadata'] = {'status': 'error', 'reason': str(e)}
+            return metrics
 
     def compare_ir_metrics(self, baseline: Dict, obfuscated: Dict) -> Dict:
         """Calculate improvement metrics between baseline and obfuscated IR.
@@ -178,9 +189,9 @@ class IRAnalyzer:
     def _bitcode_to_text(self, bc_file: Path) -> Optional[str]:
         """Convert LLVM bitcode to text IR using llvm-dis."""
         try:
-            # Check if llvm-dis exists
+            # Use the configured llvm-dis path (passed from obfuscator/server initialization)
             if not self.llvm_dis_binary.exists():
-                self.logger.warning(f"llvm-dis not found at {self.llvm_dis_binary} - cannot convert bitcode to text")
+                self.logger.error(f"llvm-dis not found at {self.llvm_dis_binary}")
                 return None
 
             # Use llvm-dis to convert
@@ -312,28 +323,72 @@ class IRAnalyzer:
         """Estimate MBA (Mixed Boolean-Arithmetic) expressions.
 
         MBA expressions mix arithmetic and boolean operations.
-        Heuristic: Count complex arithmetic chains.
+        This improved detector recognizes:
+        1. Direct multi-op on same line (traditional chaining)
+        2. Linear MBA synthetic expressions (chains of arithmetic ops)
+        3. Interleaved arithmetic+boolean operations
         """
         count = 0
+        lines = ir_text.split('\n')
+        arithmetic_ops = {'add', 'sub', 'mul', 'div', 'udiv', 'sdiv', 'urem', 'srem', 'shl', 'lshr', 'ashr'}
+        boolean_ops = {'xor', 'and', 'or'}
 
-        # Look for lines with multiple operations
-        for line in ir_text.split('\n'):
+        # Track variables used in chains to identify Linear MBA patterns
+        var_usage = {}  # Maps variable names to list of operations they're used in
+        for i, line in enumerate(lines):
             line = line.strip()
+            if not line or line.startswith(';'):
+                continue
 
-            # Count operations on same line (would indicate chaining/MBA)
-            ops = 0
-            if ' add ' in line:
-                ops += 1
-            if ' mul ' in line or ' div ' in line:
-                ops += 1
-            if ' xor ' in line or ' and ' in line or ' or ' in line:
-                ops += 1
-            if ' shl ' in line or ' lshr ' in line:
-                ops += 1
+            # Extract the assigned variable
+            var_match = re.match(r'(%[\w.]+)\s*=', line)
+            if not var_match:
+                continue
 
-            # If multiple operations in expression, likely MBA-like
-            if ops >= 2:
+            var = var_match.group(1)
+
+            # Count operations in this line
+            op_count = 0
+            found_ops = []
+            for op in arithmetic_ops | boolean_ops:
+                if f' {op} ' in line or f' {op}\t' in line:
+                    op_count += 1
+                    found_ops.append(op)
+
+            # Pattern 1: Multiple operations on same line (direct MBA)
+            if op_count >= 2:
                 count += 1
+            # Pattern 2: Arithmetic operations (foundation of Linear MBA)
+            elif op_count >= 1 and any(op in arithmetic_ops for op in found_ops):
+                # Track this variable for chain detection
+                if var not in var_usage:
+                    var_usage[var] = []
+                var_usage[var].append(('arithmetic', i))
+
+        # Pattern 3: Detect Linear MBA chains (variable reuse in dependent operations)
+        # Look for sequences where one operation's output feeds into another
+        for i, line in enumerate(lines):
+            line = line.strip()
+            if not line or line.startswith(';'):
+                continue
+
+            var_match = re.match(r'(%[\w.]+)\s*=', line)
+            if not var_match:
+                continue
+
+            var = var_match.group(1)
+
+            # Check if this instruction uses any of the previously computed variables
+            for prev_var in var_usage.keys():
+                if prev_var != var and prev_var in line:
+                    # Check if it's an arithmetic/boolean operation
+                    for op in arithmetic_ops | boolean_ops:
+                        if f' {op} ' in line or f' {op}\t' in line:
+                            # This is a chain: prev_var -> operation -> var
+                            # Only count if it's part of a chain of 2+ operations
+                            count += 1
+                            break  # Count once per line even if multiple ops found
+                    break  # Only count once per variable match
 
         return count
 
@@ -345,6 +400,70 @@ class IRAnalyzer:
         indirect_pattern = r'call\s+\w+\s+%\w+'
         matches = re.findall(indirect_pattern, ir_text)
         return len(matches)
+
+    def analyze_bcf_metrics(self, baseline_ir: Path, obfuscated_ir: Path) -> Dict:
+        """Analyze BCF (Bogus Control Flow) artifacts by comparing baseline and obfuscated IR.
+
+        Detects:
+        - Dead code blocks (unreachable blocks added by BCF)
+        - Opaque predicates (always-true/false branches)
+        - Junk instructions (dummy stores and operations)
+
+        Args:
+            baseline_ir: Path to baseline IR file (.ll or .bc)
+            obfuscated_ir: Path to obfuscated IR file (.ll or .bc)
+
+        Returns:
+            Dict with BCF metrics (dead_code_blocks, opaque_predicates, junk_instructions)
+        """
+        try:
+            baseline_text = self._get_ir_text(baseline_ir)
+            obfuscated_text = self._get_ir_text(obfuscated_ir)
+
+            if not baseline_text or not obfuscated_text:
+                self.logger.warning("Could not read baseline or obfuscated IR for BCF analysis")
+                return {}
+
+            # Count unreachable blocks (BCF adds always-false branches creating dead code)
+            baseline_unreachable = len(re.findall(r'\bunreachable\b', baseline_text))
+            obfuscated_unreachable = len(re.findall(r'\bunreachable\b', obfuscated_text))
+            new_unreachable_blocks = max(0, obfuscated_unreachable - baseline_unreachable)
+
+            # Count opaque predicates (always-true or always-false conditional branches)
+            # Pattern: br i1 true, label %...  or  br i1 false, label %...
+            obf_opaque_true = len(re.findall(r'\bbr\s+i1\s+true\s*,', obfuscated_text))
+            obf_opaque_false = len(re.findall(r'\bbr\s+i1\s+false\s*,', obfuscated_text))
+            baseline_opaque_true = len(re.findall(r'\bbr\s+i1\s+true\s*,', baseline_text))
+            baseline_opaque_false = len(re.findall(r'\bbr\s+i1\s+false\s*,', baseline_text))
+            new_opaque_predicates = max(0, (obf_opaque_true + obf_opaque_false) - (baseline_opaque_true + baseline_opaque_false))
+
+            # Count junk instructions (dummy stores added to confuse analysis)
+            # Pattern: store i<N> <value>, i<N>* (store to local/temp variables)
+            baseline_stores = len(re.findall(r'\bstore\s+i\d+\s+', baseline_text))
+            obfuscated_stores = len(re.findall(r'\bstore\s+i\d+\s+', obfuscated_text))
+            junk_stores = max(0, obfuscated_stores - baseline_stores)
+
+            # Calculate code bloat from instruction growth
+            baseline_instrs = len(re.findall(r'^\s+\w+\s+', baseline_text, re.MULTILINE))
+            obfuscated_instrs = len(re.findall(r'^\s+\w+\s+', obfuscated_text, re.MULTILINE))
+            code_bloat = 0.0
+            if baseline_instrs > 0:
+                code_bloat = round(((obfuscated_instrs - baseline_instrs) / baseline_instrs) * 100, 2)
+                code_bloat = min(100.0, code_bloat)  # Cap at 100%
+
+            result = {
+                "dead_code_blocks": new_unreachable_blocks,
+                "opaque_predicates": new_opaque_predicates,
+                "junk_instructions": junk_stores,
+                "code_bloat_percentage": code_bloat,
+            }
+
+            self.logger.info(f"BCF metrics from IR analysis: {result}")
+            return result
+
+        except Exception as e:
+            self.logger.error(f"BCF metrics analysis failed: {e}")
+            return {}
 
     def _empty_control_flow_metrics(self) -> Dict:
         """Return empty CFG metrics dict."""

@@ -1,0 +1,5 @@
+# Test binaries (uploaded for obfuscation testing)
+*.exe
+*.dll
+*_input.*
+!.gitkeep

@@ -4,10 +4,16 @@ services:
       context: ./cmd/llvm-obfuscator
       dockerfile: Dockerfile.backend
     image: pb-obfuscator-backend:latest
+    platform: linux/amd64
     environment:
       - OBFUSCATOR_DISABLE_AUTH=true
+      - GHIDRA_LIFTER_URL=http://ghidra-lifter:5000
+      - MCSEMA_LIFT_URL=http://mcsema-lift:5002
     volumes:
       - ./cmd/llvm-obfuscator/reports:/app/reports
+      - ./cmd/llvm-obfuscator/binaries:/app/binaries
+      - ./binary_obfuscation_pipeline:/app/binary_obfuscation_pipeline
+      - binary_jobs:/app/binary_jobs
     expose:
       - "8000"
     healthcheck:
@@ -16,6 +22,59 @@ services:
       timeout: 5s
       retries: 5
       start_period: 30s
+    depends_on:
+      ghidra-lifter:
+        condition: service_healthy
+      mcsema-lift:
+        condition: service_healthy
+    networks:
+      - obfuscator-network
+
+  ghidra-lifter:
+    build:
+      context: ./binary_obfuscation_pipeline/mcsema_impl/ghidra_lifter
+      dockerfile: Dockerfile
+    image: pb-ghidra-lifter:latest
+    volumes:
+      - ./cmd/llvm-obfuscator/reports:/app/reports
+      - ./cmd/llvm-obfuscator/binaries:/app/binaries
+      - binary_jobs:/app/binary_jobs
+    expose:
+      - "5000"
+    ports:
+      - "5001:5000"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:5000/health"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    networks:
+      - obfuscator-network
+
+  mcsema-lift:
+    # Build using LLVM 9 base - LLVM 11 has CallSite bug that causes segfaults
+    build:
+      context: ./binary_obfuscation_pipeline/mcsema_impl/mcsema_lift
+      dockerfile: Dockerfile
+    image: pb-mcsema-lift:latest
+    platform: linux/amd64
+    volumes:
+      - ./cmd/llvm-obfuscator/reports:/app/reports
+      - ./cmd/llvm-obfuscator/binaries:/app/binaries
+      - binary_jobs:/app/binary_jobs
+    expose:
+      - "5002"
+    ports:
+      - "5002:5002"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:5002/health"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    networks:
+      - obfuscator-network
 
   frontend:
     build:
@@ -27,5 +86,15 @@ services:
     depends_on:
       backend:
         condition: service_healthy
+    networks:
+      - obfuscator-network
+
+volumes:
+  binary_jobs:
+    driver: local
+
+networks:
+  obfuscator-network:
+    driver: bridge
 
 

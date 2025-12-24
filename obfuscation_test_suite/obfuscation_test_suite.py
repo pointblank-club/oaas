@@ -429,7 +429,8 @@ class ObfuscationTestSuite:
         if self.test_results.get('symbols', {}).get('symbols_reduced', False):
             score += 15
 
-        if self.test_results.get('performance', {}).get('overhead_percent', 0) < 100:
+        overhead = self.test_results.get('performance', {}).get('overhead_percent', 0)
+        if overhead is not None and overhead < 100:
             score += 20
 
         # Normalize to 0-100

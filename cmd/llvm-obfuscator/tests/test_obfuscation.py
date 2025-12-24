@@ -1,3 +1,5 @@
+# test file
+
 import base64
 import json
 import time
@@ -11,27 +13,27 @@ from core import LLVMObfuscator
 
 
 def test_functional_equivalence(sample_source, obfuscation_config, obfuscator: LLVMObfuscator):
-    """Verify obfuscated binary produces same output"""
+    
     result = obfuscator.obfuscate(sample_source, obfuscation_config)
     output_file = Path(result["output_file"])
     assert output_file.exists()
 
 
 def test_symbol_reduction(sample_source, obfuscation_config, obfuscator: LLVMObfuscator):
-    """Verify symbols are properly hidden"""
+    
     obfuscation_config.passes.symbol_obfuscate = True
     result = obfuscator.obfuscate(sample_source, obfuscation_config)
     assert result["symbol_reduction"] >= 20
 
 
 def test_all_passes(sample_source, obfuscation_config, obfuscator: LLVMObfuscator):
-    """Test each OLLVM pass individually"""
+    
     result = obfuscator.obfuscate(sample_source, obfuscation_config)
     assert set(result["requested_passes"]) == {"flattening", "substitution", "boguscf", "split", "string-encrypt", "symbol-obfuscate"}
 
 
 def test_report_generation(sample_source, obfuscation_config, obfuscator: LLVMObfuscator):
-    """Verify all report fields are populated"""
+    
     result = obfuscator.obfuscate(sample_source, obfuscation_config)
     report_paths = result.get("report_paths", {})
     assert "json" in report_paths
@@ -41,7 +43,7 @@ def test_report_generation(sample_source, obfuscation_config, obfuscator: LLVMOb
 
 
 def test_cross_platform(sample_source, obfuscation_config, obfuscator: LLVMObfuscator):
-    """Test Windows and Linux binary generation"""
+    
     from core.config import Platform
 
     obfuscation_config.platform = Platform.WINDOWS
@@ -51,14 +53,14 @@ def test_cross_platform(sample_source, obfuscation_config, obfuscator: LLVMObfus
 
 @pytest.mark.parametrize("endpoint", ["/api/jobs", "/api/health"])
 def test_api_endpoints_get(endpoint):
-    """Test API GET endpoints with authentication"""
+    
     client = TestClient(app)
     response = client.get(endpoint, headers={"x-api-key": "test-key"})
     assert response.status_code in {200, 204}
 
 
 def test_api_endpoints_obfuscate_flow(sample_source, base64_source):
-    """Test all API endpoints with various configs"""
+    
     client = TestClient(app)
 
     payload = {
@@ -84,7 +86,7 @@ def test_api_endpoints_obfuscate_flow(sample_source, base64_source):
     assert response.status_code == 200
     job_id = response.json()["job_id"]
 
-    # Allow background task to finish
+    
     for _ in range(5):
         job = job_manager.get_job(job_id)
         if job.status == "completed":
@@ -101,7 +103,7 @@ def test_api_endpoints_obfuscate_flow(sample_source, base64_source):
 
 
 def test_api_compare_endpoint(sample_source):
-    """Test API compare endpoint"""
+    
     data = sample_source.read_bytes()
     client = TestClient(app)
     payload = {
@@ -116,7 +118,7 @@ def test_api_compare_endpoint(sample_source):
 
 
 def test_cli_commands(sample_source, tmp_path, monkeypatch):
-    """Test CLI commands and options"""
+    
     from typer.testing import CliRunner
 
     from cli.obfuscate import app as cli_app

@@ -23,7 +23,7 @@ interface RepoData {
   branch: string;
 }
 
-// Response from fast clone endpoint
+
 interface CloneResponse {
   session_id: string;
   repo_name: string;
@@ -51,7 +51,7 @@ export const GitHubIntegration: React.FC<GitHubIntegrationProps> = ({ onFilesLoa
   const [githubEnabled, setGithubEnabled] = useState(false);
 
   useEffect(() => {
-    // Check if GitHub OAuth is enabled
+    // Check if Github OAuth is enabled
     fetch('/api/capabilities')
       .then(res => res.json())
       .then(data => {
@@ -59,7 +59,7 @@ export const GitHubIntegration: React.FC<GitHubIntegrationProps> = ({ onFilesLoa
       })
       .catch(err => console.error('Failed to check GitHub capabilities:', err));
 
-    // Check for OAuth callback
+    
     const urlParams = new URLSearchParams(window.location.search);
     const githubAuth = urlParams.get('github_auth');
     const error = urlParams.get('error');
@@ -68,12 +68,12 @@ export const GitHubIntegration: React.FC<GitHubIntegrationProps> = ({ onFilesLoa
       onError(`GitHub authentication failed: ${error}`);
       window.history.replaceState({}, document.title, window.location.pathname);
     } else if (githubAuth === 'success') {
-      // Clean up URL
+      
       window.history.replaceState({}, document.title, window.location.pathname);
-      // Check authentication status
+      
       checkAuthStatus();
     } else {
-      // Check if already authenticated
+      
       checkAuthStatus();
     }
   }, []);
@@ -103,7 +103,7 @@ export const GitHubIntegration: React.FC<GitHubIntegrationProps> = ({ onFilesLoa
       const data = await response.json();
       
       if (response.ok) {
-        // Redirect to GitHub OAuth
+        
         window.location.href = data.auth_url;
       } else {
         const detail = data.detail || `HTTP ${response.status}`;
@@ -161,7 +161,9 @@ export const GitHubIntegration: React.FC<GitHubIntegrationProps> = ({ onFilesLoa
   const loadBranches = async (repoUrl: string, useAuth: boolean = true) => {
     try {
       setLoading(true);
-      const url = `/api/github/repo/branches?repo_url=${encodeURIComponent(repoUrl)}`;
+      // Strip .git suffix if present
+      const cleanUrl = repoUrl.endsWith('.git') ? repoUrl.slice(0, -4) : repoUrl;
+      const url = `/api/github/repo/branches?repo_url=${encodeURIComponent(cleanUrl)}`;
       const response = await fetch(url, {
         credentials: useAuth ? 'include' : 'omit'
       });
@@ -188,8 +190,10 @@ export const GitHubIntegration: React.FC<GitHubIntegrationProps> = ({ onFilesLoa
   const loadRepoFiles = async (repoUrl: string, branch: string, useAuth: boolean = true) => {
     try {
       setLoading(true);
+      
+      const cleanUrl = repoUrl.endsWith('.git') ? repoUrl.slice(0, -4) : repoUrl;
       const payload = {
-        repo_url: repoUrl,
+        repo_url: cleanUrl,
         branch: branch,
       };
 
@@ -219,12 +223,14 @@ export const GitHubIntegration: React.FC<GitHubIntegrationProps> = ({ onFilesLoa
     }
   };
 
-  // Fast clone: keeps all files on backend (including build system files like CMakeLists.txt)
+  
   const cloneRepoFast = async (repoUrl: string, branch: string, useAuth: boolean = true) => {
     try {
       setLoading(true);
+      
+      const cleanUrl = repoUrl.endsWith('.git') ? repoUrl.slice(0, -4) : repoUrl;
       const payload = {
-        repo_url: repoUrl,
+        repo_url: cleanUrl,
         branch: branch,
       };
 
@@ -283,8 +289,7 @@ export const GitHubIntegration: React.FC<GitHubIntegrationProps> = ({ onFilesLoa
       return;
     }
 
-    // Use fast clone - keeps all files on backend including build system files
-    // This is essential for projects with CMakeLists.txt, configure, etc.
+    
     await cloneRepoFast(repoUrl, selectedBranch, useAuth);
   };
 

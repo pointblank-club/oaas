@@ -396,17 +396,23 @@ class ReportGenerator:
         lines.append("-" * 70)
         recommendations = []
 
-        if 'strings' in results_data and results_data['strings'].get('reduction_percent', 0) < 50:
-            recommendations.append("• Increase string obfuscation to protect sensitive data")
+        if 'strings' in results_data:
+            reduction = results_data['strings'].get('reduction_percent', 0)
+            if reduction is not None and reduction < 50:
+                recommendations.append("• Increase string obfuscation to protect sensitive data")
 
         if 'symbols' in results_data and not results_data['symbols'].get('symbols_reduced'):
             recommendations.append("• Strip debug symbols and exported functions")
 
-        if 'performance' in results_data and results_data['performance'].get('overhead_percent', 0) > 50:
-            recommendations.append("• Reduce obfuscation intensity - performance impact too high")
+        if 'performance' in results_data:
+            overhead = results_data['performance'].get('overhead_percent', 0)
+            if overhead is not None and overhead > 50:
+                recommendations.append("• Reduce obfuscation intensity - performance impact too high")
 
-        if 're_difficulty' in results_data and results_data['re_difficulty'].get('re_difficulty_score', 0) < 50:
-            recommendations.append("• Apply stronger obfuscation techniques (control flow flattening, virtualization)")
+        if 're_difficulty' in results_data:
+            score = results_data['re_difficulty'].get('re_difficulty_score', 0)
+            if score is not None and score < 50:
+                recommendations.append("• Apply stronger obfuscation techniques (control flow flattening, virtualization)")
 
         if not recommendations:
             recommendations.append("• Binary obfuscation parameters are well-balanced")

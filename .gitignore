@@ -1,5 +1,6 @@
 # Python artifacts
 
+mcsema-install/*
 .claude/
 __pycache__/
 *.py[cod]
@@ -39,3 +40,11 @@ cmd/llvm-obfuscator/macos-sdk/
 # LLVM plugins directory - binaries downloaded from GCP (gs://llvmbins/)
 cmd/llvm-obfuscator/plugins/
 plugins/
+
+# SPEC CPU 2017 local benchmark results - not versioned
+spec_cpu/results/
+spec_cpu/build/
+spec_cpu/
+
+# Documentation folder
+docs/

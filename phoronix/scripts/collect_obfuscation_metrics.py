@@ -8,6 +8,7 @@ computing static metrics, entropy, CFG analysis, and cyclomatic complexity.
 
 import json
 import logging
+import math
 import re
 import struct
 import subprocess
@@ -45,6 +46,32 @@ class MetricsCollector:
     def __init__(self):
         """Initialize the metrics collector."""
         self.logger = logging.getLogger(__name__)
+        self._pefile_available = self._check_pefile_available()
+
+    def _check_pefile_available(self) -> bool:
+        """Check if pefile library is available for Windows PE support."""
+        try:
+            import pefile
+            self.logger.info("pefile library available - Windows PE support enabled")
+            return True
+        except ImportError:
+            self.logger.warning("pefile library not available - Windows PE metrics will be limited")
+            return False
+
+    def _detect_binary_format(self, binary_path: Path) -> str:
+        """Detect if binary is ELF, PE, or Mach-O."""
+        try:
+            with open(binary_path, 'rb') as f:
+                header = f.read(4)
+                if header.startswith(b'\x7fELF'):
+                    return 'ELF'
+                elif header.startswith(b'MZ'):
+                    return 'PE'
+                elif header.startswith(b'\xfe\xed\xfa') or header.startswith(b'\xcf\xfa'):
+                    return 'Mach-O'
+        except Exception as e:
+            self.logger.warning(f"Could not detect binary format for {binary_path}: {e}")
+        return 'UNKNOWN'
 
     def collect_metrics(
         self,
@@ -97,6 +124,7 @@ class MetricsCollector:
     def _analyze_binary(self, binary_path: Path) -> Optional[BinaryMetrics]:
         """
         Analyze a single binary and extract metrics.
+        Uses platform-specific extractors (ELF, PE, Mach-O).
 
         Args:
             binary_path: Path to the binary
@@ -107,6 +135,7 @@ class MetricsCollector:
         try:
             file_size = binary_path.stat().st_size
             stripped = self._is_stripped(binary_path)
+            binary_format = self._detect_binary_format(binary_path)
 
             # Log stripping status with warning if stripped
             if stripped:
@@ -114,10 +143,20 @@ class MetricsCollector:
                 self.logger.warning("  ⚠️ Symbol-based metrics will be unavailable (function count, etc.)")
                 self.logger.warning("  📝 Recommendation: Use non-stripped binary for accurate analysis")
             else:
-                self.logger.info(f"Binary has symbols: {binary_path}")
+                self.logger.info(f"Binary has symbols: {binary_path} (Format: {binary_format})")
 
-            text_size = self._get_text_section_size(binary_path)
-            num_functions = self._count_functions(binary_path)
+            # Use platform-specific extractors
+            if binary_format == 'PE' and self._pefile_available:
+                self.logger.debug(f"Using PE-specific extractors for {binary_path}")
+                text_size = self._get_text_section_size_windows(binary_path)
+                num_functions = self._count_functions_windows(binary_path)
+                text_entropy = self._compute_text_entropy_windows(binary_path)
+            else:
+                # Use ELF extractors (works for ELF and has fallback for PE)
+                self.logger.debug(f"Using ELF/generic extractors for {binary_path}")
+                text_size = self._get_text_section_size(binary_path)
+                num_functions = self._count_functions(binary_path)
+                text_entropy = self._compute_text_entropy(binary_path)
 
             # Warn if function count is 0 on non-stripped binary
             if not stripped and num_functions == 0:
@@ -126,12 +165,11 @@ class MetricsCollector:
 
             num_basic_blocks = self._count_basic_blocks(binary_path)
             instruction_count = self._count_instructions(binary_path)
-            text_entropy = self._compute_text_entropy(binary_path)
 
             # Warn if entropy is 0
             if text_entropy == 0.0:
                 self.logger.warning(f"  ⚠️ Could not compute .text entropy for: {binary_path}")
-                self.logger.warning("  📝 This may indicate issues with ELF section reading")
+                self.logger.warning("  📝 Check binary format support and section layout")
 
             cyclomatic_complexity = self._estimate_cyclomatic_complexity(binary_path)
             pie_enabled = self._is_pie_enabled(binary_path)
@@ -152,6 +190,92 @@ class MetricsCollector:
             self.logger.error(f"Failed to analyze {binary_path}: {e}")
             return None
 
+    # ============= Windows PE-Specific Extractors =============
+
+    def _get_text_section_size_windows(self, binary_path: Path) -> int:
+        """Extract .text section size from PE binary using pefile."""
+        if not self._pefile_available:
+            return 0
+        try:
+            import pefile
+            pe = pefile.PE(str(binary_path))
+            for section in pe.sections:
+                section_name = section.Name.decode().rstrip('\x00')
+                if section_name == '.text':
+                    return section.SizeOfRawData
+            return 0
+        except Exception as e:
+            self.logger.warning(f"Failed to get PE text section size: {e}")
+            return 0
+
+    def _count_functions_windows(self, binary_path: Path) -> int:
+        """Count functions in PE binary (exports + key imports)."""
+        if not self._pefile_available:
+            return 0
+        try:
+            import pefile
+            pe = pefile.PE(str(binary_path))
+            count = 0
+
+            # Count exported functions
+            if hasattr(pe, 'DIRECTORY_ENTRY_EXPORT'):
+                count += len(pe.DIRECTORY_ENTRY_EXPORT.symbols)
+                self.logger.debug(f"Found {len(pe.DIRECTORY_ENTRY_EXPORT.symbols)} exported functions")
+
+            # Count static/local functions by analyzing .text section
+            # For now, use a heuristic: count relocations which often correspond to function calls
+            if hasattr(pe, 'DIRECTORY_ENTRY_RELOCS'):
+                for reloc in pe.DIRECTORY_ENTRY_RELOCS:
+                    if reloc.name == '.text':
+                        count += len(reloc.entries) // 4  # Rough estimate
+
+            # If no exports found, fallback to generic nm
+            if count == 0:
+                count = self._count_functions(binary_path)
+
+            return count
+        except Exception as e:
+            self.logger.warning(f"Failed to count PE functions: {e}")
+            return self._count_functions(binary_path)  # Fallback to nm
+
+    def _compute_text_entropy_windows(self, binary_path: Path) -> float:
+        """Compute Shannon entropy of .text section in PE binary."""
+        if not self._pefile_available:
+            return 0.0
+        try:
+            import pefile
+            pe = pefile.PE(str(binary_path))
+
+            for section in pe.sections:
+                section_name = section.Name.decode().rstrip('\x00')
+                if section_name == '.text':
+                    # Extract .text section data
+                    text_data = pe.get_data(section.VirtualAddress, section.SizeOfRawData)
+
+                    if len(text_data) == 0:
+                        return 0.0
+
+                    # Calculate Shannon entropy
+                    byte_counts: Dict[int, int] = {}
+                    for byte in text_data:
+                        byte_counts[byte] = byte_counts.get(byte, 0) + 1
+
+                    entropy = 0.0
+                    for count in byte_counts.values():
+                        probability = count / len(text_data)
+                        if probability > 0:
+                            entropy -= probability * math.log2(probability)
+
+                    self.logger.debug(f"PE .text entropy: {entropy:.3f}")
+                    return entropy
+
+            return 0.0
+        except Exception as e:
+            self.logger.warning(f"Failed to compute PE entropy: {e}")
+            return 0.0
+
+    # ============= ELF Extractors =============
+
     def _get_text_section_size(self, binary_path: Path) -> int:
         """Extract .text section size using readelf."""
         try:
@@ -161,14 +285,18 @@ class MetricsCollector:
                 text=True,
                 timeout=10,
             )
-            for line in result.stdout.split('\n'):
-                if '.text' in line:
-                    parts = line.split()
-                    if len(parts) >= 6:
-                        try:
-                            return int(parts[5], 16)
-                        except ValueError:
-                            pass
+            lines = result.stdout.split('\n')
+            for i, line in enumerate(lines):
+                if '.text' in line and 'PROGBITS' in line:
+                    # Size is on next line, first column
+                    if i + 1 < len(lines):
+                        next_line = lines[i + 1].strip()
+                        size_parts = next_line.split()
+                        if len(size_parts) > 0:
+                            try:
+                                return int(size_parts[0], 16)
+                            except ValueError:
+                                pass
             return 0
         except Exception as e:
             self.logger.warning(f"Failed to get text section size: {e}")
@@ -272,15 +400,27 @@ class MetricsCollector:
                 timeout=10,
             )
 
-            for line in result.stdout.split('\n'):
-                if '.text' in line:
+            lines = result.stdout.split('\n')
+            for i, line in enumerate(lines):
+                if '.text' in line and 'PROGBITS' in line:
+                    # .text section info spans two lines:
+                    # Line 1: [XX] .text PROGBITS ADDRESS OFFSET
+                    # Line 2: SIZE ... FLAGS ...
                     parts = line.split()
-                    if len(parts) >= 7:
+                    if len(parts) >= 5:
                         try:
+                            # Offset is in position 4 (Offset column on first line)
                             offset = int(parts[4], 16)
-                            size = int(parts[5], 16)
-                            return offset, size
-                        except ValueError:
+
+                            # Size is in position 0 of next line (first column of second line)
+                            if i + 1 < len(lines):
+                                next_line = lines[i + 1].strip()
+                                size_parts = next_line.split()
+                                if len(size_parts) > 0:
+                                    size = int(size_parts[0], 16)
+                                    self.logger.debug(f"Found .text section: offset={hex(offset)}, size={hex(size)}")
+                                    return offset, size
+                        except (ValueError, IndexError):
                             pass
             return -1, 0
         except Exception as e:

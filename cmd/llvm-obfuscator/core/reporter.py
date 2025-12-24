@@ -52,13 +52,55 @@ class ObfuscationReport:
 
             report = {
                 "input_parameters": {
+                    # ========== GLOBAL PARAMETERS ==========
                     "source_file": job_data.get("source_file"),
                     "platform": job_data.get("platform"),
+                    "architecture": job_data.get("architecture"),
                     "obfuscation_level": job_data.get("obfuscation_level"),
+                    "mlir_frontend": job_data.get("mlir_frontend"),
+                    "timestamp": job_data.get("timestamp", get_timestamp()),
+                    "compiler_flags": job_data.get("compiler_flags", []),
+
+                    # ========== OLLVM PASSES ==========
+                    "pass_flattening": job_data.get("pass_flattening", False),
+                    "pass_substitution": job_data.get("pass_substitution", False),
+                    "pass_bogus_control_flow": job_data.get("pass_bogus_control_flow", False),
+                    "pass_split": job_data.get("pass_split", False),
+                    "pass_linear_mba": job_data.get("pass_linear_mba", False),
+                    "pass_string_encrypt": job_data.get("pass_string_encrypt", False),
+                    "pass_symbol_obfuscate": job_data.get("pass_symbol_obfuscate", False),
+                    "pass_constant_obfuscate": job_data.get("pass_constant_obfuscate", False),
                     "requested_passes": job_data.get("requested_passes", []),  # What user requested
                     "applied_passes": job_data.get("applied_passes", []),  # What was actually applied
-                    "compiler_flags": job_data.get("compiler_flags", []),
-                    "timestamp": job_data.get("timestamp", get_timestamp()),
+
+                    # ========== CRYPTO HASH ==========
+                    "crypto_hash_enabled": job_data.get("crypto_hash_enabled", False),
+                    "crypto_hash_algorithm": job_data.get("crypto_hash_algorithm"),
+                    "crypto_hash_salt": job_data.get("crypto_hash_salt"),
+                    "crypto_hash_length": job_data.get("crypto_hash_length", 12),
+
+                    # ========== INDIRECT CALLS ==========
+                    "indirect_calls_enabled": job_data.get("indirect_calls_enabled", False),
+                    "indirect_calls_obfuscate_stdlib": job_data.get("indirect_calls_obfuscate_stdlib", True),
+                    "indirect_calls_obfuscate_custom": job_data.get("indirect_calls_obfuscate_custom", True),
+
+                    # ========== UPX PACKING ==========
+                    "upx_enabled": job_data.get("upx_enabled", False),
+                    "upx_compression_level": job_data.get("upx_compression_level", "best"),
+                    "upx_use_lzma": job_data.get("upx_use_lzma", True),
+                    "upx_preserve_original": job_data.get("upx_preserve_original", False),
+
+                    # ========== REMARKS ==========
+                    "remarks_enabled": job_data.get("remarks_enabled", True),
+                    "remarks_format": job_data.get("remarks_format", "yaml"),
+                    "remarks_pass_filter": job_data.get("remarks_pass_filter", ".*"),
+                    "remarks_with_hotness": job_data.get("remarks_with_hotness", False),
+
+                    # ========== IR & ANALYSIS ==========
+                    "preserve_ir": job_data.get("preserve_ir", True),
+                    "ir_metrics_enabled": job_data.get("ir_metrics_enabled", True),
+                    "per_pass_metrics": job_data.get("per_pass_metrics", False),
+                    "binary_analysis_extended": job_data.get("binary_analysis_extended", True),
                 },
                 "warnings": job_data.get("warnings", []),  # Warnings from obfuscation process
                 "baseline_status": baseline_status,  # ✅ NEW: Indicate if baseline failed
@@ -74,13 +116,25 @@ class ObfuscationReport:
                 "fake_loops_inserted": fake_loops if fake_loops else self._default_fake_loops(),
                 "symbol_obfuscation": symbol_obf if symbol_obf else self._default_symbol_obfuscation(),
                 "obfuscation_score": safe_float(job_data.get("obfuscation_score"), 0.0),
+                "overall_protection_index": safe_float(job_data.get("overall_protection_index"), 0.0),
                 "symbol_reduction": safe_float(job_data.get("symbol_reduction"), 0.0),
                 "function_reduction": safe_float(job_data.get("function_reduction"), 0.0),
                 "size_reduction": safe_float(job_data.get("size_reduction"), 0.0),
                 "entropy_increase": safe_float(job_data.get("entropy_increase"), 0.0),
                 "estimated_re_effort": job_data.get("estimated_re_effort", "4-6 weeks"),
                 # ✅ NEW: Test suite results (optional, if tests were run)
-                "metadata": job_data.get("metadata"),  # Optional test suite metadata
+                "metadata": {
+                    **(job_data.get("metadata") or {}),  # Merge existing metadata
+                    # ✅ NEW: Platform and binary format metadata for Windows score fix
+                    "platform": job_data.get("platform"),
+                    "architecture": job_data.get("architecture"),
+                    "binary_format": job_data.get("binary_format"),
+                    "metric_extraction_method": (
+                        "pefile (Windows PE)" if job_data.get("platform") == "windows" and job_data.get("binary_format") == "PE"
+                        else "readelf (Linux ELF)" if job_data.get("platform") == "linux"
+                        else "unknown"
+                    ),
+                },
                 "test_results": job_data.get("test_results"),  # Optional test suite results
                 "test_metrics": job_data.get("test_metrics"),  # Optional test metrics
                 "metrics_reliability": job_data.get("metrics_reliability"),  # Optional reliability status
@@ -171,6 +225,135 @@ class ObfuscationReport:
                 raise
         logger.info("[EXPORT DEBUG] Export complete, outputs: %s", list(outputs.keys()))
         return outputs
+
+    def _build_input_parameters_table(self, report: Dict[str, Any]) -> str:
+        """Build comprehensive input parameters table with EVERY SINGLE parameter."""
+        input_params = report.get("input_parameters", {})
+        bogus_code = report.get("bogus_code_info", {})
+        string_obf = report.get("string_obfuscation", {})
+        fake_loops = report.get("fake_loops_inserted", {})
+        symbol_obf = report.get("symbol_obfuscation", {})
+        cycles = report.get("cycles_completed", {})
+
+        # Build comprehensive parameters list with layer grouping - EVERY SINGLE PARAMETER
+        parameters = [
+            # ========== GLOBAL PARAMETERS ==========
+            ("Source File", input_params.get("source_file", "N/A"), "Global"),
+            ("Platform", input_params.get("platform", "unknown"), "Global"),
+            ("Architecture", input_params.get("architecture", "unknown"), "Global"),
+            ("Obfuscation Level", f"Level {input_params.get('obfuscation_level', 0)}", "Global"),
+            ("MLIR Frontend", input_params.get("mlir_frontend", "clang"), "Global"),
+            ("Timestamp", input_params.get("timestamp", "N/A"), "Global"),
+            ("Compiler Flags", " ".join(input_params.get("compiler_flags", [])) or "None", "Global"),
+
+            # ========== OLLVM PASSES LAYER ==========
+            ("Pass - Flattening", "Yes" if input_params.get("pass_flattening", False) else "No", "OLLVM Passes"),
+            ("Pass - Substitution", "Yes" if input_params.get("pass_substitution", False) else "No", "OLLVM Passes"),
+            ("Pass - Bogus Control Flow", "Yes" if input_params.get("pass_bogus_control_flow", False) else "No", "OLLVM Passes"),
+            ("Pass - Split", "Yes" if input_params.get("pass_split", False) else "No", "OLLVM Passes"),
+            ("Pass - Linear MBA", "Yes" if input_params.get("pass_linear_mba", False) else "No", "OLLVM Passes"),
+            ("Pass - String Encryption", "Yes" if input_params.get("pass_string_encrypt", False) else "No", "OLLVM Passes"),
+            ("Pass - Symbol Obfuscation", "Yes" if input_params.get("pass_symbol_obfuscate", False) else "No", "OLLVM Passes"),
+            ("Pass - Constant Obfuscation", "Yes" if input_params.get("pass_constant_obfuscate", False) else "No", "OLLVM Passes"),
+            ("Requested Passes (List)", ", ".join(input_params.get("requested_passes", [])) or "None", "OLLVM Passes"),
+            ("Applied Passes (List)", ", ".join(input_params.get("applied_passes", [])) or "None", "OLLVM Passes"),
+
+            # ========== CRYPTO HASH LAYER ==========
+            ("Crypto Hash - Enabled", "Yes" if input_params.get("crypto_hash_enabled", False) else "No", "Crypto Hash"),
+            ("Crypto Hash - Algorithm", input_params.get("crypto_hash_algorithm", "N/A"), "Crypto Hash"),
+            ("Crypto Hash - Salt", input_params.get("crypto_hash_salt", ""), "Crypto Hash"),
+            ("Crypto Hash - Hash Length", str(input_params.get("crypto_hash_length", 12)), "Crypto Hash"),
+
+            # ========== BOGUS CODE GENERATION LAYER ==========
+            ("Bogus Code - Dead Code Blocks", str(bogus_code.get("dead_code_blocks", 0)), "Bogus Code Generation"),
+            ("Bogus Code - Opaque Predicates", str(bogus_code.get("opaque_predicates", 0)), "Bogus Code Generation"),
+            ("Bogus Code - Junk Instructions", str(bogus_code.get("junk_instructions", 0)), "Bogus Code Generation"),
+            ("Bogus Code - Code Bloat %", f"{bogus_code.get('code_bloat_percentage', 0)}%", "Bogus Code Generation"),
+
+            # ========== STRING OBFUSCATION LAYER ==========
+            ("String Obf - Enabled", "Yes" if string_obf.get("enabled", False) else "No", "String Obfuscation"),
+            ("String Obf - Encryption Method", string_obf.get("encryption_method", "none").upper(), "String Obfuscation"),
+            ("String Obf - Total Strings", str(string_obf.get("total_strings", 0)), "String Obfuscation"),
+            ("String Obf - Encrypted Strings", str(string_obf.get("encrypted_strings", 0)), "String Obfuscation"),
+            ("String Obf - Encryption Rate %", f"{string_obf.get('encryption_percentage', 0.0):.1f}%", "String Obfuscation"),
+
+            # ========== FAKE LOOPS INSERTION LAYER ==========
+            ("Fake Loops - Total Count", str(fake_loops.get("count", 0)), "Fake Loops Insertion"),
+            ("Fake Loops - Types", ", ".join(fake_loops.get("types", [])) or "None", "Fake Loops Insertion"),
+            ("Fake Loops - Locations", ", ".join(fake_loops.get("locations", [])) or "None", "Fake Loops Insertion"),
+
+            # ========== SYMBOL OBFUSCATION LAYER ==========
+            ("Symbol Obf - Enabled", "Yes" if symbol_obf.get("enabled", False) else "No", "Symbol Obfuscation"),
+            ("Symbol Obf - Symbols Obfuscated", str(symbol_obf.get("symbols_obfuscated", 0)), "Symbol Obfuscation"),
+            ("Symbol Obf - Algorithm", symbol_obf.get("algorithm", "N/A"), "Symbol Obfuscation"),
+            ("Symbol Obf - Obfuscation %", f"{symbol_obf.get('obfuscation_percentage', 0.0):.1f}%", "Symbol Obfuscation"),
+
+            # ========== INDIRECT CALLS LAYER ==========
+            ("Indirect Calls - Enabled", "Yes" if input_params.get("indirect_calls_enabled", False) else "No", "Indirect Calls"),
+            ("Indirect Calls - Obfuscate Stdlib", "Yes" if input_params.get("indirect_calls_obfuscate_stdlib", True) else "No", "Indirect Calls"),
+            ("Indirect Calls - Obfuscate Custom", "Yes" if input_params.get("indirect_calls_obfuscate_custom", True) else "No", "Indirect Calls"),
+
+            # ========== CYCLES & ITERATION LAYER ==========
+            ("Total Obfuscation Cycles", str(cycles.get("total_cycles", 1)), "Obfuscation Cycles"),
+
+            # ========== UPX PACKING LAYER ==========
+            ("UPX Packing - Enabled", "Yes" if input_params.get("upx_enabled", False) else "No", "UPX Packing"),
+            ("UPX Packing - Compression Level", input_params.get("upx_compression_level", "best"), "UPX Packing"),
+            ("UPX Packing - Use LZMA", "Yes" if input_params.get("upx_use_lzma", True) else "No", "UPX Packing"),
+            ("UPX Packing - Preserve Original", "Yes" if input_params.get("upx_preserve_original", False) else "No", "UPX Packing"),
+
+            # ========== REMARKS/OPTIMIZATION LAYER ==========
+            ("Remarks - Enabled", "Yes" if input_params.get("remarks_enabled", True) else "No", "Remarks"),
+            ("Remarks - Format", input_params.get("remarks_format", "yaml"), "Remarks"),
+            ("Remarks - Pass Filter", input_params.get("remarks_pass_filter", ".*"), "Remarks"),
+            ("Remarks - With Hotness", "Yes" if input_params.get("remarks_with_hotness", False) else "No", "Remarks"),
+
+            # ========== IR & ANALYSIS LAYER ==========
+            ("IR Metrics - Preserve IR", "Yes" if input_params.get("preserve_ir", True) else "No", "IR & Analysis"),
+            ("IR Metrics - Enabled", "Yes" if input_params.get("ir_metrics_enabled", True) else "No", "IR & Analysis"),
+            ("IR Metrics - Per-Pass Analysis", "Yes" if input_params.get("per_pass_metrics", False) else "No", "IR & Analysis"),
+            ("Binary Analysis - Extended", "Yes" if input_params.get("binary_analysis_extended", True) else "No", "IR & Analysis"),
+        ]
+
+        # Build HTML table
+        table_html = """<table>
+        <thead>
+            <tr>
+                <th style="width: 35%;">Parameter</th>
+                <th style="width: 45%;">Value</th>
+                <th style="width: 20%;">Layer</th>
+            </tr>
+        </thead>
+        <tbody>
+"""
+        current_layer = None
+        for param_name, param_value, layer in parameters:
+            # Add layer separator if layer changed
+            if current_layer != layer:
+                if current_layer is not None:
+                    table_html += """            <tr style="background-color: #f9f9f9; border-top: 2px solid #ddd;">
+                <td colspan="3" style="font-weight: bold; padding: 8px; text-align: center;">&nbsp;</td>
+            </tr>
+"""
+                current_layer = layer
+                # Add layer header row
+                table_html += f"""            <tr style="background-color: #e3f2fd; border-top: 2px solid #2196F3;">
+                <td colspan="3" style="font-weight: bold; padding: 10px; color: #1565c0; text-align: center;"><strong>{layer}</strong></td>
+            </tr>
+"""
+
+            # Escape HTML in values
+            safe_value = param_value.replace("<", "&lt;").replace(">", "&gt;").replace("&", "&amp;") if isinstance(param_value, str) else str(param_value)
+            table_html += f"""            <tr>
+                <td><strong>{param_name}</strong></td>
+                <td><code>{safe_value}</code></td>
+                <td><span style="background-color: #f0f0f0; padding: 4px 8px; border-radius: 3px; font-size: 12px;">{layer}</span></td>
+            </tr>
+"""
+
+        table_html += """        </tbody>
+    </table>"""
+        return table_html
 
     def _render_html(self, report: Dict[str, Any], job_id: str) -> str:
         """Render a clean, simple HTML report matching existing website style."""
@@ -483,36 +666,13 @@ class ObfuscationReport:
         </div>
     </div>
 
-    <!-- Input Parameters -->
-    <h2>Input Parameters</h2>
-    <div class="field">
-        <div class="field-label">Source File:</div>
-        <div class="field-value"><code>{input_params.get('source_file', 'N/A')}</code></div>
-    </div>
-    <div class="field">
-        <div class="field-label">Platform:</div>
-        <div class="field-value">{input_params.get('platform', 'unknown')}</div>
-    </div>
-    <div class="field">
-        <div class="field-label">Obfuscation Level:</div>
-        <div class="field-value">Level {input_params.get('obfuscation_level', 0)}</div>
-    </div>
-    <div class="field">
-        <div class="field-label">Requested OLLVM Passes:</div>
-        <div class="field-value">{", ".join(input_params.get('requested_passes', [])) or "None"}</div>
-    </div>
-    <div class="field">
-        <div class="field-label">Actually Applied OLLVM Passes:</div>
-        <div class="field-value"><strong>{", ".join(input_params.get('applied_passes', [])) or "None"}</strong></div>
-    </div>
-    <div class="field">
-        <div class="field-label">Timestamp:</div>
-        <div class="field-value">{input_params.get('timestamp', 'N/A')}</div>
-    </div>
-    <div class="field">
-        <div class="field-label">Compiler Flags:</div>
-        <div class="field-value"><code>{flags_list}</code></div>
-    </div>
+    <!-- Input Parameters - Enhanced Table with Layer Information -->
+    <h2>Input Parameters & Configuration Details</h2>
+    <p style="font-size: 14px; color: #666; margin-bottom: 15px;">
+        Comprehensive table showing all configuration parameters organized by obfuscation layer.
+        This includes every detail of what was selected and applied during obfuscation.
+    </p>
+    {self._build_input_parameters_table(report)}
 
     <!-- Warnings and Logs -->
     <h2>Warnings & Processing Logs</h2>
@@ -742,6 +902,190 @@ class ObfuscationReport:
         """
         return html
 
+    def _build_input_parameters_markdown(self, report: Dict[str, Any]) -> str:
+        """Build comprehensive input parameters markdown with EVERY parameter."""
+        input_params = report.get("input_parameters", {})
+        bogus_code = report.get("bogus_code_info", {})
+        string_obf = report.get("string_obfuscation", {})
+        fake_loops = report.get("fake_loops_inserted", {})
+        symbol_obf = report.get("symbol_obfuscation", {})
+        cycles = report.get("cycles_completed", {})
+
+        md = """## 📥 Input Parameters & Configuration Details
+
+Comprehensive table showing all configuration parameters organized by obfuscation layer.
+
+### Global Parameters
+
+| Parameter | Value |
+|-----------|-------|
+| Source File | `{source_file}` |
+| Platform | {platform} |
+| Architecture | {architecture} |
+| Obfuscation Level | Level {level} |
+| MLIR Frontend | {mlir_frontend} |
+| Timestamp | {timestamp} |
+| Compiler Flags | `{flags}` |
+
+### OLLVM Passes Configuration
+
+| Parameter | Value |
+|-----------|-------|
+| Flattening | {pass_flattening} |
+| Substitution | {pass_substitution} |
+| Bogus Control Flow | {pass_bogus_control_flow} |
+| Split | {pass_split} |
+| Linear MBA | {pass_linear_mba} |
+| String Encryption | {pass_string_encrypt} |
+| Symbol Obfuscation | {pass_symbol_obfuscate} |
+| Constant Obfuscation | {pass_constant_obfuscate} |
+| **Requested Passes (List)** | **{requested_passes}** |
+| **Applied Passes (List)** | **{applied_passes}** |
+
+### Crypto Hash Configuration
+
+| Parameter | Value |
+|-----------|-------|
+| Enabled | {crypto_hash_enabled} |
+| Algorithm | {crypto_hash_algorithm} |
+| Salt | {crypto_hash_salt} |
+| Hash Length | {crypto_hash_length} |
+
+### Bogus Code Generation
+
+| Parameter | Value |
+|-----------|-------|
+| Dead Code Blocks | {dead_blocks} |
+| Opaque Predicates | {opaque_preds} |
+| Junk Instructions | {junk_instrs} |
+| Code Bloat % | {code_bloat}% |
+
+### String Obfuscation
+
+| Parameter | Value |
+|-----------|-------|
+| Enabled | {string_enabled} |
+| Encryption Method | {string_method} |
+| Total Strings | {total_strings} |
+| Encrypted Strings | {encrypted_strings} |
+| Encryption Rate % | {encryption_rate}% |
+
+### Fake Loops Insertion
+
+| Parameter | Value |
+|-----------|-------|
+| Total Count | {fake_loops_count} |
+| Types | {fake_loops_types} |
+| Locations | {fake_loops_locations} |
+
+### Symbol Obfuscation
+
+| Parameter | Value |
+|-----------|-------|
+| Enabled | {symbol_enabled} |
+| Symbols Obfuscated | {symbols_obfuscated} |
+| Algorithm | {symbol_algorithm} |
+| Obfuscation % | {symbol_percentage}% |
+
+### Indirect Calls Configuration
+
+| Parameter | Value |
+|-----------|-------|
+| Enabled | {indirect_calls_enabled} |
+| Obfuscate Stdlib | {indirect_calls_obfuscate_stdlib} |
+| Obfuscate Custom | {indirect_calls_obfuscate_custom} |
+
+### Obfuscation Cycles
+
+| Parameter | Value |
+|-----------|-------|
+| Total Cycles | {total_cycles} |
+
+### UPX Packing Configuration
+
+| Parameter | Value |
+|-----------|-------|
+| Enabled | {upx_enabled} |
+| Compression Level | {upx_compression_level} |
+| Use LZMA | {upx_use_lzma} |
+| Preserve Original | {upx_preserve_original} |
+
+### Remarks Configuration
+
+| Parameter | Value |
+|-----------|-------|
+| Enabled | {remarks_enabled} |
+| Format | {remarks_format} |
+| Pass Filter | {remarks_pass_filter} |
+| With Hotness | {remarks_with_hotness} |
+
+### IR & Advanced Analysis Configuration
+
+| Parameter | Value |
+|-----------|-------|
+| Preserve IR | {preserve_ir} |
+| IR Metrics Enabled | {ir_metrics_enabled} |
+| Per-Pass Metrics | {per_pass_metrics} |
+| Extended Binary Analysis | {binary_analysis_extended} |
+
+---
+""".format(
+            source_file=input_params.get("source_file", "N/A"),
+            platform=input_params.get("platform", "unknown"),
+            architecture=input_params.get("architecture", "unknown"),
+            level=input_params.get("obfuscation_level", 0),
+            mlir_frontend=input_params.get("mlir_frontend", "clang"),
+            timestamp=input_params.get("timestamp", "N/A"),
+            flags=" ".join(input_params.get("compiler_flags", [])) or "None",
+            pass_flattening="Yes" if input_params.get("pass_flattening", False) else "No",
+            pass_substitution="Yes" if input_params.get("pass_substitution", False) else "No",
+            pass_bogus_control_flow="Yes" if input_params.get("pass_bogus_control_flow", False) else "No",
+            pass_split="Yes" if input_params.get("pass_split", False) else "No",
+            pass_linear_mba="Yes" if input_params.get("pass_linear_mba", False) else "No",
+            pass_string_encrypt="Yes" if input_params.get("pass_string_encrypt", False) else "No",
+            pass_symbol_obfuscate="Yes" if input_params.get("pass_symbol_obfuscate", False) else "No",
+            pass_constant_obfuscate="Yes" if input_params.get("pass_constant_obfuscate", False) else "No",
+            requested_passes=", ".join(input_params.get("requested_passes", [])) or "None",
+            applied_passes=", ".join(input_params.get("applied_passes", [])) or "None",
+            crypto_hash_enabled="Yes" if input_params.get("crypto_hash_enabled", False) else "No",
+            crypto_hash_algorithm=input_params.get("crypto_hash_algorithm", "N/A"),
+            crypto_hash_salt=input_params.get("crypto_hash_salt", "") or "(none)",
+            crypto_hash_length=input_params.get("crypto_hash_length", 12),
+            dead_blocks=bogus_code.get("dead_code_blocks", 0),
+            opaque_preds=bogus_code.get("opaque_predicates", 0),
+            junk_instrs=bogus_code.get("junk_instructions", 0),
+            code_bloat=bogus_code.get("code_bloat_percentage", 0),
+            string_enabled="Yes" if string_obf.get("enabled", False) else "No",
+            string_method=string_obf.get("encryption_method", "none").upper(),
+            total_strings=string_obf.get("total_strings", 0),
+            encrypted_strings=string_obf.get("encrypted_strings", 0),
+            encryption_rate=f"{string_obf.get('encryption_percentage', 0.0):.1f}",
+            fake_loops_count=fake_loops.get("count", 0),
+            fake_loops_types=", ".join(fake_loops.get("types", [])) or "None",
+            fake_loops_locations=", ".join(fake_loops.get("locations", [])) or "None",
+            symbol_enabled="Yes" if symbol_obf.get("enabled", False) else "No",
+            symbols_obfuscated=symbol_obf.get("symbols_obfuscated", 0),
+            symbol_algorithm=symbol_obf.get("algorithm", "N/A"),
+            symbol_percentage=f"{symbol_obf.get('obfuscation_percentage', 0.0):.1f}",
+            indirect_calls_enabled="Yes" if input_params.get("indirect_calls_enabled", False) else "No",
+            indirect_calls_obfuscate_stdlib="Yes" if input_params.get("indirect_calls_obfuscate_stdlib", True) else "No",
+            indirect_calls_obfuscate_custom="Yes" if input_params.get("indirect_calls_obfuscate_custom", True) else "No",
+            total_cycles=cycles.get("total_cycles", 1),
+            upx_enabled="Yes" if input_params.get("upx_enabled", False) else "No",
+            upx_compression_level=input_params.get("upx_compression_level", "best"),
+            upx_use_lzma="Yes" if input_params.get("upx_use_lzma", True) else "No",
+            upx_preserve_original="Yes" if input_params.get("upx_preserve_original", False) else "No",
+            remarks_enabled="Yes" if input_params.get("remarks_enabled", True) else "No",
+            remarks_format=input_params.get("remarks_format", "yaml"),
+            remarks_pass_filter=input_params.get("remarks_pass_filter", ".*"),
+            remarks_with_hotness="Yes" if input_params.get("remarks_with_hotness", False) else "No",
+            preserve_ir="Yes" if input_params.get("preserve_ir", True) else "No",
+            ir_metrics_enabled="Yes" if input_params.get("ir_metrics_enabled", True) else "No",
+            per_pass_metrics="Yes" if input_params.get("per_pass_metrics", False) else "No",
+            binary_analysis_extended="Yes" if input_params.get("binary_analysis_extended", True) else "No",
+        )
+        return md
+
     def _render_markdown(self, report: Dict[str, Any], job_id: str) -> str:
         """Render a markdown version of the report."""
         timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
@@ -774,19 +1118,7 @@ class ObfuscationReport:
 
 ---
 
-## 📥 Input Parameters
-
-- **Source File:** `{input_params.get('source_file', 'N/A')}`
-- **Platform:** {input_params.get('platform', 'unknown')}
-- **Obfuscation Level:** Level {input_params.get('obfuscation_level', 0)}
-- **Requested OLLVM Passes:** {", ".join(input_params.get('requested_passes', [])) or "None"}
-- **Actually Applied OLLVM Passes:** **{", ".join(input_params.get('applied_passes', [])) or "None"}**
-- **Timestamp:** {input_params.get('timestamp', 'N/A')}
-
-### Compiler Flags
-```
-{' '.join(input_params.get('compiler_flags', []))}
-```
+{self._build_input_parameters_markdown(report)}
 
 ---
 
@@ -1011,28 +1343,107 @@ class ObfuscationReport:
         elements.append(metrics_table)
         elements.append(Spacer(1, 0.2*inch))
 
-        # Input Parameters
-        elements.append(Paragraph("📥 Input Parameters", heading_style))
+        # PAGE BREAK - Input Parameters section needs its own page
+        elements.append(PageBreak())
+
+        # Input Parameters - Enhanced with Layer Information
+        elements.append(Paragraph("Input Parameters & Configuration Details", heading_style))
+        elements.append(Spacer(1, 0.2*inch))
+
         input_params = report.get("input_parameters", {})
-        input_data = [
+        bogus_code = report.get("bogus_code_info", {})
+        string_obf = report.get("string_obfuscation", {})
+        fake_loops = report.get("fake_loops_inserted", {})
+        symbol_obf = report.get("symbol_obfuscation", {})
+        cycles = report.get("cycles_completed", {})
+
+        # CREATE MULTIPLE SMALLER TABLES FOR VISIBILITY - SPLIT BY LAYERS
+
+        # TABLE 1: GLOBAL PARAMETERS
+        elements.append(Paragraph("Global Settings", styles['Heading3']))
+        global_data = [
             ['Parameter', 'Value'],
             ['Source File', str(input_params.get('source_file', 'N/A'))],
             ['Platform', str(input_params.get('platform', 'unknown'))],
+            ['Architecture', str(input_params.get('architecture', 'unknown'))],
             ['Obfuscation Level', f"Level {input_params.get('obfuscation_level', 0)}"],
-            ['Applied Passes', ", ".join(input_params.get('applied_passes', [])) or "None"],
+            ['MLIR Frontend', str(input_params.get('mlir_frontend', 'clang'))],
+            ['Compiler Flags', " ".join(input_params.get("compiler_flags", [])) or "None"],
         ]
-        input_table = Table(input_data, colWidths=[2.5*inch, 3.5*inch])
-        input_table.setStyle(TableStyle([
-            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#34495e')),
+        global_table = Table(global_data, colWidths=[2.5*inch, 3.5*inch])
+        global_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#2980b9')),
             ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
             ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
             ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-            ('FONTSIZE', (0, 0), (-1, 0), 11),
-            ('BOTTOMPADDING', (0, 0), (-1, 0), 10),
-            ('GRID', (0, 0), (-1, -1), 1, colors.black),
+            ('FONTSIZE', (0, 1), (-1, -1), 9),
+            ('GRID', (0, 0), (-1, -1), 1, colors.grey),
+            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#ecf0f1')]),
         ]))
-        elements.append(input_table)
+        elements.append(global_table)
         elements.append(Spacer(1, 0.2*inch))
+
+        # TABLE 2: OLLVM PASSES
+        elements.append(Paragraph("OLLVM Obfuscation Passes", styles['Heading3']))
+        passes_data = [
+            ['Pass', 'Enabled', 'Pass', 'Enabled'],
+            ['Flattening', "✓" if input_params.get('pass_flattening', False) else "✗", 'String Encrypt', "✓" if input_params.get('pass_string_encrypt', False) else "✗"],
+            ['Substitution', "✓" if input_params.get('pass_substitution', False) else "✗", 'Symbol Obf', "✓" if input_params.get('pass_symbol_obfuscate', False) else "✗"],
+            ['Bogus CF', "✓" if input_params.get('pass_bogus_control_flow', False) else "✗", 'Const Obf', "✓" if input_params.get('pass_constant_obfuscate', False) else "✗"],
+            ['Split', "✓" if input_params.get('pass_split', False) else "✗", '', ''],
+            ['Linear MBA', "✓" if input_params.get('pass_linear_mba', False) else "✗", '', ''],
+        ]
+        passes_table = Table(passes_data, colWidths=[1.5*inch, 1.0*inch, 1.5*inch, 1.0*inch])
+        passes_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#27ae60')),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 1), (-1, -1), 9),
+            ('GRID', (0, 0), (-1, -1), 1, colors.grey),
+            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#ecf0f1')]),
+        ]))
+        elements.append(passes_table)
+        elements.append(Spacer(1, 0.15*inch))
+
+        # Requested and Applied Passes
+        passes_list_data = [
+            ['Requested Passes', ", ".join(input_params.get('requested_passes', [])) or "None"],
+            ['Applied Passes', ", ".join(input_params.get('applied_passes', [])) or "None"],
+        ]
+        passes_list_table = Table(passes_list_data, colWidths=[2.0*inch, 3.0*inch])
+        passes_list_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#16a085')),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 1), (-1, -1), 8),
+            ('GRID', (0, 0), (-1, -1), 1, colors.grey),
+            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#ecf0f1')]),
+        ]))
+        elements.append(passes_list_table)
+        elements.append(Spacer(1, 0.2*inch))
+
+        # TABLE 3: ADVANCED FEATURES
+        elements.append(Paragraph("Advanced Features & Configuration", styles['Heading3']))
+        advanced_data = [
+            ['Feature', 'Value', 'Feature', 'Value'],
+            ['Crypto Hash Enabled', "✓" if input_params.get('crypto_hash_enabled', False) else "✗", 'Indirect Calls', "✓" if input_params.get('indirect_calls_enabled', False) else "✗"],
+            ['UPX Packing', "✓" if input_params.get('upx_enabled', False) else "✗", 'Remarks Enabled', "✓" if input_params.get('remarks_enabled', True) else "✗"],
+            ['IR Metrics', "✓" if input_params.get('ir_metrics_enabled', True) else "✗", 'Preserve IR', "✓" if input_params.get('preserve_ir', True) else "✗"],
+        ]
+        advanced_table = Table(advanced_data, colWidths=[1.5*inch, 1.0*inch, 1.5*inch, 1.0*inch])
+        advanced_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#e74c3c')),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 1), (-1, -1), 9),
+            ('GRID', (0, 0), (-1, -1), 1, colors.grey),
+            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#ecf0f1')]),
+        ]))
+        elements.append(advanced_table)
+        elements.append(Spacer(1, 0.3*inch))
 
         # Output Attributes
         elements.append(Paragraph("📦 Output File Attributes", heading_style))

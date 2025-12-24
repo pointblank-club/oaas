@@ -7,9 +7,10 @@ ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
 # Install system dependencies including LLVM development tools
-# NOTE: autoconf, automake, libtool, cmake are REQUIRED for building projects
-# that use Autotools (like curl) or CMake build systems. Without these,
-# generated config headers (curl_config.h, config.h) cannot be created.
+# Split into two layers for better caching:
+# Layer 1: Base tools that rarely change
+# Layer 2: Dev libraries that might be added to
+# Note: upx-ucl removed - using custom UPX binary instead
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
@@ -18,23 +19,23 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     llvm \
     lld \
     libc6-dev \
-    upx-ucl \
-    # Build system tools (required for ./configure && make workflows)
     autoconf \
     automake \
     libtool \
     cmake \
     ninja-build \
     pkg-config \
-    # Cross-compilation toolchains
     mingw-w64 \
     gcc-aarch64-linux-gnu \
     g++-aarch64-linux-gnu \
     libc6-dev-arm64-cross \
-    # Common development libraries (for projects like curl, openssl, etc.)
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Layer 2: Dev libraries (change more often, but cached if Layer 1 unchanged)
+RUN apt-get update && apt-get install -y --no-install-recommends \
     libssl-dev \
     zlib1g-dev \
-    # Additional libraries commonly needed by C/C++ projects
     libpsl-dev \
     libbrotli-dev \
     libzstd-dev \
@@ -50,10 +51,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libsqlite3-dev \
     libreadline-dev \
     libncurses-dev \
-    # X11 development libraries (for projects like DOOM, games, GUI apps)
     libx11-dev \
     libxext-dev \
-    git \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -74,9 +73,14 @@ COPY plugins/linux-x86_64/clang plugins/linux-x86_64/clang++ plugins/linux-x86_6
      plugins/linux-x86_64/mlir-translate plugins/linux-x86_64/clangir \
      plugins/linux-x86_64/lld \
      /usr/local/llvm-obfuscator/bin/
+# Copy custom UPX binary (downloaded from GCP during CI/CD)
+# This will fail if upx doesn't exist, but we'll install system UPX as fallback in RUN step
+COPY plugins/linux-x86_64/upx /usr/local/llvm-obfuscator/bin/upx
 COPY plugins/linux-x86_64/LLVMObfuscationPlugin.so \
      plugins/linux-x86_64/MLIRObfuscation.so \
      plugins/linux-x86_64/libLLVM.so.22.0git \
+     plugins/linux-x86_64/libclang-cpp.so.22.0git \
+     plugins/linux-x86_64/libMLIR.so.22.0git \
      /usr/local/llvm-obfuscator/lib/
 COPY plugins/linux-x86_64/lib/clang/22 /usr/local/llvm-obfuscator/lib/clang/22
 
@@ -90,15 +94,26 @@ COPY api ./api
 COPY core ./core
 COPY cli ./cli
 COPY scripts ./scripts
+# Copy modules (VM obfuscation and other experimental features)
+COPY modules ./modules
+# Copy phoronix benchmarking suite (required for benchmark analysis)
+COPY phoronix ./phoronix
 # Copy root-level package files (setup.py may be needed for imports)
 COPY setup.py ./
 
-# Rename clang, make binaries executable, and create symlinks in one layer
+# Rename clang, make binaries executable, create symlinks, and configure library path
 RUN mv /usr/local/llvm-obfuscator/bin/clang /usr/local/llvm-obfuscator/bin/clang.real && \
     chmod +x /usr/local/llvm-obfuscator/bin/* && \
+    chmod +x /usr/local/llvm-obfuscator/lib/*.so* && \
     ln -sf /usr/local/llvm-obfuscator/bin/clang.real /usr/local/llvm-obfuscator/bin/clang && \
     ln -sf /usr/local/llvm-obfuscator/bin/lld /usr/local/llvm-obfuscator/bin/ld.lld && \
-    ln -sf /usr/local/llvm-obfuscator/bin/lld /usr/local/llvm-obfuscator/bin/ld64.lld
+    ln -sf /usr/local/llvm-obfuscator/bin/lld /usr/local/llvm-obfuscator/bin/ld64.lld && \
+    echo "/usr/local/llvm-obfuscator/lib" > /etc/ld.so.conf.d/llvm.conf && ldconfig && \
+    # Verify custom UPX if present, otherwise install system UPX as fallback
+    (test -f /usr/local/llvm-obfuscator/bin/upx && /usr/local/llvm-obfuscator/bin/upx --version >/dev/null 2>&1 && \
+     echo "✅ Custom UPX installed at /usr/local/llvm-obfuscator/bin/upx" || \
+     (apt-get update && apt-get install -y --no-install-recommends upx-ucl && rm -rf /var/lib/apt/lists/* && \
+      echo "✅ System UPX installed as fallback"))
 
 # Note: UPX compression removed - binaries from GCP are uncompressed for faster execution
 # Fix incomplete bundled headers by copying ALL missing files from system clang

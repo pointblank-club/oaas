@@ -14,7 +14,6 @@ using namespace mlir::obs;
 
 namespace {
 
-/// Utility: generate random obfuscated names (hex-based)
 static std::string generateObfuscatedName(std::mt19937 &rng) {
   std::uniform_int_distribution<uint32_t> dist(0, 0xFFFFFFFF);
   uint32_t num = dist(rng);
@@ -24,13 +23,12 @@ static std::string generateObfuscatedName(std::mt19937 &rng) {
   return std::string(buffer);
 }
 
-} // namespace
+}
 
 void SymbolObfuscatePass::runOnOperation() {
   ModuleOp module = getOperation();
   MLIRContext *ctx = module.getContext();
 
-  // Detect which dialect we're working with
   bool hasFuncDialect = false;
   bool hasLLVMDialect = false;
 
@@ -42,7 +40,6 @@ void SymbolObfuscatePass::runOnOperation() {
     }
   });
 
-  // Process appropriate dialect(s)
   if (hasFuncDialect) {
     processFuncDialect();
   }
@@ -50,42 +47,33 @@ void SymbolObfuscatePass::runOnOperation() {
     processLLVMDialect();
   }
 
-  // If neither found, this is still okay - module might be empty or use other dialects
 }
 
-// Process func::FuncOp (ClangIR / high-level MLIR)
 void SymbolObfuscatePass::processFuncDialect() {
   ModuleOp module = getOperation();
   MLIRContext *ctx = module.getContext();
   SymbolTable symbolTable(module);
 
-  // RNG seeded by key
   std::seed_seq seq(key.begin(), key.end());
   std::mt19937 rng(seq);
 
-  // Step 1: Collect rename map for func definitions (oldName -> newName)
   llvm::StringMap<std::string> renameMap;
 
   module.walk([&](func::FuncOp func) {
     StringRef oldName = func.getSymName();
-    
-    // Don't rename main - it's the entry point
+
     if (oldName == "main")
       return;
-    
-    // Don't rename external/declaration-only functions (like printf, strcmp, etc.)
-    // These are library functions that must keep their original names
+
     if (func.isDeclaration())
       return;
 
-    // Only assign a new name once per function
     if (renameMap.find(oldName) == renameMap.end()) {
       std::string newName = generateObfuscatedName(rng);
       renameMap[oldName] = newName;
     }
   });
 
-  // Step 2: Update symbol references *before* renaming definitions
   module.walk([&](Operation *op) {
     SmallVector<NamedAttribute> updatedAttrs;
     bool changed = false;
@@ -101,7 +89,6 @@ void SymbolObfuscatePass::processFuncDialect() {
           continue;
         }
       }
-      // No change -> keep original
       updatedAttrs.push_back(attr);
     }
 
@@ -110,7 +97,6 @@ void SymbolObfuscatePass::processFuncDialect() {
     }
   });
 
-  // Step 3: Rename function definitions *after* updating uses
   module.walk([&](func::FuncOp func) {
     StringRef oldName = func.getSymName();
     auto it = renameMap.find(oldName);
@@ -120,29 +106,22 @@ void SymbolObfuscatePass::processFuncDialect() {
   });
 }
 
-// Process LLVM::LLVMFuncOp (post-lowering to LLVM dialect)
 void SymbolObfuscatePass::processLLVMDialect() {
   ModuleOp module = getOperation();
   MLIRContext *ctx = module.getContext();
   SymbolTable symbolTable(module);
 
-  // RNG seeded by key (use same seed for consistency)
   std::seed_seq seq(key.begin(), key.end());
   std::mt19937 rng(seq);
 
-  // Step 1: Collect rename map for LLVM func definitions
   llvm::StringMap<std::string> renameMap;
 
   module.walk([&](LLVM::LLVMFuncOp func) {
     StringRef oldName = func.getSymName();
 
-    // Don't rename main - it's the entry point
     if (oldName == "main")
       return;
 
-    // Don't rename external/declaration-only functions (like printf, strcmp, etc.)
-    // These are library functions that must keep their original names.
-    // In LLVM dialect, external functions have an empty body region.
     if (func.isExternal())
       return;
 
@@ -152,20 +131,13 @@ void SymbolObfuscatePass::processLLVMDialect() {
     }
   });
 
-  // Step 1b: Also collect rename map for LLVM global variables
-  // This obfuscates global variable symbol names like ADMIN_PASSWORD, API_KEY, etc.
   module.walk([&](LLVM::GlobalOp globalOp) {
     StringRef oldName = globalOp.getSymName();
 
-    // Don't rename system globals
     if (oldName.starts_with("llvm.") || oldName.starts_with("__obfs_"))
       return;
 
-    // Don't rename .str, .str.1, etc. - these are compiler-generated
-    // Actually, we SHOULD rename these to further obfuscate
-
     if (renameMap.find(oldName) == renameMap.end()) {
-      // Use 'g_' prefix for globals to distinguish from functions
       std::uniform_int_distribution<uint32_t> dist(0, 0xFFFFFFFF);
       uint32_t num = dist(rng);
       char buffer[16];
@@ -174,7 +146,6 @@ void SymbolObfuscatePass::processLLVMDialect() {
     }
   });
 
-  // Step 2: Update symbol references (for both functions and globals)
   module.walk([&](Operation *op) {
     SmallVector<NamedAttribute> updatedAttrs;
     bool changed = false;
@@ -190,7 +161,6 @@ void SymbolObfuscatePass::processLLVMDialect() {
           continue;
         }
       }
-      // Also check FlatSymbolRefAttr for global references
       if (auto flatSymAttr = llvm::dyn_cast<FlatSymbolRefAttr>(attr.getValue())) {
         StringRef old = flatSymAttr.getValue();
         auto it = renameMap.find(old);
@@ -209,7 +179,6 @@ void SymbolObfuscatePass::processLLVMDialect() {
     }
   });
 
-  // Step 3: Rename LLVM function definitions
   module.walk([&](LLVM::LLVMFuncOp func) {
     StringRef oldName = func.getSymName();
     auto it = renameMap.find(oldName);
@@ -218,7 +187,6 @@ void SymbolObfuscatePass::processLLVMDialect() {
     }
   });
 
-  // Step 4: Rename LLVM global variable definitions
   module.walk([&](LLVM::GlobalOp globalOp) {
     StringRef oldName = globalOp.getSymName();
     auto it = renameMap.find(oldName);

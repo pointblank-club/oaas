@@ -5,6 +5,9 @@ from enum import Enum
 from pathlib import Path
 from typing import Dict, List, Optional
 
+# VM obfuscation configuration (isolated module)
+from modules.vm.config import VMConfig
+
 
 class Platform(str, Enum):
     LINUX = "linux"
@@ -97,6 +100,7 @@ class PassConfiguration:
     string_encrypt: bool = False
     symbol_obfuscate: bool = False
     constant_obfuscate: bool = False
+    address_obfuscation: bool = False  # Layer 1.5: Address-level obfuscation
     crypto_hash: Optional[CryptoHashConfiguration] = None
 
     def enabled_passes(self) -> List[str]:
@@ -109,6 +113,7 @@ class PassConfiguration:
             "string-encrypt": self.string_encrypt,
             "symbol-obfuscate": self.symbol_obfuscate,
             "constant-obfuscate": self.constant_obfuscate,
+            "address-obfuscation": self.address_obfuscation,
         }
         passes = [name for name, enabled in mapping.items() if enabled]
 
@@ -131,6 +136,7 @@ class UPXConfiguration:
     compression_level: str = "best"  # fast, default, best, brute
     use_lzma: bool = True
     preserve_original: bool = False
+    custom_upx_path: Optional[Path] = None  # Custom path to UPX binary (overrides system UPX)
 
 
 @dataclass
@@ -143,12 +149,22 @@ class RemarksConfiguration:
 
 
 @dataclass
+class AntiDebugConfiguration:
+    enabled: bool = False
+    # Linux techniques: ptrace, proc_status, parent_check, timing
+    # Windows techniques: is_debugger_present, remote_debugger, peb_flag, nt_global_flag, 
+    #                     nt_query_info, hardware_breakpoints, timing, output_debug_string
+    # Note: Linux techniques are auto-mapped to Windows equivalents when targeting Windows platform
+    techniques: List[str] = field(default_factory=lambda: ["ptrace", "proc_status"])
+
+@dataclass
 class AdvancedConfiguration:
     cycles: int = 1
     fake_loops: int = 0
     indirect_calls: IndirectCallConfiguration = field(default_factory=IndirectCallConfiguration)
     remarks: RemarksConfiguration = field(default_factory=RemarksConfiguration)
     upx_packing: UPXConfiguration = field(default_factory=UPXConfiguration)
+    anti_debug: AntiDebugConfiguration = field(default_factory=AntiDebugConfiguration)
     # ✅ NEW: IR and advanced metrics analysis options
     preserve_ir: bool = True  # Keep IR files after compilation for analysis
     ir_metrics_enabled: bool = True  # Extract CFG and instruction metrics
@@ -174,6 +190,7 @@ class ObfuscationConfig:
     project_root: Optional[Path] = None  # Root directory for multi-file projects (where entrypoint runs)
     custom_compiler_wrapper: Optional[str] = None  # Path to compiler wrapper (obf-clang) for transparent build interception
     mlir_frontend: MLIRFrontend = MLIRFrontend.CLANG  # DEFAULT to existing pipeline (SAFE)
+    vm: VMConfig = field(default_factory=VMConfig)  # VM obfuscation (optional, isolated)
 
     @classmethod
     def from_dict(cls, data: Dict) -> "ObfuscationConfig":
@@ -194,6 +211,15 @@ class ObfuscationConfig:
                 hash_length=crypto_hash_data.get("hash_length", 12),
             )
 
+        # ✅ FIX: Check both legacy passes.symbol_obfuscate and new symbol_obfuscation.enabled from frontend
+        symbol_obfuscate_enabled = passes_data.get("symbol_obfuscate", False)
+        symbol_obf_config = data.get("symbol_obfuscation", {})
+        print(f"[CONFIG DEBUG] symbol_obf_config from payload: {symbol_obf_config}")
+        print(f"[CONFIG DEBUG] symbol_obf_config.get('enabled'): {symbol_obf_config.get('enabled') if isinstance(symbol_obf_config, dict) else 'NOT A DICT'}")
+        if isinstance(symbol_obf_config, dict) and symbol_obf_config.get("enabled"):
+            symbol_obfuscate_enabled = True
+        print(f"[CONFIG DEBUG] Final symbol_obfuscate_enabled: {symbol_obfuscate_enabled}")
+
         passes = PassConfiguration(
             flattening=passes_data.get("flattening", False),
             substitution=passes_data.get("substitution", False),
@@ -201,7 +227,7 @@ class ObfuscationConfig:
             split=passes_data.get("split", False),
             linear_mba=passes_data.get("linear_mba", False),
             string_encrypt=passes_data.get("string_encrypt", False),
-            symbol_obfuscate=passes_data.get("symbol_obfuscate", False),
+            symbol_obfuscate=symbol_obfuscate_enabled,
             constant_obfuscate=passes_data.get("constant_obfuscate", False),
             crypto_hash=crypto_hash,
         )
@@ -225,11 +251,20 @@ class ObfuscationConfig:
         )
 
         upx_data = adv_data.get("upx_packing", {})
+        custom_upx_path = upx_data.get("custom_upx_path")
+        if custom_upx_path:
+            custom_upx_path = Path(custom_upx_path)
         upx_config = UPXConfiguration(
             enabled=upx_data.get("enabled", False),
             compression_level=upx_data.get("compression_level", "best"),
             use_lzma=upx_data.get("use_lzma", True),
             preserve_original=upx_data.get("preserve_original", False),
+            custom_upx_path=custom_upx_path,
+        )
+        anti_debug_data = adv_data.get("anti_debug", {})
+        anti_debug_config = AntiDebugConfiguration(
+            enabled=anti_debug_data.get("enabled", False),
+            techniques=anti_debug_data.get("techniques", ["ptrace", "proc_status"]),
         )
         advanced = AdvancedConfiguration(
             cycles=adv_data.get("cycles", 1),
@@ -237,6 +272,7 @@ class ObfuscationConfig:
             indirect_calls=indirect_calls,
             remarks=remarks_config,
             upx_packing=upx_config,
+            anti_debug=anti_debug_config,
         )
         output_data = data.get("output", {})
         output = OutputConfiguration(
@@ -256,6 +292,16 @@ class ObfuscationConfig:
         mlir_frontend_str = data.get("mlir_frontend", "clang")
         mlir_frontend = MLIRFrontend.from_string(mlir_frontend_str)
 
+        # Parse VM obfuscation configuration (optional, disabled by default)
+        vm_data = data.get("vm", {})
+        vm_config = VMConfig(
+            enabled=vm_data.get("enabled", False),
+            functions=vm_data.get("functions", []),
+            timeout=vm_data.get("timeout", 60),
+            complexity=vm_data.get("complexity", 1),
+            fallback_on_error=vm_data.get("fallback_on_error", True),
+        )
+
         return cls(
             level=level,
             platform=platform,
@@ -269,6 +315,7 @@ class ObfuscationConfig:
             project_root=project_root,
             custom_compiler_wrapper=custom_compiler_wrapper,
             mlir_frontend=mlir_frontend,
+            vm=vm_config,
         )
 
 

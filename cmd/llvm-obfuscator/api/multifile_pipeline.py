@@ -133,6 +133,9 @@ def extract_repo_files(repo_url: str, branch: str = "main", access_token: Option
             raise ValueError("Invalid GitHub repository URL")
 
         owner, repo_name = parts[0], parts[1]
+        # Strip .git suffix if present
+        if repo_name.endswith('.git'):
+            repo_name = repo_name[:-4]
 
         # Create temporary directory for extraction
         temp_dir = Path(tempfile.mkdtemp(prefix=f"oaas_extract_{owner}_{repo_name}_"))
@@ -236,6 +239,9 @@ def get_repo_branches(repo_url: str, access_token: Optional[str] = None) -> List
             raise ValueError("Invalid GitHub repository URL")
 
         owner, repo_name = parts[0], parts[1]
+        # Strip .git suffix if present
+        if repo_name.endswith('.git'):
+            repo_name = repo_name[:-4]
 
         # Initialize GitHub client
         if access_token:
@@ -291,9 +297,12 @@ def clone_repo_to_temp(repo_url: str, branch: str = "main", access_token: Option
         parts = repo_url.replace("https://github.com/", "").replace("http://github.com/", "").strip("/").split("/")
         if len(parts) < 2:
             raise ValueError("Invalid GitHub repository URL")
-        
+
         owner, repo_name = parts[0], parts[1]
-        
+        # Strip .git suffix if present
+        if repo_name.endswith('.git'):
+            repo_name = repo_name[:-4]
+
         # Create temporary directory for extraction
         temp_dir = Path(tempfile.mkdtemp(prefix=f"oaas_repo_{owner}_{repo_name}_"))
         logger.info(f"Created temporary directory for repo: {temp_dir}")

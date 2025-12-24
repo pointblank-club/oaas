@@ -62,14 +62,34 @@ interface InstructionMetricsData {
   };
 }
 
+interface ReportMetadata {
+  platform?: string;
+  architecture?: string;
+  binary_format?: string;
+  metric_extraction_method?: string;
+  [key: string]: any;
+}
+
 interface ReportData {
   obfuscation_score?: number;
+  overall_protection_index?: number;
   control_flow_metrics?: ControlFlowMetricsData;
   instruction_metrics?: InstructionMetricsData;
+  metadata?: ReportMetadata;
+  input_parameters?: {
+    platform?: string;
+    [key: string]: any;
+  };
+}
+
+interface PhoronixMetrics {
+  instruction_count_delta?: number;
+  instruction_count_increase_percent?: number;
+  performance_overhead_percent?: number;
 }
 
 interface Props {
-  report: ReportData;
+  report: ReportData & { phoronix?: { key_metrics?: PhoronixMetrics } };
 }
 
 // Color constants for consistent theming
@@ -96,30 +116,39 @@ const INSTRUCTION_COLORS: { [key: string]: string } = {
 
 /**
  * Protection Score Card - Main summary widget
+ * Displays score on 0-100 scale (industry-standard PRCS framework)
  */
 const ProtectionScoreCard: React.FC<{ score?: number }> = ({ score = 0 }) => {
-  const getGrade = (s: number): string => {
-    if (s >= 90) return 'A+';
-    if (s >= 80) return 'A';
-    if (s >= 70) return 'B';
-    if (s >= 60) return 'C';
+  // Score is already on 0-100 scale
+  const scoreValue = Math.round(score);
+
+  const getGrade = (scoreVal: number): string => {
+    if (scoreVal >= 85) return 'A+';
+    if (scoreVal >= 75) return 'A';
+    if (scoreVal >= 65) return 'B+';
+    if (scoreVal >= 55) return 'B';
+    if (scoreVal >= 45) return 'C';
     return 'D';
   };
 
-  const getColor = (s: number): string => {
-    if (s >= 80) return '#2ea043';
-    if (s >= 60) return '#d29922';
+  const getColor = (scoreVal: number): string => {
+    if (scoreVal >= 85) return '#2ea043';
+    if (scoreVal >= 75) return '#5cb85c';
+    if (scoreVal >= 65) return '#d29922';
+    if (scoreVal >= 50) return '#ffa500';
     return '#da3633';
   };
 
-  const getEmoji = (s: number): string => {
-    if (s >= 80) return '🟢';
-    if (s >= 60) return '🟡';
+  const getEmoji = (scoreVal: number): string => {
+    if (scoreVal >= 85) return '🟢';
+    if (scoreVal >= 75) return '🟢';
+    if (scoreVal >= 65) return '🟡';
+    if (scoreVal >= 50) return '🟡';
     return '🔴';
   };
 
-  const color = getColor(score);
-  const grade = getGrade(score);
+  const color = getColor(scoreValue);
+  const grade = getGrade(scoreValue);
 
   return (
     <div
@@ -143,7 +172,7 @@ const ProtectionScoreCard: React.FC<{ score?: number }> = ({ score = 0 }) => {
           marginBottom: '8px',
         }}
       >
-        {getEmoji(score)} {Math.round(score)}/100
+        {getEmoji(scoreValue)} {scoreValue}/100
       </div>
       <div
         style={{
@@ -161,11 +190,15 @@ const ProtectionScoreCard: React.FC<{ score?: number }> = ({ score = 0 }) => {
           color: 'var(--text-secondary)',
         }}
       >
-        {score >= 80
+        {scoreValue >= 85
+          ? '✓ Exceptional Obfuscation'
+          : scoreValue >= 75
           ? '✓ Excellent Obfuscation'
-          : score >= 60
+          : scoreValue >= 65
           ? '⚠ Good Obfuscation'
-          : '• Moderate Obfuscation'}
+          : scoreValue >= 50
+          ? '⚠ Moderate Obfuscation'
+          : '• Limited Obfuscation'}
       </div>
     </div>
   );
@@ -449,11 +482,135 @@ const MetricCard: React.FC<MetricCardProps> = ({
 /**
  * Main MetricsDashboard Component
  */
+/**
+ * Phoronix Benchmarking Metrics Card
+ */
+const PhoronixMetricsCard: React.FC<{ metrics?: PhoronixMetrics }> = ({ metrics }) => {
+  if (!metrics) return null;
+
+  const instrDelta = metrics.instruction_count_delta;
+  const instrPercent = metrics.instruction_count_increase_percent;
+  const perfOverhead = metrics.performance_overhead_percent;
+
+  if (instrDelta === undefined && perfOverhead === undefined) return null;
+
+  return (
+    <div
+      style={{
+        background: 'linear-gradient(135deg, #1a1f26 0%, #202833 100%)',
+        border: '2px solid #3fb950',
+        borderRadius: '12px',
+        padding: '24px',
+        marginTop: '24px',
+        boxShadow: '0 0 20px rgba(63, 185, 80, 0.1)',
+      }}
+    >
+      <h3
+        style={{
+          margin: '0 0 16px 0',
+          color: '#3fb950',
+          fontSize: '16px',
+          fontWeight: 600,
+          display: 'flex',
+          alignItems: 'center',
+          gap: '8px',
+        }}
+      >
+        📊 Obfuscation Impact Metrics
+      </h3>
+
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
+          gap: '16px',
+        }}
+      >
+        {instrDelta !== undefined && (
+          <div
+            style={{
+              background: 'rgba(63, 185, 80, 0.1)',
+              border: '1px solid #3fb950',
+              borderRadius: '8px',
+              padding: '16px',
+              textAlign: 'center',
+            }}
+          >
+            <div style={{ color: '#8b949e', fontSize: '12px', marginBottom: '8px' }}>
+              Code Expansion
+            </div>
+            <div
+              style={{
+                color: '#3fb950',
+                fontSize: '24px',
+                fontWeight: 'bold',
+                fontFamily: "'JetBrains Mono', monospace",
+                marginBottom: '4px',
+              }}
+            >
+              +{instrDelta}
+            </div>
+            <div style={{ color: '#8b949e', fontSize: '11px' }}>
+              (+{instrPercent}% instructions)
+            </div>
+          </div>
+        )}
+
+        {perfOverhead !== undefined && perfOverhead !== null && (
+          <div
+            style={{
+              background: 'rgba(88, 166, 255, 0.1)',
+              border: '1px solid #58a6ff',
+              borderRadius: '8px',
+              padding: '16px',
+              textAlign: 'center',
+            }}
+          >
+            <div style={{ color: '#8b949e', fontSize: '12px', marginBottom: '8px' }}>
+              Performance Overhead
+            </div>
+            <div
+              style={{
+                color: '#58a6ff',
+                fontSize: '24px',
+                fontWeight: 'bold',
+                fontFamily: "'JetBrains Mono', monospace",
+                marginBottom: '4px',
+              }}
+            >
+              +{perfOverhead.toFixed(1)}%
+            </div>
+            <div style={{ color: '#8b949e', fontSize: '11px' }}>
+              Runtime slowdown
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div
+        style={{
+          marginTop: '16px',
+          padding: '12px',
+          background: 'rgba(139, 148, 158, 0.1)',
+          borderRadius: '6px',
+          fontSize: '12px',
+          color: '#8b949e',
+          lineHeight: '1.6',
+        }}
+      >
+        <strong>Note:</strong> Instruction count reflects code expansion from obfuscation passes.
+        Performance overhead is based on runtime measurements if available.
+      </div>
+    </div>
+  );
+};
+
 export const MetricsDashboard: React.FC<Props> = ({ report }) => {
   const hasControlFlow = report.control_flow_metrics &&
     Object.keys(report.control_flow_metrics).length > 0;
   const hasInstructions = report.instruction_metrics &&
     Object.keys(report.instruction_metrics).length > 0;
+  const hasPhoronix = report.phoronix?.key_metrics;
 
   return (
     <div
@@ -461,8 +618,58 @@ export const MetricsDashboard: React.FC<Props> = ({ report }) => {
         animation: 'fadeIn 0.8s ease-out',
       }}
     >
+      {/* ✅ NEW: Platform Metadata Indicator (for Windows score fix transparency) */}
+      {report.metadata && (
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '12px',
+            marginBottom: '20px',
+            padding: '12px 16px',
+            backgroundColor: '#f6f8fa',
+            borderRadius: '8px',
+            border: '1px solid #d0d7de',
+            fontSize: '14px',
+            fontWeight: '500',
+          }}
+        >
+          <span>📊</span>
+          <span>
+            <strong>Platform:</strong>{' '}
+            {(report.metadata.platform || 'unknown').toUpperCase()}
+          </span>
+          {report.metadata.binary_format && (
+            <span
+              style={{
+                display: 'inline-block',
+                backgroundColor: '#1f6feb',
+                color: 'white',
+                padding: '2px 8px',
+                borderRadius: '4px',
+                fontSize: '12px',
+                marginLeft: '4px',
+              }}
+            >
+              {report.metadata.binary_format}
+            </span>
+          )}
+          {report.metadata.metric_extraction_method && (
+            <span
+              style={{
+                marginLeft: 'auto',
+                fontSize: '12px',
+                color: '#666',
+              }}
+            >
+              Metrics: {report.metadata.metric_extraction_method}
+            </span>
+          )}
+        </div>
+      )}
+
       {/* Protection Score */}
-      <ProtectionScoreCard score={report.obfuscation_score} />
+      <ProtectionScoreCard score={report.overall_protection_index || report.obfuscation_score} />
 
       {/* Control Flow Analysis */}
       {hasControlFlow && (
@@ -474,8 +681,13 @@ export const MetricsDashboard: React.FC<Props> = ({ report }) => {
         <InstructionChart metrics={report.instruction_metrics!} />
       )}
 
+      {/* Phoronix Benchmarking Metrics */}
+      {hasPhoronix && report.phoronix && (
+        <PhoronixMetricsCard metrics={report.phoronix.key_metrics} />
+      )}
+
       {/* Empty state */}
-      {!hasControlFlow && !hasInstructions && (
+      {!hasControlFlow && !hasInstructions && !hasPhoronix && (
         <div
           style={{
             textAlign: 'center',

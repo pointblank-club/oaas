@@ -206,28 +206,140 @@ class FakeLoopGenerator:
 
         return i - 1 if depth == 0 else -1
 
+    def _is_safe_position(self, content: str, pos: int) -> bool:
+        """
+        Check if a position is safe for inserting fake loops.
+        Returns False if the position is in an unsafe context.
+        """
+        # Look back up to 300 characters to check context (increased for better detection)
+        lookback_start = max(0, pos - 300)
+        before = content[lookback_start:pos]
+
+        # Look ahead up to 150 characters (increased)
+        lookahead_end = min(pos + 150, len(content))
+        after = content[pos:lookahead_end].strip()
+
+        # === LOOK-AHEAD CHECKS ===
+
+        # Skip if after try block (before catch)
+        if after.startswith('catch'):
+            return False
+
+        # Skip if part of initializer list or function arguments
+        if after and after[0] in (';', ',', ')', ']'):
+            return False
+
+        # === LOOK-BACK CHECKS ===
+
+        before_stripped = before.strip()
+
+        # Skip if we're after any colon (covers many cases)
+        if before_stripped.endswith(':'):
+            # Get the last non-empty line
+            last_lines = before_stripped.split('\n')
+            for line in reversed(last_lines[-5:]):  # Check last 5 lines
+                line_clean = line.strip()
+                if not line_clean:
+                    continue
+
+                # Skip case/default labels
+                if line_clean.startswith('case ') or line_clean.startswith('default'):
+                    return False
+
+                # Skip access specifiers (C++)
+                if line_clean in ('public:', 'private:', 'protected:'):
+                    return False
+
+                # Skip constructor initializer lists
+                if ')' in line_clean and ':' in line_clean:
+                    # Pattern like: MyClass(...) :
+                    return False
+
+                # If we found the line with colon, stop checking
+                if line_clean.endswith(':'):
+                    break
+
+        # Skip if after control flow keywords without braces
+        # Pattern: keyword followed by semicolon (no braces)
+        control_keywords = ['if', 'else', 'while', 'for', 'return', 'break', 'continue', 'goto']
+        for keyword in control_keywords:
+            if keyword in before[-80:]:
+                # Find the keyword position
+                kw_idx = before.rfind(keyword)
+                if kw_idx != -1:
+                    between = before[kw_idx:]
+                    # If there's no opening brace between keyword and our position
+                    if '{' not in between:
+                        # This might be a naked control statement
+                        # Allow only if there's already a full statement (semicolon)
+                        if keyword in ('return', 'break', 'continue', 'goto'):
+                            # These should have a semicolon
+                            if ';' not in between:
+                                return False
+
+        # Skip if we're in a macro definition (multi-line)
+        # Check for lines ending with backslash
+        recent_lines = before_stripped.split('\n')[-3:]
+        for line in recent_lines:
+            if line.rstrip().endswith('\\'):
+                # We're in a multi-line macro
+                return False
+
+        return True
+
     def _find_safe_insertion_points(self, content: str, func_start: int, func_end: int) -> List[int]:
         """
         Find safe positions to insert fake loops within a function body.
-        Safe positions are after semicolons or closing braces that end statements.
+        Safe positions are ONLY after complete statements ending with semicolons.
+        We avoid inserting after braces to reduce complexity and errors.
         """
         positions = []
         func_content = content[func_start:func_end]
 
-        # Find positions after semicolons (end of statements)
+        # ONLY insert after semicolons (complete statements)
+        # Avoid inserting after braces entirely - too many edge cases
         for i, char in enumerate(func_content):
             if char == ';':
-                # Check if this is at a reasonable nesting level
                 pos = func_start + i + 1
-                # Skip if inside a for loop header
-                before = func_content[max(0, i-50):i]
-                if 'for' in before and before.count('(') > before.count(')'):
+
+                # Check if we're inside any kind of parentheses/brackets
+                # Look back up to 300 chars to handle multiline constructs
+                lookback = func_content[max(0, i-300):i]
+
+                # Count all kinds of brackets
+                paren_depth = lookback.count('(') - lookback.count(')')
+                bracket_depth = lookback.count('[') - lookback.count(']')
+                brace_depth = lookback.count('{') - lookback.count('}')
+
+                # If any depth is positive, we're inside unclosed brackets
+                if paren_depth > 0 or bracket_depth > 0:
+                    # Skip - we're inside parentheses/brackets
+                    # This covers: for loops, function calls, array indices, etc.
                     continue
+
+                # ADDITIONAL CHECK: Look ahead to see if there's a closing paren coming
+                # This catches multi-line for loops where we found a semicolon but
+                # the for loop header isn't closed yet
+                lookahead = func_content[i+1:min(i+100, len(func_content))]
+                # Skip any whitespace/newlines to find the next significant character
+                lookahead_stripped = lookahead.lstrip()
+                if lookahead_stripped and lookahead_stripped[0] in (')', ']'):
+                    # There's a closing bracket coming - we're still in a multi-line construct
+                    continue
+
+                # Additional comprehensive safety check
+                if not self._is_safe_position(content, pos):
+                    continue
+
                 positions.append(pos)
-            elif char == '}':
-                # After closing brace of a block
-                pos = func_start + i + 1
-                positions.append(pos)
+
+        # DO NOT insert after braces - too many edge cases:
+        # - try/catch boundaries
+        # - initializer lists
+        # - lambdas
+        # - struct/class/enum definitions
+        # - namespace blocks
+        # etc.
 
         return positions
 

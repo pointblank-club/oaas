@@ -299,7 +299,7 @@ body {
   letter-spacing: 1px;
 }
 
-/* Input Section Header */
+
 .input-section-header {
   display: flex;
   justify-content: space-between;
@@ -458,6 +458,19 @@ body {
 
 .layer-checkbox:hover {
   border-color: var(--accent);
+}
+
+.layer-checkbox.disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.layer-checkbox.disabled:hover {
+  border-color: var(--border-color);
+}
+
+.layer-checkbox.disabled input[type="checkbox"] {
+  cursor: not-allowed;
 }
 
 .layer-checkbox input[type="checkbox"] {
@@ -1283,7 +1296,7 @@ body {
 
 /* ========== GLASSMORPHISM & ANIMATIONS FOR METRICS DASHBOARD ========== */
 
-/* Fade-in animation */
+/* Fade-in animations */
 @keyframes fadeIn {
   from {
     opacity: 0;
@@ -1454,4 +1467,14 @@ body {
   --chart-border: #d0d7de;
   --chart-text: #24292f;
   --chart-grid: #f0f0f0;
+}
+
+/* Spinner animation for Dogbolt loader */
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
 }

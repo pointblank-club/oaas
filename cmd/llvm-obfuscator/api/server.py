@@ -9,6 +9,8 @@ import secrets
 import shutil
 import subprocess
 import tempfile
+import threading
+import uuid
 import zipfile
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -30,8 +32,9 @@ from core import (
     analyze_binary,
     report_converter,
 )
+from core.binary_pipeline_worker import BinaryPipelineWorker
 from core.comparer import CompareConfig, compare_binaries
-from core.config import AdvancedConfiguration, PassConfiguration, UPXConfiguration, Architecture, RemarksConfiguration
+from core.config import AdvancedConfiguration, PassConfiguration, UPXConfiguration, Architecture, RemarksConfiguration, IndirectCallConfiguration
 from core.exceptions import JobNotFoundError, ValidationError
 from core.ir_analyzer import IRAnalyzer
 from core.test_suite_integration import (
@@ -52,6 +55,12 @@ from core.utils import (
     summarize_symbols,
     compute_entropy,
 )
+
+# ✅ NEW: Import platform-aware metrics collector (Windows PE support)
+try:
+    from phoronix.scripts.collect_obfuscation_metrics import MetricsCollector
+except ImportError:
+    MetricsCollector = None
 
 from .multifile_pipeline import (
     GitHubRepoRequest,
@@ -123,6 +132,130 @@ reporter = ObfuscationReport(report_base)
 obfuscator = LLVMObfuscator(reporter=reporter)
 
 
+# ✅ NEW: Metric-driven overall obfuscation score calculation (same logic as obfuscator.py)
+def calculate_overall_protection_index(
+    symbol_reduction: float,
+    function_reduction: float,
+    entropy_increase: float,
+    size_change_percent: float,
+    passes: List[str],
+    has_string_encryption: bool = False
+) -> float:
+    """
+    Calculate Overall Obfuscation Score (0-100).
+    Metric-driven calculation based on actual protection achieved.
+    Same logic as obfuscator._calculate_overall_protection_index()
+
+    Args:
+        symbol_reduction: Number of symbols removed
+        function_reduction: Number of functions hidden
+        entropy_increase: Entropy increase percentage
+        size_change_percent: Binary size change percentage
+        passes: List of applied obfuscation passes
+        has_string_encryption: Whether string encryption is enabled
+
+    Returns:
+        Overall protection index score (0-100)
+    """
+    index_score = 0.0
+
+    # 1. SYMBOL REDUCTION (0-25 points)
+    symbol_pct = symbol_reduction  # Already a count, convert to percentage context
+    if symbol_pct >= 90:
+        symbol_points = 25.0
+    elif symbol_pct >= 80:
+        symbol_points = 23.0
+    elif symbol_pct >= 70:
+        symbol_points = 20.0
+    elif symbol_pct >= 50:
+        symbol_points = 15.0
+    elif symbol_pct >= 30:
+        symbol_points = 10.0
+    elif symbol_pct >= 10:
+        symbol_points = 5.0
+    else:
+        symbol_points = 0.0
+    index_score += symbol_points
+
+    # 2. FUNCTION REDUCTION (0-20 points)
+    if function_reduction >= 90:
+        function_points = 20.0
+    elif function_reduction >= 70:
+        function_points = 18.0
+    elif function_reduction >= 50:
+        function_points = 15.0
+    elif function_reduction >= 30:
+        function_points = 10.0
+    elif function_reduction >= 15:
+        function_points = 5.0
+    elif function_reduction > 0:
+        function_points = 2.0
+    else:
+        function_points = 0.0
+    index_score += function_points
+
+    # 3. ENTROPY INCREASE (0-30 points)
+    if entropy_increase >= 100:
+        entropy_points = 30.0
+    elif entropy_increase >= 80:
+        entropy_points = 28.0
+    elif entropy_increase >= 60:
+        entropy_points = 25.0
+    elif entropy_increase >= 40:
+        entropy_points = 20.0
+    elif entropy_increase >= 20:
+        entropy_points = 15.0
+    elif entropy_increase >= 5:
+        entropy_points = 8.0
+    else:
+        entropy_points = 0.0
+    index_score += entropy_points
+
+    # 4. TECHNIQUE DIVERSITY (0-15 points)
+    technique_keywords = ["fla", "bcf", "sub", "string-encrypt", "symbol-obfuscate", "indirect", "mlir", "ollvm", "upx", "inline"]
+    detected_techniques = sum(1 for keyword in technique_keywords if any(keyword.lower() in str(p).lower() for p in passes))
+
+    # Infer techniques from metrics if not explicitly listed
+    if detected_techniques == 0:
+        if symbol_reduction > 50:
+            detected_techniques += 1
+        if function_reduction > 50:
+            detected_techniques += 1
+        if entropy_increase > 20:
+            detected_techniques += 1
+        if has_string_encryption:
+            detected_techniques += 1
+
+    if detected_techniques >= 6:
+        technique_points = 15.0
+    elif detected_techniques >= 4:
+        technique_points = 12.0
+    elif detected_techniques >= 3:
+        technique_points = 10.0
+    elif detected_techniques >= 2:
+        technique_points = 7.0
+    elif detected_techniques >= 1:
+        technique_points = 4.0
+    else:
+        technique_points = 0.0
+    index_score += technique_points
+
+    # 5. SIZE OVERHEAD PENALTY (0-10 penalty)
+    penalty = 0.0
+    if size_change_percent > 300:
+        penalty = 10.0
+    elif size_change_percent > 200:
+        penalty = 5.0
+    elif size_change_percent > 100:
+        penalty = 2.0
+
+    index_score -= penalty
+
+    # Final clamp to 0-100
+    overall_score = min(100.0, max(0.0, index_score))
+    return overall_score
+
+
 def _find_default_plugin() -> Tuple[Optional[str], bool]:
     """Best-effort discovery of the obfuscation pass plugin.
 
@@ -175,6 +308,7 @@ class PassesModel(BaseModel):
     string_encrypt: bool = False
     symbol_obfuscate: bool = False
     constant_obfuscate: bool = False
+    address_obfuscation: bool = False  # Layer 1.5: Address-level obfuscation
 
 
 class UPXModel(BaseModel):
@@ -182,6 +316,7 @@ class UPXModel(BaseModel):
     compression_level: str = Field("best", pattern="^(fast|default|best|brute)$")
     use_lzma: bool = True
     preserve_original: bool = False
+    custom_upx_path: Optional[str] = None  # Path to custom UPX binary (overrides system UPX)
 
 
 class IndirectCallsModel(BaseModel):
@@ -196,6 +331,26 @@ class RemarksModel(BaseModel):
     pass_filter: str = Field(default=".*", description="Regex filter for passes")
 
 
+class AntiDebugModel(BaseModel):
+    enabled: bool = False
+    techniques: list[str] = Field(
+        default_factory=lambda: ["ptrace", "proc_status"],
+        description=(
+            "Anti-debug techniques. "
+            "Linux: ptrace, proc_status, parent_check, timing. "
+            "Windows: is_debugger_present, remote_debugger, peb_flag, nt_global_flag, nt_query_info, hardware_breakpoints, timing, output_debug_string. "
+            "Linux techniques are auto-mapped to Windows equivalents when targeting Windows platform."
+        )
+    )
+
+
+class VMModel(BaseModel):
+    """VM virtualization configuration (experimental)."""
+    enabled: bool = False
+    timeout: int = Field(default=60, ge=10, le=300, description="VM timeout in seconds")
+    fallback_on_error: bool = True
+
+
 class ConfigModel(BaseModel):
     level: int = Field(3, ge=1, le=5)
     passes: PassesModel = PassesModel()
@@ -207,7 +362,9 @@ class ConfigModel(BaseModel):
     fake_loops: int = Field(0, ge=0, le=50)
     upx: UPXModel = UPXModel()
     indirect_calls: IndirectCallsModel = IndirectCallsModel()
+    anti_debug: AntiDebugModel = AntiDebugModel()
     remarks: RemarksModel = RemarksModel()  # Enable remarks by default
+    vm: VMModel = VMModel()  # VM virtualization (experimental, disabled by default)
 
 
 class ObfuscateRequest(BaseModel):
@@ -228,6 +385,15 @@ class ObfuscateRequest(BaseModel):
     build_command: Optional[str] = None  # Custom build command (for "custom" mode)
     output_binary_path: Optional[str] = None  # Hint for where to find output binary
     cmake_options: Optional[str] = None  # Extra cmake flags like "-DBUILD_TESTING=OFF"
+    # Phoronix benchmarking options
+    run_benchmarks: bool = Field(
+        default=False,
+        description="Enable Phoronix benchmarking after obfuscation"
+    )
+    benchmark_timeout_seconds: int = Field(
+        default=3600,
+        description="Maximum time to wait for benchmarking (seconds)"
+    )
 
 
 class GitHubCloneRequest(BaseModel):
@@ -356,6 +522,13 @@ def _build_config_from_request(payload: ObfuscateRequest, destination_dir: Path,
         compression_level=payload.config.upx.compression_level,
         use_lzma=payload.config.upx.use_lzma,
         preserve_original=payload.config.upx.preserve_original,
+        custom_upx_path=Path(payload.config.upx.custom_upx_path) if payload.config.upx.custom_upx_path else None,
+    )
+    # Configure indirect calls
+    indirect_calls = IndirectCallConfiguration(
+        enabled=payload.config.indirect_calls.enabled,
+        obfuscate_stdlib=payload.config.indirect_calls.obfuscate_stdlib,
+        obfuscate_custom=payload.config.indirect_calls.obfuscate_custom,
     )
     # Configure remarks (enabled by default)
     remarks_config = RemarksConfiguration(
@@ -364,10 +537,20 @@ def _build_config_from_request(payload: ObfuscateRequest, destination_dir: Path,
         pass_filter=payload.config.remarks.pass_filter,
     )
     
+    # Configure anti-debugging
+    from core.config import AntiDebugConfiguration
+    logger.info(f"Anti-debug config from request: enabled={payload.config.anti_debug.enabled}, techniques={payload.config.anti_debug.techniques}")
+    anti_debug_config = AntiDebugConfiguration(
+        enabled=payload.config.anti_debug.enabled,
+        techniques=payload.config.anti_debug.techniques,
+    )
+    
     advanced = AdvancedConfiguration(
         cycles=payload.config.cycles,
         fake_loops=payload.config.fake_loops,
+        indirect_calls=indirect_calls,
         upx_packing=upx_config,
+        anti_debug=anti_debug_config,
         remarks=remarks_config,
     )
     # Auto-load plugin if passes are requested and no explicit plugin provided
@@ -399,6 +582,17 @@ def _build_config_from_request(payload: ObfuscateRequest, destination_dir: Path,
                             "advanced": {
                                 "cycles": advanced.cycles,
                                 "fake_loops": advanced.fake_loops,
+                                "anti_debug": {
+                                    "enabled": advanced.anti_debug.enabled,
+                                    "techniques": advanced.anti_debug.techniques,
+                                },
+                                "upx_packing": {
+                                    "enabled": upx_config.enabled,
+                                    "compression_level": upx_config.compression_level,
+                                    "use_lzma": upx_config.use_lzma,
+                                    "preserve_original": upx_config.preserve_original,
+                                    "custom_upx_path": str(upx_config.custom_upx_path) if upx_config.custom_upx_path else None,
+                                },
                             },            "output": {
                 "directory": str(destination_dir),
                 "report_format": payload.report_formats,
@@ -407,6 +601,11 @@ def _build_config_from_request(payload: ObfuscateRequest, destination_dir: Path,
             "custom_pass_plugin": chosen_plugin,
             "entrypoint_command": payload.entrypoint_command,
             "project_root": str(project_root) if project_root else None,
+            "vm": {
+                "enabled": payload.config.vm.enabled,
+                "timeout": payload.config.vm.timeout,
+                "fallback_on_error": payload.config.vm.fallback_on_error,
+            },
         }
     )
     return output_config
@@ -784,11 +983,44 @@ def _run_custom_build(
         return False, f"Build error: {str(e)}"
 
 
-def _run_obfuscation(job_id: str, source_path: Path, config: ObfuscationConfig) -> None:
+def _run_obfuscation(job_id: str, source_path: Path, config: ObfuscationConfig,
+                     run_benchmarks: bool = False, benchmark_timeout: int = 3600) -> None:
     try:
         job_manager.update_job(job_id, status="running")
         progress_tracker.publish_sync(ProgressEvent(job_id=job_id, stage="running", progress=0.1, message="Compilation started"))
         result = obfuscator.obfuscate(source_path, config, job_id=job_id)
+
+        # Optional: Run Phoronix benchmarking
+        if run_benchmarks:
+            progress_tracker.publish_sync(ProgressEvent(job_id=job_id, stage="running", progress=0.7, message="Running Phoronix benchmarking..."))
+            try:
+                from core.phoronix_integration import PhoronixBenchmarkRunner
+
+                baseline_binary = result.get("baseline_binary")
+                obfuscated_binary = result.get("obfuscated_binary")
+
+                if baseline_binary and obfuscated_binary:
+                    runner = PhoronixBenchmarkRunner()
+                    phoronix_results = runner.run_benchmark(
+                        Path(baseline_binary),
+                        Path(obfuscated_binary),
+                        timeout=benchmark_timeout
+                    )
+
+                    key_metrics = runner.extract_key_metrics(phoronix_results)
+                    result['phoronix'] = {
+                        'results': phoronix_results,
+                        'key_metrics': key_metrics
+                    }
+
+                    logger.info(f"✅ Benchmarking completed: score={key_metrics.get('obfuscation_score')}")
+            except Exception as e:
+                logger.error(f"Benchmarking failed: {e}")
+                result['phoronix'] = {
+                    'results': None,
+                    'error': str(e)
+                }
+
         job_manager.update_job(job_id, status="completed", result=result)
         report_paths = result.get("report_paths", {})
         logger.info("[PDF DEBUG] Attaching reports at line 772 - report_paths keys: %s", list(report_paths.keys()))
@@ -938,8 +1170,26 @@ async def api_obfuscate_sync(
 
                 # Initialize IR analyzer for advanced metrics
                 opt_path = "/usr/local/llvm-obfuscator/bin/opt"
-                llvm_dis_path = "/usr/local/llvm-obfuscator/bin/llvm-dis"
-                ir_analyzer = IRAnalyzer(Path(opt_path), Path(llvm_dis_path))
+
+                # Try to find llvm-dis in multiple locations
+                llvm_dis_candidates = [
+                    Path("/usr/local/llvm-obfuscator/bin/llvm-dis"),  # Primary: container
+                    Path("/usr/bin/llvm-dis"),  # Fallback 1: system
+                    Path("/usr/local/bin/llvm-dis"),  # Fallback 2: common location
+                ]
+                llvm_dis_path = None
+                for candidate in llvm_dis_candidates:
+                    if candidate.exists():
+                        llvm_dis_path = candidate
+                        logger.info(f"Found llvm-dis at: {llvm_dis_path}")
+                        break
+
+                if not llvm_dis_path:
+                    logger.warning("llvm-dis binary not found in any expected location - instruction metrics will be unavailable")
+                    # Use primary path anyway, will fail gracefully in IR analyzer
+                    llvm_dis_path = Path("/usr/local/llvm-obfuscator/bin/llvm-dis")
+
+                ir_analyzer = IRAnalyzer(Path(opt_path), llvm_dis_path)
                 baseline_ir_metrics = {}
                 obf_ir_metrics = {}
 
@@ -981,6 +1231,14 @@ async def api_obfuscate_sync(
                             if baseline_cf:
                                 baseline_ir_metrics.update(baseline_cf)
                             if baseline_instr:
+                                # Check if metrics are unavailable
+                                if baseline_instr.get('_metadata'):
+                                    metadata = baseline_instr.get('_metadata', {})
+                                    if metadata.get('status') == 'unavailable':
+                                        logger.warning(f"[IR Analysis] Baseline instruction metrics unavailable: {metadata.get('reason')}")
+                                    elif metadata.get('status') == 'error':
+                                        logger.error(f"[IR Analysis] Baseline instruction metrics error: {metadata.get('reason')}")
+                                # Still update metrics even if unavailable (will have zeros)
                                 baseline_ir_metrics.update(baseline_instr)
                             logger.info(f"[IR Analysis] Baseline metrics collected: {list(baseline_ir_metrics.keys())}")
                         except Exception as e:
@@ -1023,6 +1281,14 @@ async def api_obfuscate_sync(
                             if obf_cf:
                                 obf_ir_metrics.update(obf_cf)
                             if obf_instr:
+                                # Check if metrics are unavailable
+                                if obf_instr.get('_metadata'):
+                                    metadata = obf_instr.get('_metadata', {})
+                                    if metadata.get('status') == 'unavailable':
+                                        logger.warning(f"[IR Analysis] Instruction metrics unavailable: {metadata.get('reason')}")
+                                    elif metadata.get('status') == 'error':
+                                        logger.error(f"[IR Analysis] Instruction metrics error: {metadata.get('reason')}")
+                                # Still update metrics even if unavailable (will have zeros)
                                 obf_ir_metrics.update(obf_instr)
                             logger.info(f"[IR Analysis] Obfuscated metrics collected: {list(obf_ir_metrics.keys())}")
                         except Exception as e:
@@ -1152,13 +1418,47 @@ async def api_obfuscate_sync(
                         # Use baseline binary if available, else use final binary
                         baseline_for_metrics = baseline_binary if baseline_binary and baseline_binary.exists() else final_binary
 
-                        # Collect metrics
-                        baseline_symbols, baseline_functions = summarize_symbols(baseline_for_metrics)
-                        baseline_entropy = compute_entropy(baseline_for_metrics.read_bytes())
-                        baseline_size = get_file_size(baseline_for_metrics)
+                        # ✅ NEW: Use platform-aware metrics collector (supports Windows PE)
+                        baseline_entropy = 0.0
+                        output_entropy = 0.0
 
-                        output_symbols, output_functions = summarize_symbols(final_binary)
-                        output_entropy = compute_entropy(final_binary.read_bytes())
+                        if MetricsCollector:
+                            try:
+                                collector = MetricsCollector()
+                                baseline_metrics = collector._analyze_binary(baseline_for_metrics)
+                                output_metrics = collector._analyze_binary(final_binary)
+
+                                if baseline_metrics:
+                                    baseline_entropy = baseline_metrics.text_entropy
+                                    baseline_symbols = baseline_metrics.num_functions
+                                    baseline_functions = baseline_metrics.num_functions
+                                else:
+                                    baseline_symbols, baseline_functions = summarize_symbols(baseline_for_metrics)
+                                    baseline_entropy = compute_entropy(baseline_for_metrics.read_bytes())
+
+                                if output_metrics:
+                                    output_entropy = output_metrics.text_entropy
+                                    output_symbols = output_metrics.num_functions
+                                    output_functions = output_metrics.num_functions
+                                else:
+                                    output_symbols, output_functions = summarize_symbols(final_binary)
+                                    output_entropy = compute_entropy(final_binary.read_bytes())
+
+                                logger.info(f"✅ Platform-aware metrics: baseline_entropy={baseline_entropy:.3f}, output_entropy={output_entropy:.3f}")
+                            except Exception as e:
+                                logger.warning(f"MetricsCollector failed, falling back to generic metrics: {e}")
+                                baseline_symbols, baseline_functions = summarize_symbols(baseline_for_metrics)
+                                baseline_entropy = compute_entropy(baseline_for_metrics.read_bytes())
+                                output_symbols, output_functions = summarize_symbols(final_binary)
+                                output_entropy = compute_entropy(final_binary.read_bytes())
+                        else:
+                            # Fallback if MetricsCollector not available
+                            baseline_symbols, baseline_functions = summarize_symbols(baseline_for_metrics)
+                            baseline_entropy = compute_entropy(baseline_for_metrics.read_bytes())
+                            output_symbols, output_functions = summarize_symbols(final_binary)
+                            output_entropy = compute_entropy(final_binary.read_bytes())
+
+                        baseline_size = get_file_size(baseline_for_metrics)
                         output_size = get_file_size(final_binary)
 
                         # Calculate comparison metrics
@@ -1237,7 +1537,24 @@ async def api_obfuscate_sync(
                             "symbol_obfuscation": {"enabled": config.passes.symbol_obfuscate if config else False},
                             "indirect_calls": {"enabled": (hasattr(config.advanced, 'indirect_calls') and config.advanced.indirect_calls.enabled) if config else False},
                             "upx_packing": {"enabled": (config.advanced.upx_packing.enabled if config else False)},
-                            "obfuscation_score": int(entropy_increase * 10) if entropy_increase > 0 else 0,  # Simple score based on entropy
+                            # ✅ FIXED: Use comprehensive score calculation (was too simplistic)
+                            # Previously: int(entropy_increase * 10) - only used entropy
+                            # Now: Aggregate score from multiple metrics (entropy, complexity, CFG distortion, performance)
+                            "obfuscation_score": min(100, max(0, int(
+                                (entropy_increase / 8.0) * 25 +  # Entropy: max 8 bits, weight 25%
+                                ((baseline_symbols - output_symbols) / max(baseline_symbols, 1)) * 25 +  # Symbol reduction: 25%
+                                (size_change_percent / 20.0) * 25 +  # Size increase: up to 20% is good, weight 25%
+                                (entropy_increase_percent / 50.0) * 25  # Entropy increase %: weight 25%
+                            ))),
+                            # ✅ NEW: Calculate overall_protection_index (metric-driven score, same as obfuscator)
+                            "overall_protection_index": calculate_overall_protection_index(
+                                symbol_reduction=abs(baseline_symbols - output_symbols),
+                                function_reduction=abs(baseline_functions - output_functions),
+                                entropy_increase=entropy_increase_percent,
+                                size_change_percent=size_change_percent,
+                                passes=passes_actually_applied,
+                                has_string_encryption=(config.passes.string_encrypt or payload.config.string_encryption) if config else False
+                            ),
                             "symbol_reduction": baseline_symbols - output_symbols,
                             "function_reduction": baseline_functions - output_functions,
                             "size_reduction": max(0, baseline_size - output_size),  # Only count reduction, not growth
@@ -1683,6 +2000,107 @@ async def api_obfuscate_sync(
         logger.info("[PLATFORM DEBUG] platform_binaries.get('windows'): %s", platform_binaries.get("windows"))
         logger.info("[PLATFORM DEBUG] platform_binaries.get('macos'): %s", platform_binaries.get("macos"))
 
+        # Optional: Run Phoronix benchmarking (same as async endpoint)
+        logger.info(f"[PHORONIX DEBUG] run_benchmarks flag: {payload.run_benchmarks}")
+        logger.info(f"[PHORONIX DEBUG] result keys: {list(result.keys())}")
+
+        if payload.run_benchmarks:
+            logger.info("[PHORONIX] Starting benchmarking...")
+            try:
+                from core.phoronix_integration import PhoronixBenchmarkRunner
+
+                baseline_binary = result.get("baseline_binary")
+                obfuscated_binary = result.get("obfuscated_binary")
+
+                logger.info(f"[PHORONIX] Baseline binary: {baseline_binary}")
+                logger.info(f"[PHORONIX] Obfuscated binary: {obfuscated_binary}")
+
+                if baseline_binary and obfuscated_binary:
+                    baseline_path = Path(baseline_binary)
+                    obfuscated_path = Path(obfuscated_binary)
+
+                    if baseline_path.exists() and obfuscated_path.exists():
+                        runner = PhoronixBenchmarkRunner()
+                        phoronix_results = runner.run_benchmark(
+                            baseline_path,
+                            obfuscated_path,
+                            timeout=payload.benchmark_timeout_seconds
+                        )
+
+                        key_metrics = runner.extract_key_metrics(phoronix_results)
+                        result['phoronix'] = {
+                            'results': phoronix_results,
+                            'key_metrics': key_metrics
+                        }
+
+                        logger.info(f"✅ Benchmarking completed: available={key_metrics.get('available')}, instruction_delta={key_metrics.get('instruction_count_delta')}, overhead={key_metrics.get('performance_overhead_percent')}%")
+                        job_manager.update_job(job.job_id, result=result)
+                    else:
+                        logger.warning(f"Binary paths don't exist - baseline: {baseline_path.exists()}, obfuscated: {obfuscated_path.exists()}")
+                        result['phoronix'] = {
+                            'results': None,
+                            'error': 'Binary files not found'
+                        }
+                else:
+                    logger.warning("Missing baseline or obfuscated binary paths in result")
+                    result['phoronix'] = {
+                        'results': None,
+                        'error': 'Binaries not found'
+                    }
+            except Exception as e:
+                logger.error(f"Benchmarking failed: {e}")
+                result['phoronix'] = {
+                    'results': None,
+                    'error': str(e)
+                }
+
+        # IMPORTANT: Regenerate reports after adding phoronix data
+        # The original reports were generated BEFORE phoronix benchmarking
+        logger.info(f"[PHORONIX DEBUG] Checking if reports need regen: run_benchmarks={payload.run_benchmarks}, has_phoronix={bool(result.get('phoronix'))}")
+
+        if payload.run_benchmarks and result.get('phoronix'):
+            logger.info("[PHORONIX] Regenerating reports with Phoronix metrics...")
+            try:
+                # Get the JSON report that was generated
+                report_paths = result.get("report_paths", {})
+                json_report_path = report_paths.get("json")
+
+                logger.info(f"[PHORONIX] report_paths keys: {list(report_paths.keys())}")
+                logger.info(f"[PHORONIX] json_report_path: {json_report_path}")
+
+                if json_report_path and Path(json_report_path).exists():
+                    # Read the existing JSON report
+                    with open(json_report_path, 'r') as f:
+                        report_data = json.load(f)
+
+                    logger.info(f"[PHORONIX] Report loaded, keys before: {list(report_data.keys())}")
+
+                    # Add phoronix data to the report
+                    # IMPORTANT: Only include key_metrics, not full results (which may have non-serializable objects)
+                    phoronix_full_data = result.get('phoronix')
+                    if phoronix_full_data:
+                        report_data['phoronix'] = {
+                            'key_metrics': phoronix_full_data.get('key_metrics', {})
+                        }
+                        logger.info(f"[PHORONIX] Added phoronix key_metrics to report")
+                    else:
+                        logger.info(f"[PHORONIX] No phoronix data in result")
+
+                    # Regenerate all report formats with updated data
+                    report_formats = payload.report_formats or ["json", "markdown", "pdf"]
+                    logger.info(f"[PHORONIX] Exporting formats: {report_formats}")
+                    exported = reporter.export(report_data, job.job_id, report_formats)
+                    report_paths_dict = {fmt: str(path) for fmt, path in exported.items()}
+
+                    logger.info(f"[PHORONIX] Reports regenerated: {list(report_paths_dict.keys())}")
+
+                    # Update result with new report paths
+                    result["report_paths"] = report_paths_dict
+                else:
+                    logger.warning(f"[PHORONIX] Could not regenerate - json_report_path exists: {json_report_path is not None}, path exists: {Path(json_report_path).exists() if json_report_path else False}")
+            except Exception as e:
+                logger.error(f"[PHORONIX] Failed to regenerate reports: {e}", exc_info=True)
+
         download_urls_response = {
             "linux": f"/api/download/{job.job_id}/linux" if platform_binaries.get("linux") else None,
             "windows": f"/api/download/{job.job_id}/windows" if platform_binaries.get("windows") else None,
@@ -1748,7 +2166,8 @@ async def api_obfuscate(
     source_path = (working_dir / source_filename).resolve()
     _decode_source(payload.source_code, source_path)
     config = _build_config_from_request(payload, working_dir)
-    background.add_task(_run_obfuscation, job.job_id, source_path, config)
+    background.add_task(_run_obfuscation, job.job_id, source_path, config,
+                        payload.run_benchmarks, payload.benchmark_timeout_seconds)
     return {"job_id": job.job_id, "status": job.status}
 
 
@@ -1884,6 +2303,40 @@ async def websocket_progress(websocket: WebSocket, job_id: str):
             )
     except WebSocketDisconnect:
         logger.info("WebSocket disconnected for job %s", job_id)
+
+
+@app.get("/api/download/{job_id}/baseline")
+async def api_download_baseline(job_id: str):
+    """Download the baseline (original, non-obfuscated) binary."""
+    try:
+        job = job_manager.get_job(job_id)
+    except JobNotFoundError:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    result = job.metadata.get("result")
+    if not result:
+        raise HTTPException(status_code=400, detail="Job not completed")
+
+    # Find baseline binary in the working directory
+    working_dir = report_base / job_id
+    if not working_dir.exists():
+        raise HTTPException(status_code=404, detail="Job directory not found")
+
+    # Look for baseline binary (typically named {source}_baseline or {source}_baseline.exe)
+    baseline_files = list(working_dir.glob("*_baseline*"))
+    if not baseline_files:
+        raise HTTPException(status_code=404, detail="Baseline binary not found")
+
+    # Use the first baseline file found
+    baseline_path = baseline_files[0]
+    if not baseline_path.exists():
+        raise HTTPException(status_code=404, detail="Baseline binary file not found")
+
+    return FileResponse(
+        baseline_path,
+        media_type="application/octet-stream",
+        filename=baseline_path.name
+    )
 
 
 @app.get("/api/download/{job_id}/{platform}")
@@ -2286,6 +2739,157 @@ async def github_repo_clone(request: Request, payload: GitHubCloneRequest):
         raise HTTPException(status_code=500, detail=f"Failed to clone repository: {str(e)}")
 
 
+@app.post("/api/dogbolt/upload")
+async def dogbolt_upload(file: UploadFile = File(...)):
+    """Proxy endpoint to upload binary to dogbolt.org"""
+    try:
+        # Check file size (dogbolt.org limit is 2 MB)
+        contents = await file.read()
+        if len(contents) > 2 * 1024 * 1024:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Binary too large ({len(contents) / 1024 / 1024:.2f} MB). Dogbolt.org limit is 2 MB."
+            )
+        
+        # Upload to dogbolt.org
+        files_data = {'file': (file.filename or 'binary', contents, file.content_type or 'application/octet-stream')}
+        response = requests.post('https://dogbolt.org/api/binaries/', files=files_data, timeout=30)
+        
+        if response.status_code not in [200, 201]:
+            raise HTTPException(
+                status_code=response.status_code,
+                detail=f"Dogbolt API error: {response.text}"
+            )
+        
+        return response.json()
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Dogbolt upload error: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to upload to dogbolt.org: {str(e)}")
+    except Exception as e:
+        logger.error(f"Dogbolt upload error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/dogbolt/decompilers")
+async def dogbolt_decompilers():
+    """Get list of available decompilers from dogbolt.org"""
+    try:
+        response = requests.get('https://dogbolt.org/', timeout=10)
+        if response.status_code != 200:
+            raise HTTPException(status_code=response.status_code, detail="Failed to fetch decompilers")
+        
+        # Extract decompilers JSON from HTML
+        html = response.text
+        match = re.search(r'<script id="decompilers_json" type="application/json">([\s\S]*?)</script>', html)
+        if match:
+            decompilers_json = json.loads(match.group(1))
+            return {"decompilers": decompilers_json, "count": len(decompilers_json)}
+        else:
+            # Fallback: return common decompilers
+            return {
+                "decompilers": {
+                    "BinaryNinja": {},
+                    "Boomerang": {},
+                    "Ghidra": {},
+                    "Hex-Rays": {},
+                    "RecStudio": {},
+                    "Reko": {},
+                    "Relyze": {},
+                    "RetDec": {},
+                    "Snowman": {}
+                },
+                "count": 9
+            }
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Dogbolt decompilers error: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to fetch decompilers: {str(e)}")
+
+
+@app.get("/api/dogbolt/status/{binary_id}")
+async def dogbolt_status(binary_id: str):
+    """Get decompilation status for a binary (handles pagination like decompiler-explorer)"""
+    try:
+        url = f"https://dogbolt.org/api/binaries/{binary_id}/decompilations/"
+        all_results = []
+        next_url = url
+        
+        # Fetch all pages (handle pagination)
+        while next_url:
+            response = requests.get(next_url, timeout=10)
+            if response.status_code != 200:
+                raise HTTPException(status_code=response.status_code, detail="Failed to fetch decompilation status")
+            
+            data = response.json()
+            all_results.extend(data.get('results', []))
+            next_url = data.get('next')  # Follow pagination
+        
+        return {"results": all_results, "next": None}
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Dogbolt status error: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to fetch status: {str(e)}")
+
+
+@app.get("/api/dogbolt/download/{binary_id}/{decompilation_id}")
+async def dogbolt_download(binary_id: str, decompilation_id: str):
+    """Download decompiled code from dogbolt.org"""
+    try:
+        # First get the decompilation info to get the download URL
+        status_response = requests.get(
+            f"https://dogbolt.org/api/binaries/{binary_id}/decompilations/",
+            timeout=10
+        )
+        if status_response.status_code != 200:
+            raise HTTPException(status_code=status_response.status_code, detail="Failed to fetch decompilation info")
+        
+        decompilations = status_response.json().get('results', [])
+        decompilation = next((d for d in decompilations if str(d.get('id')) == decompilation_id), None)
+        
+        if not decompilation:
+            raise HTTPException(status_code=404, detail="Decompilation not found")
+        
+        download_url = decompilation.get('download_url')
+        if not download_url:
+            raise HTTPException(status_code=404, detail="Download URL not available")
+        
+        # Download the decompiled code (may be gzip compressed)
+        code_response = requests.get(download_url, timeout=30)
+        if code_response.status_code != 200:
+            raise HTTPException(status_code=code_response.status_code, detail="Failed to download decompiled code")
+        
+        # Handle gzip decompression (like decompiler-explorer)
+        import gzip
+        content = code_response.content
+        try:
+            # Try to decompress as gzip
+            decompressed = gzip.decompress(content)
+            code = decompressed.decode('utf-8', errors='replace')
+        except (gzip.BadGzipFile, OSError):
+            # Not gzip, use as-is
+            code = content.decode('utf-8', errors='replace')
+        
+        return {"code": code, "decompiler": decompilation.get('decompiler', {})}
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Dogbolt download error: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to download decompiled code: {str(e)}")
+
+
+@app.post("/api/dogbolt/rerun/{binary_id}/{decompilation_id}")
+async def dogbolt_rerun(binary_id: str, decompilation_id: str):
+    """Rerun a decompilation that timed out"""
+    try:
+        response = requests.post(
+            f"https://dogbolt.org/api/binaries/{binary_id}/decompilations/{decompilation_id}/rerun/",
+            timeout=10
+        )
+        if response.status_code not in [200, 201, 202]:
+            raise HTTPException(status_code=response.status_code, detail="Failed to rerun decompilation")
+        
+        return response.json() if response.content else {"status": "queued"}
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Dogbolt rerun error: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to rerun decompilation: {str(e)}")
+
+
 @app.post("/api/local/folder/upload")
 async def local_folder_upload(files: List[UploadFile] = File(...)):
     """Upload local folder/files to backend ephemeral storage.
@@ -2347,3 +2951,252 @@ async def local_folder_upload(files: List[UploadFile] = File(...)):
     except Exception as e:
         logger.error(f"Failed to upload files: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to upload files: {str(e)}")
+
+
+# ========== BINARY OBFUSCATION API ==========
+# Register binary obfuscation routes
+from pathlib import Path as PathlibPath
+
+BINARY_JOBS: Dict[str, Dict] = {}
+# Use shared volume path accessible by both backend and ghidra-lifter containers
+BINARY_JOBS_DIR = PathlibPath("/app/binary_jobs")
+BINARY_JOBS_DIR.mkdir(parents=True, exist_ok=True)
+
+
+@app.post("/api/binary_obfuscate")
+async def binary_obfuscate(
+    passes: Optional[str] = None,
+    file: UploadFile = File(...)
+):
+    """
+    POST /api/binary_obfuscate
+
+    Start a binary obfuscation job.
+
+    Parameters:
+    - file: Windows PE binary (.exe)
+    - passes: JSON string with pass configuration
+
+    Returns:
+    {
+        "job_id": "...",
+        "status": "QUEUED"
+    }
+    """
+
+    try:
+        # Validate file extension
+        if not file.filename.lower().endswith(".exe"):
+            raise HTTPException(
+                status_code=400,
+                detail="Only .exe files are supported"
+            )
+
+        # Parse passes configuration
+        try:
+            passes_config = json.loads(passes) if passes else {"substitution": True}
+        except json.JSONDecodeError:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid passes JSON"
+            )
+
+        # Only substitution is allowed for now
+        if not isinstance(passes_config.get("substitution"), bool):
+            passes_config = {"substitution": True}
+
+        # Create job directory
+        job_id = str(uuid.uuid4())
+        job_dir = BINARY_JOBS_DIR / job_id
+        job_dir.mkdir(parents=True, exist_ok=True)
+
+        # Save uploaded binary
+        input_exe = job_dir / "input.exe"
+        content = await file.read()
+        input_exe.write_bytes(content)
+
+        # Create metadata
+        metadata = {
+            "job_id": job_id,
+            "input_file": file.filename,
+            "input_size": len(content),
+            "passes_config": passes_config,
+            "status": "QUEUED",
+            "stage": "GHIDRA",
+            "progress": 0
+        }
+
+        metadata_file = job_dir / "metadata.json"
+        metadata_file.write_text(json.dumps(metadata, indent=2))
+
+        # Store job info
+        BINARY_JOBS[job_id] = {
+            "job_dir": str(job_dir),
+            "status": "QUEUED",
+            "stage": "GHIDRA",
+            "progress": 0,
+            "worker": None
+        }
+
+        # Start pipeline in background thread
+        def run_pipeline():
+            try:
+                BINARY_JOBS[job_id]["status"] = "RUNNING"
+                BINARY_JOBS[job_id]["stage"] = "GHIDRA"
+                BINARY_JOBS[job_id]["progress"] = 10
+
+                worker = BinaryPipelineWorker(str(job_dir), passes_config)
+                BINARY_JOBS[job_id]["worker"] = worker
+
+                success, message = worker.execute()
+
+                if success:
+                    BINARY_JOBS[job_id]["status"] = "COMPLETED"
+                    BINARY_JOBS[job_id]["stage"] = "COMPLETED"
+                    BINARY_JOBS[job_id]["progress"] = 100
+
+                    # Update metadata
+                    metadata["status"] = "COMPLETED"
+                    metadata_file.write_text(json.dumps(metadata, indent=2))
+                else:
+                    BINARY_JOBS[job_id]["status"] = "ERROR"
+                    BINARY_JOBS[job_id]["error"] = message
+                    logger.error(f"Job {job_id} failed: {message}")
+
+            except Exception as e:
+                BINARY_JOBS[job_id]["status"] = "ERROR"
+                BINARY_JOBS[job_id]["error"] = str(e)
+                logger.error(f"Job {job_id} exception: {e}")
+
+        thread = threading.Thread(target=run_pipeline, daemon=True)
+        thread.start()
+
+        return JSONResponse({
+            "job_id": job_id,
+            "status": "QUEUED",
+            "message": "Job queued for processing"
+        })
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Binary obfuscation error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/binary_obfuscate/status/{job_id}")
+async def get_job_status(job_id: str):
+    """
+    GET /api/binary_obfuscate/status/{job_id}
+
+    Get job status and progress.
+
+    Returns:
+    {
+        "job_id": "...",
+        "status": "QUEUED|RUNNING|COMPLETED|ERROR",
+        "stage": "GHIDRA|LIFTING|IR22|OLLVM|FINALIZING|COMPLETED|ERROR",
+        "progress": 0-100,
+        "logs": "...",
+        "metrics": {...},
+        "download_url": "..."
+    }
+    """
+
+    if job_id not in BINARY_JOBS:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    job = BINARY_JOBS[job_id]
+    job_dir = PathlibPath(job["job_dir"])
+
+    # Map internal stage to frontend stage names
+    stage_mapping = {
+        "GHIDRA": "CFG",
+        "LIFTING": "LIFTING",
+        "IR22": "IR22",
+        "OLLVM": "OLLVM",
+        "FINALIZING": "FINALIZING",
+        "COMPLETED": "COMPLETED",
+        "ERROR": "ERROR"
+    }
+
+    # Get logs
+    logs = ""
+    if job["worker"]:
+        logs = job["worker"].get_logs()
+
+    # Get metrics
+    metrics = None
+    if job["worker"]:
+        metrics = job["worker"].get_metrics()
+
+    # Build response
+    response = {
+        "job_id": job_id,
+        "status": job["status"],
+        "stage": stage_mapping.get(job.get("stage", "GHIDRA"), "UNKNOWN"),
+        "progress": job.get("progress", 0),
+        "logs": logs[-2000:] if logs else "",  # Last 2000 chars
+    }
+
+    if metrics:
+        response["metrics"] = metrics
+
+    if job["status"] == "COMPLETED":
+        # Add download URLs
+        final_exe = job_dir / "final" / "final.exe"
+        obf_bc = job_dir / "obf" / "program_obf.bc"
+
+        if final_exe.exists():
+            response["download_url"] = f"/api/binary_obfuscate/artifact/{job_id}/final.exe"
+        if obf_bc.exists():
+            response["ir_download_url"] = f"/api/binary_obfuscate/artifact/{job_id}/program_obf.bc"
+
+    elif job["status"] == "ERROR":
+        response["error"] = job.get("error", "Unknown error")
+
+    return JSONResponse(response)
+
+
+@app.get("/api/binary_obfuscate/artifact/{job_id}/{artifact_name}")
+async def get_artifact(job_id: str, artifact_name: str):
+    """
+    GET /api/binary_obfuscate/artifact/{job_id}/{artifact_name}
+
+    Download job artifacts.
+
+    Supported artifacts:
+    - final.exe
+    - program_obf.bc
+    - program_llvm22.bc
+    - logs.txt
+    - metrics.json
+    """
+
+    if job_id not in BINARY_JOBS:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    job_dir = PathlibPath(BINARY_JOBS[job_id]["job_dir"])
+
+    # Validate artifact name
+    allowed_artifacts = {
+        "final.exe": job_dir / "final" / "final.exe",
+        "program_obf.bc": job_dir / "obf" / "program_obf.bc",
+        "program_llvm22.bc": job_dir / "ir" / "program_llvm22.bc",
+        "logs.txt": job_dir / "logs.txt",
+        "metrics.json": job_dir / "metrics.json",
+    }
+
+    if artifact_name not in allowed_artifacts:
+        raise HTTPException(status_code=400, detail="Invalid artifact name")
+
+    artifact_path = allowed_artifacts[artifact_name]
+
+    if not artifact_path.exists():
+        raise HTTPException(status_code=404, detail=f"Artifact {artifact_name} not found")
+
+    return FileResponse(
+        path=artifact_path,
+        filename=artifact_name,
+        media_type="application/octet-stream"
+    )

@@ -7,10 +7,6 @@ concurrency:
   group: deploy-to-pb-server-${{ github.ref }}
   cancel-in-progress: true
 
-concurrency:
-  group: deploy-to-pb-server-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
   deploy:
     runs-on: ubuntu-latest

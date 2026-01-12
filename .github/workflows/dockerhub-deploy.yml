@@ -7,9 +7,6 @@ concurrency:
   group: build-and-push-${{ github.ref }}
   cancel-in-progress: true
 
-concurrency:
-  group: build-and-push-${{ github.ref }}
-  cancel-in-progress: true
 
 env:
   DOCKERHUB_REGISTRY: docker.io

@@ -51,7 +51,7 @@ jobs:
           tar -xzf /tmp/${TARBALL_NAME} -C cmd/llvm-obfuscator/plugins/
           rm /tmp/${TARBALL_NAME}
         else
-          echo "❌ Tarball not found. Run: ./scripts/gcp-binary-manager.sh init"
+          echo "❌ Tarball not found. Upload one with: gsutil cp local.tar.gz gs://${GCP_BUCKET}/${TARBALL_NAME}"
           exit 1
         fi
 

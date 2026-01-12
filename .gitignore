@@ -54,6 +54,3 @@ plugins/
 spec_cpu/results/
 spec_cpu/build/
 spec_cpu/
-
-# Documentation folder
-docs/

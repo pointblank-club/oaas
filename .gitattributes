@@ -1,2 +1,2 @@
-# Git LFS disabled - binaries are now hosted on GCP (gs://llvmbins/)
-# Download binaries using: scripts/download-binaries-from-gcp.sh
+# Git LFS disabled - binaries are hosted on GCP (gs://llvmbins/)
+* text=auto

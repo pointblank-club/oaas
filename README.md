@@ -34,6 +34,17 @@ The LLVM Binary Obfuscator is a comprehensive code protection toolkit that makes
 
 ---
 
+### Documentation Quick Links
+
+- [Architecture overview](docs/ARCHITECTURE.md)
+- [Pipeline reference (native, MLIR, Windows lifting)](docs/PIPELINES.md)
+- [Testing & verification guide](docs/TESTING.md)
+- [Deployment & operations](docs/DEPLOYMENT.md)
+- [LLVM/OLLVM build instructions](docs/LLVM_BUILDS.md)
+- [Contributing instructions](CONTRIBUTING.md)
+
+---
+
 ## Table of Contents
 
 1. [Installation](#installation)
@@ -62,7 +73,7 @@ The LLVM Binary Obfuscator is a comprehensive code protection toolkit that makes
 - **LLVM 22** (for OLLVM passes and MLIR obfuscation)
 - **MLIR 22** (for MLIR-based passes - included with LLVM 22)
 - **OpenSSL** (for cryptographic symbol hashing)
-- **ClangIR** (optional - for advanced C/C++ pipeline, see [CLANGIR_PIPELINE_GUIDE.md](CLANGIR_PIPELINE_GUIDE.md))
+- **ClangIR** (optional - for advanced C/C++ pipeline, see [docs/PIPELINES.md](docs/PIPELINES.md))
 
 ### Option 1: Quick Install (Recommended)
 
@@ -913,9 +924,9 @@ python3 -m cli.obfuscate compile source.c \
 
 ### Documentation
 
-- **MLIR Integration Guide**: [MLIR_INTEGRATION_GUIDE.md](MLIR_INTEGRATION_GUIDE.md) - Quick start and usage examples
-- **ClangIR Pipeline Guide**: [CLANGIR_PIPELINE_GUIDE.md](CLANGIR_PIPELINE_GUIDE.md) - Comprehensive ClangIR documentation
-- **MLIR Passes README**: [mlir-obs/README.md](mlir-obs/README.md) - Pass implementation details
+- **Pipeline Overview**: [docs/PIPELINES.md](docs/PIPELINES.md) – Native, MLIR, and Windows lifting flows
+- **Testing & Research Notes**: [docs/TESTING.md](docs/TESTING.md) – Consolidated testing instructions and findings
+- **MLIR Pass Details**: See [docs/PIPELINES.md](docs/PIPELINES.md#3-mlir--polygeist-flow)
 
 ---
 
@@ -946,7 +957,7 @@ We tested 42 different obfuscation configurations to validate effectiveness:
    - Worst: flattening → boguscf → substitution → split
    - Difference: 68% entropy variation
 
-**Full Research Report:** See `OBFUSCATION_COMPLETE.md`
+**Full Research Summary:** See [docs/TESTING.md](docs/TESTING.md)
 
 ### Test Data
 
@@ -1088,39 +1099,27 @@ aws lambda create-function \
   --zip-file fileb://function.zip
 ```
 
-**Full Deployment Guide:** See `AUTOMATED_DEPLOYMENT.md`
+**Full Deployment Guide:** See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)
 
 ---
 
 ## Contributing
 
-We welcome contributions! Please see `CONTRIBUTING.md` for guidelines.
+We welcome contributions! Read [CONTRIBUTING.md](CONTRIBUTING.md) for detailed setup instructions, coding standards, and the recommended workflow.
 
-### Development Setup
+### Quick Checklist
 
-```bash
-# Clone repository
-git clone https://github.com/your-org/llvm-obfuscator.git
-cd llvm-obfuscator
+1. **Set up tooling** – Follow the steps in `CONTRIBUTING.md` to install Python deps and build the MLIR plugin (`mlir-obs/build.sh`).
+2. **Develop on a branch** – Keep changes focused and update the consolidated docs under `docs/` rather than adding brand new markdown files.
+3. **Run tests** – `pytest` (Python), `mlir-obs/test.sh` (passes), and at least one CLI smoke test.  For major pass changes, include a Phoronix security analysis report.
+4. **Open a PR** – Summarize the change, attach any reports, and tag maintainers if the update touches the pipelines or release tooling.
 
-# Install development dependencies
-pip install -r requirements-dev.txt
+### High-Impact Areas (GSoC friendly)
 
-# Run tests
-pytest
-
-# Run linters
-flake8 cmd/llvm-obfuscator
-mypy cmd/llvm-obfuscator
-```
-
-### Areas for Contribution
-
-- **OLLVM plugin packaging** - Distribute pre-built plugins
-- **IDE integration** - VSCode/CLion extensions
-- **Additional hash algorithms** - xxHash, BLAKE3
-- **Control flow analysis** - Detect weak obfuscation
-- **Commercial obfuscator comparison** - Benchmark vs Tigress, VMProtect
+- **PLLVM/MLIR passes** – Extend `mlir-obs` with new constant/string transformations and wire them into the CLI.
+- **Windows lifting stability** – Improve the Dockerized pipeline, CFG validation, and pass safety checks.
+- **Benchmark automation** – Enhance Phoronix + Jotai coverage so regressions are caught earlier.
+- **Dev experience** – IDE integration, improved progress reporting, and hardened error handling in the CLI/API.
 
 ---
 
@@ -1140,7 +1139,7 @@ MIT License - See `LICENSE` file for details.
 
 ## Support & Contact
 
-- **Documentation:** Full docs in `OBFUSCATION_COMPLETE.md`
+- **Documentation:** See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [docs/PIPELINES.md](docs/PIPELINES.md)
 - **Issues:** https://github.com/your-org/llvm-obfuscator/issues
 - **Discussions:** https://github.com/your-org/llvm-obfuscator/discussions
 

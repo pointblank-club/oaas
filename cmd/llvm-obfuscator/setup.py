@@ -7,8 +7,10 @@ Production-ready LLVM binary obfuscation tool with 4-layer protection
 from setuptools import setup, find_packages
 from pathlib import Path
 
-# Read README
-readme_file = Path(__file__).parent / "README.md"
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+# Read README from project root
+readme_file = PROJECT_ROOT / "README.md"
 long_description = readme_file.read_text() if readme_file.exists() else ""
 
 # Read requirements

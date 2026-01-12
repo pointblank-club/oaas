@@ -31,6 +31,15 @@ cmd/llvm-obfuscator/obfuscated/
 
 # Generated reports - these are test outputs, don't commit
 cmd/llvm-obfuscator/reports/
+cmd/llvm-obfuscator/test_results/
+cmd/llvm-obfuscator/test_jotai_output/
+cmd/llvm-obfuscator/jotai_ci_results/
+cmd/llvm-obfuscator/binaries/
+obfuscation_test_suite/results/
+
+# Legacy artifacts / generated junk
+test_results/
+
 
 cmd/jotai_results/
 

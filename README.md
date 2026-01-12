@@ -48,18 +48,19 @@ The LLVM Binary Obfuscator is a comprehensive code protection toolkit that makes
 ## Table of Contents
 
 1. [Installation](#installation)
-2. [Quick Start](#quick-start)
-3. [Architecture Overview](#architecture-overview)
-4. [4-Layer System](#4-layer-system)
-5. [Usage Examples](#usage-examples)
-6. [CLI Reference](#cli-reference)
-7. [Best Practices](#best-practices)
-8. [MLIR-Based Obfuscation (Advanced)](#mlir-based-obfuscation-advanced)
-9. [Research & Testing](#research--testing)
-10. [API Documentation](#api-documentation)
-11. [Deployment](#deployment)
-12. [Contributing](#contributing)
-13. [License](#license)
+2. [Usage Demo](#usage-demo)
+3. [Quick Start](#quick-start)
+4. [Architecture Overview](#architecture-overview)
+5. [4-Layer System](#4-layer-system-execution-order-1234)
+6. [Usage Examples](#usage-examples)
+7. [CLI Reference](#cli-reference)
+8. [Best Practices](#best-practices)
+9. [MLIR-Based Obfuscation (Advanced)](#mlir-based-obfuscation-advanced)
+10. [Research & Testing](#research--testing)
+11. [API Documentation](#api-documentation)
+12. [Deployment](#deployment)
+13. [Contributing](#contributing)
+14. [License](#license)
 
 ---
 
@@ -118,6 +119,12 @@ ninja
 
 # Continue with Quick Install steps above
 ```
+
+---
+
+## Usage Demo
+
+https://github.com/user-attachments/assets/8eee904c-f6a6-4f4d-ac0d-5833955d368f
 
 ---
 

@@ -69,3 +69,14 @@ For deeper validation (benchmarks, security analysis, Windows pipeline) see `doc
 - Pair with maintainers via drafted PRs—ask for feedback early if you’re touching critical passes.
 
 Thanks for contributing!  Keeping this guide updated makes it easier for the next wave of contributors to succeed.
+
+## 7. CI/CD
+
+All pull requests are automatically validated by our CI/CD pipeline:
+
+- **Frontend Checks**: Linting and build verification
+- **Backend Checks**: Python tests with coverage reporting
+- **Auto-labeling**: PRs are automatically labeled based on changed files
+- **Size Labels**: PRs receive size labels (XS/S/M/L/XL) based on lines changed
+
+You can also use slash commands on issues and PRs. Type `/help` in a comment to see available commands.

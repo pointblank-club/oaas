@@ -1,0 +1,81 @@
+# Label configuration for actions/labeler
+# Documentation: https://github.com/actions/labeler
+
+"GitHub Actions":
+  - changed-files:
+      - any-glob-to-any-file: '.github/**/*'
+
+"Documentation":
+  - changed-files:
+      - any-glob-to-any-file:
+          - '**/*.md'
+          - 'docs/**/*'
+
+"CI/CD":
+  - changed-files:
+      - any-glob-to-any-file: '.github/workflows/**/*'
+
+"Frontend":
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'cmd/llvm-obfuscator/frontend/**/*'
+          - '**/*.tsx'
+          - '**/*.ts'
+
+"Backend":
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'cmd/llvm-obfuscator/**/*.py'
+          - 'cmd/llvm-obfuscator/api/**/*'
+          - 'cmd/llvm-obfuscator/cli/**/*'
+          - 'cmd/llvm-obfuscator/core/**/*'
+
+"MLIR":
+  - changed-files:
+      - any-glob-to-any-file: 'mlir-obs/**/*'
+
+"Docker":
+  - changed-files:
+      - any-glob-to-any-file:
+          - '**/Dockerfile*'
+          - '**/docker-compose.yml'
+          - '**/docker-compose.yaml'
+
+"Dependencies":
+  - changed-files:
+      - any-glob-to-any-file:
+          - '**/package.json'
+          - '**/package-lock.json'
+          - '**/requirements.txt'
+          - '**/requirements*.txt'
+
+"Config":
+  - changed-files:
+      - any-glob-to-any-file:
+          - '**/*.config.*'
+          - '**/tsconfig.json'
+          - '**/vite.config.*'
+          - '**/.eslintrc*'
+
+"Phoronix":
+  - changed-files:
+      - any-glob-to-any-file: 'phoronix/**/*'
+
+"Tests":
+  - changed-files:
+      - any-glob-to-any-file:
+          - '**/tests/**/*'
+          - '**/test_*.py'
+          - '**/*_test.py'
+          - 'obfuscation_test_suite/**/*'
+
+"LLVM":
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'llvm-patches/**/*'
+          - '**/*.ll'
+          - '**/*.bc'
+
+"Binary Obfuscation":
+  - changed-files:
+      - any-glob-to-any-file: 'binary_obfuscation_pipeline/**/*'

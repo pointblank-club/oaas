@@ -1,0 +1,189 @@
+name: Issue Command Bot
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  issues: write
+  pull-requests: write
+
+jobs:
+  command-bot:
+    runs-on: ubuntu-latest
+    if: github.event.issue && startsWith(github.event.comment.body, '/')
+    steps:
+      - name: Handle /assign command
+        if: contains(github.event.comment.body, '/assign')
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const comment = context.payload.comment.body;
+            const issueNumber = context.issue.number;
+
+            // Extract username from /assign @username or use commenter
+            const assignMatch = comment.match(/\/assign\s+@?(\S+)/);
+            const assignee = assignMatch ? assignMatch[1] : context.payload.comment.user.login;
+
+            try {
+              await github.rest.issues.addAssignees({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issueNumber,
+                assignees: [assignee]
+              });
+
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issueNumber,
+                body: `Assigned @${assignee} to this issue.`
+              });
+            } catch (error) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issueNumber,
+                body: `Failed to assign @${assignee}: ${error.message}`
+              });
+            }
+
+      - name: Handle /close command
+        if: contains(github.event.comment.body, '/close')
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.update({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              state: 'closed'
+            });
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: `Issue closed by @${context.payload.comment.user.login}`
+            });
+
+      - name: Handle /reopen command
+        if: contains(github.event.comment.body, '/reopen')
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.update({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              state: 'open'
+            });
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: `Issue reopened by @${context.payload.comment.user.login}`
+            });
+
+      - name: Handle /label command
+        if: contains(github.event.comment.body, '/label')
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const comment = context.payload.comment.body;
+            const labelMatch = comment.match(/\/label\s+(\S+)/);
+
+            if (labelMatch) {
+              const label = labelMatch[1];
+              try {
+                await github.rest.issues.addLabels({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: context.issue.number,
+                  labels: [label]
+                });
+
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: context.issue.number,
+                  body: `Added label: \`${label}\``
+                });
+              } catch (error) {
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: context.issue.number,
+                  body: `Failed to add label \`${label}\`: ${error.message}`
+                });
+              }
+            }
+
+      - name: Handle /needs-triage command
+        if: contains(github.event.comment.body, '/needs-triage')
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.addLabels({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              labels: ['needs-triage']
+            });
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: 'Added `needs-triage` label. A maintainer will review this issue soon.'
+            });
+
+      - name: Handle /cc command
+        if: contains(github.event.comment.body, '/cc')
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const comment = context.payload.comment.body;
+            const ccMatch = comment.match(/\/cc\s+(.+)/);
+
+            if (ccMatch) {
+              const users = ccMatch[1].split(/[,\s]+/).filter(u => u.startsWith('@')).map(u => u.substring(1));
+
+              if (users.length > 0) {
+                const mentions = users.map(u => `@${u}`).join(', ');
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: context.issue.number,
+                  body: `CC: ${mentions}`
+                });
+              }
+            }
+
+      - name: Handle /help command
+        if: contains(github.event.comment.body, '/help')
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const helpMessage = `
+            ## Available Commands
+
+            | Command | Description |
+            |---------|-------------|
+            | \`/assign\` | Assign yourself to this issue |
+            | \`/assign @username\` | Assign a specific user to this issue |
+            | \`/close\` | Close this issue |
+            | \`/reopen\` | Reopen this issue |
+            | \`/label <name>\` | Add a label to this issue |
+            | \`/needs-triage\` | Mark this issue as needing triage |
+            | \`/cc @user1, @user2\` | Mention users to notify them |
+            | \`/help\` | Show this help message |
+            `;
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: helpMessage
+            });

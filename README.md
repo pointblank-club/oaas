@@ -177,45 +177,58 @@ cat obfuscated/report.json
 
 ## Architecture Overview
 
-### System Design
-
-```
-┌─────────────────────────────────────────────────────────┐
-│                    LLVM Obfuscator                       │
-├─────────────────────────────────────────────────────────┤
-│                                                           │
-│  Input: source.c  →  [4 Layers]  →  Output: binary     │
-│                                                           │
-│  Layer 1: Symbol Obfuscation (Pre-compilation)          │
-│    ├─ Cryptographic hashing (SHA256/BLAKE2B)            │
-│    ├─ Function/variable renaming                         │
-│    └─ Mapping file generation                            │
-│                                                           │
-│  Layer 4: Compiler Flags (Compilation)                  │
-│    ├─ Link-time optimization (-flto)                     │
-│    ├─ Symbol hiding (-fvisibility=hidden)               │
-│    ├─ Frame pointer removal (-fomit-frame-pointer)      │
-│    └─ Speculative hardening (-mspeculative-load-hardening)│
-│                                                           │
-│  Layer 3: OLLVM Passes (IR-level) [Optional]            │
-│    ├─ Control flow flattening                            │
-│    ├─ Instruction substitution                           │
-│    ├─ Bogus control flow                                 │
-│    └─ Basic block splitting                              │
-│                                                           │
-│  Layer 2: String Encryption (Pre-compilation)           │
-│    ├─ XOR encryption                                     │
-│    ├─ Runtime decryption                                 │
-│    └─ Constructor-based initialization                   │
-│                                                           │
-│  Layer 5: UPX Binary Packing (Post-compilation) [New!]  │
-│    ├─ 50-70% binary size reduction                       │
-│    ├─ Additional obfuscation layer                       │
-│    ├─ LZMA compression                                   │
-│    └─ Transparent runtime decompression                  │
-│                                                           │
-└─────────────────────────────────────────────────────────┘
-```
+┌──────────────────────────────────────────────────────────────┐
+│                       LLVM Obfuscator                        │
+├──────────────────────────────────────────────────────────────┤
+│                                                              │
+│   Input: source.c  →  [Pipeline]  →  Output: packed binary   │
+│                                                              │
+│  ─────────────────────────────────────────────────────────   │
+│  Stage 1: Pre-compilation Obfuscation                        │
+│  ─────────────────────────────────────────────────────────   │
+│  Layer 1: Symbol Obfuscation                                 │
+│    ├─ Cryptographic hashing (SHA256 / BLAKE2b)               │
+│    ├─ Function & variable renaming                           │
+│    ├─ String table anonymization                             │
+│    └─ Optional mapping file (debug / recovery)               │
+│                                                              │
+│  Layer 2: String Encryption                                  │
+│    ├─ XOR / AES-based string encryption                      │
+│    ├─ Compile-time encryption                                │
+│    ├─ Runtime decryption stubs                               │
+│    └─ Constructor-based initialization                       │
+│                                                              │
+│  ─────────────────────────────────────────────────────────   │
+│  Stage 2: IR-level Obfuscation (LLVM Passes)                 │
+│  ─────────────────────────────────────────────────────────   │
+│  Layer 3: OLLVM / Custom LLVM Passes                         │
+│    ├─ Control Flow Flattening                                │
+│    ├─ Bogus Control Flow                                     │
+│    ├─ Instruction Substitution                               │
+│    ├─ Basic Block Splitting                                  │
+│    └─ Opaque predicates                                      │
+│                                                              │
+│  ─────────────────────────────────────────────────────────   │
+│  Stage 3: Compilation & Toolchain Hardening                  │
+│  ─────────────────────────────────────────────────────────   │
+│  Layer 4: Compiler & Linker Hardening                        │
+│    ├─ Link-Time Optimization (-flto)                         │
+│    ├─ Symbol visibility hiding (-fvisibility=hidden)         │
+│    ├─ Frame pointer omission (-fomit-frame-pointer)          │
+│    ├─ Stack protections (-fstack-protector-strong)           │
+│    └─ Speculative execution hardening                        │
+│       (-mspeculative-load-hardening)                         │
+│                                                              │
+│  ─────────────────────────────────────────────────────────   │
+│  Stage 4: Post-compilation Binary Protection                 │
+│  ─────────────────────────────────────────────────────────   │
+│  Layer 5: Binary Packing & Compression                       │
+│    ├─ UPX packing (LZMA / NRV)                               │
+│    ├─ 50–70% size reduction                                  │
+│    ├─ Additional static-analysis resistance                  │
+│    └─ Transparent runtime decompression                      │
+│                                                              │
+└──────────────────────────────────────────────────────────────┘
 
 ### Data Flow
 

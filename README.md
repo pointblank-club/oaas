@@ -67,6 +67,15 @@ The LLVM Binary Obfuscator is a comprehensive code protection toolkit that makes
 
 ## Installation
 
+### Pre-built Binaries
+
+Pre-built LLVM obfuscator binaries are available in the [GitHub Releases](https://github.com/pointblank-club/oaas/releases/tag/v1.0.0-binaries). Download and extract to `cmd/llvm-obfuscator/plugins/` before building Docker images:
+
+```bash
+wget https://github.com/pointblank-club/oaas/releases/download/v1.0.0-binaries/LLVM-bin.zip
+unzip LLVM-bin.zip -d cmd/llvm-obfuscator/plugins/
+```
+
 ### Prerequisites
 
 - Python 3.10+
